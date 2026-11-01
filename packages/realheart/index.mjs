@@ -2096,6 +2096,10 @@ const ROUND_MARK = '[本轮消息]';
         '        wrong_time（场合不对）/ hurt（被伤到了）。不选就是「没说」。',
         '`resume`：放开。',
         '',
+        '`close`：这段到这儿了。不是静音，是收尾 —— 要说一句「这段发生了什么」，',
+        '         还可以说「下次从哪接」。它不改你的开关，只是把这页翻过去。',
+        '         （`pause` 是我闭嘴；`close` 是这段完了。两件事，别混。）',
+        '',
         '这条权力是他答应给你的，不是借的，别客气。',
         '它只管心情这一层；你在 QQ 里说什么，不在它管的范围。',
       ].join('\n'),
@@ -2106,6 +2110,8 @@ const ROUND_MARK = '[本轮消息]';
           reason: { type: 'string', description: '为什么。可以不写，但你自己以后翻记录时会想知道。' },
           kind: { type: 'string', description: 'pause 用：tired / not_interested / wrong_time / hurt。停下来的原因分类，比自由文本好翻。' },
           force: { type: 'boolean', description: 'pause 用：有待接的话时仍要停。默认不带 —— 拦是提醒，不是锁。' },
+          summary: { type: 'string', description: 'close 用：这段发生了什么。必填。' },
+          next_opening: { type: 'string', description: 'close 用：下次从哪接。可以不写。' },
           text: { type: 'string', description: 'keep 用：要留下的那句话，原样。' },
           id: { type: 'string', description: 'unkeep 用：撤掉哪一条（先用 files 看 id）。' },
         },
@@ -2123,8 +2129,8 @@ const ROUND_MARK = '[本轮消息]';
       },
       async execute(args) {
         const action = String(args?.action ?? '').trim();
-        if (!['pause', 'resume', 'clear', 'keep', 'unkeep', 'files'].includes(action)) {
-          return { text: '（action 只有 pause / resume / clear / keep / unkeep / files。）' };
+        if (!['pause', 'resume', 'clear', 'keep', 'unkeep', 'files', 'close'].includes(action)) {
+          return { text: '（action 只有 pause / resume / clear / keep / unkeep / files / close。）' };
         }
         const reason = String(args?.reason ?? '').trim();
 
@@ -2201,6 +2207,27 @@ const ROUND_MARK = '[本轮消息]';
           } catch (err) {
             return { text: `（没查成：${err?.message ?? err}）` };
           }
+        }
+
+        // close = 「这段到这儿了」。pause 是「我不想说话」，close 是「这件事结束了」——
+        // 前者是状态，后者是一次收尾。混在一起，以后分不出她是在休息还是在告别。
+        if (action === 'close') {
+          const summary = String(args?.summary ?? '').trim();
+          const nextOpening = String(args?.next_opening ?? '').trim();
+          if (!summary) {
+            return { text: '（close 要写一句 summary：这段到底怎么样了。关上却说不清，比不关更难查。）' };
+          }
+          try {
+            await appendLedger(join(cfg.stateDir, 'control.jsonl'),
+              `${JSON.stringify({ at: localStamp(), action: 'close', summary, nextOpening: nextOpening || null, by: 'her' })}\n`,
+              'utf8');
+          } catch (err) {
+            return { text: `（没写进去：${err?.message ?? err}）` };
+          }
+          const tail = nextOpening
+            ? `下次从这儿接：${nextOpening}`
+            : '(没留「下次从哪接」—— 到时候重新起也行。)';
+          return { text: `收尾了：${summary}` + String.fromCharCode(10) + tail };
         }
 
         // clear = 「我说我好了」。这是 declared_clear，不是 decayed —— 两个计数必须分开，
