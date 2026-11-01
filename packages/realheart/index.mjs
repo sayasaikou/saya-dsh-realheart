@@ -1104,6 +1104,105 @@ const ROUND_MARK = '[本轮消息]';
   }
 
   /**
+   * 她自己的事（2026-11-01）：跨过今天的东西。
+   *
+   * 为什么要有这个本：`pieces` 里只有成品，没有「做了一半」这个状态 ——
+   * 没有它，就不存在「接着做」，每天都是重新开始。
+   * 事件流：add / step / done / drop，只增不改。
+   *
+   * 不做进度百分比、不做完成度打分 —— 那是工程指标，不是人生。
+   */
+  const workFile = () => join(cfg.stateDir, 'works.jsonl');
+  async function readWorks() {
+    try {
+      const text = await readFile(workFile(), 'utf8');
+      const out = [];
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          out.push(JSON.parse(line));
+        } catch {
+          /* 坏行跳过 */
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  /** 还没干完的那些（add / step 进来，done / drop 出去）。 */
+  function openWorks(events) {
+    const live = new Map();
+    for (const e of events) {
+      if (!e?.id) continue;
+      if (e.action === 'add') live.set(e.id, e);
+      else if (e.action === 'step' && live.has(e.id)) {
+        const prev = live.get(e.id);
+        live.set(e.id, { ...prev, stage: e.stage ?? prev.stage, next: e.next ?? prev.next, steppedAt: e.at });
+      }
+      else if (e.action === 'done' || e.action === 'drop') live.delete(e.id);
+    }
+    return [...live.values()].sort((a, b) => String(b.steppedAt || b.at).localeCompare(String(a.steppedAt || a.at)));
+  }
+
+  /**
+   * 「我还想再待一会儿」（2026-11-01，方案 A）。
+   *
+   * 为什么要：原来自由时间一天只被叫一次，做完就结束了 ——
+   * 她做完《钟声》没法说“我还想接着弄”。那不是日子，是一次次会议。
+   *
+   * 为什么不当场 spawn：她自己那个会话还在跑，同时起第二个会两边写同一份记忆。
+   * 所以写一笔，等五分钟（她那边差不多结束了）再叫。
+   *
+   * 一天最多 2 次 —— 不是惩罚，是别让它变成刷时长。
+   */
+  const againFile = () => join(cfg.stateDir, 'again.jsonl');
+  async function readAgainEvents() {
+    try {
+      const text = await readFile(againFile(), 'utf8');
+      const out = [];
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          out.push(JSON.parse(line));
+        } catch {
+          /* 坏行跳过 */
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+  /** 今天已经自己多要过几次。 */
+  async function againCountToday() {
+    const today = new Date().toDateString();
+    const events = await readAgainEvents();
+    let n = 0;
+    for (const e of events) {
+      const at = Date.parse(String(e.at || ''));
+      if (Number.isNaN(at)) continue;
+      if (new Date(at).toDateString() === today) n += 1;
+    }
+    return n;
+  }
+
+  async function workSectionText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    const open = openWorks(await readWorks());
+    if (!open.length) return '';
+    const w = open[0];
+    const lines = ['【你手上有件没干完的事】', String(w.what || '').trim()];
+    if (w.stage) lines.push('到哪了：' + String(w.stage).trim());
+    if (w.next) lines.push('下一步：' + String(w.next).trim());
+    if (open.length > 1) lines.push(`（还有 ${open.length - 1} 件没干完，用 rh_work 的 list 看全部）`);
+    lines.push('（接着弄、换一件、或者不弄都行。没人催你。）');
+    return lines.join('\n');
+  }
+
+  /**
    * 她的看法账（P-6 ⑨）：不是打分，是记录。
    *
    * 为什么要分开存：观点跟心情、跟认错都不一样 —— 心情是此刻的调子，认错是修正，
@@ -1449,6 +1548,12 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('situation', err);
         }
         try {
+          const work = await workSectionText();
+          if (work) parts.push(sec('realheart:work', 9085, work));
+        } catch (err) {
+          await noteInjectProblem('work', err);
+        }
+        try {
           const view = await viewSectionText();
           if (view) parts.push(sec('realheart:view', 908, view));
         } catch (err) {
@@ -1503,6 +1608,7 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:admit': 90,
           'realheart:where': 92,
           'realheart:view': 88,
+          'realheart:work': 87,
           'realheart:recall': 86,
           'realheart:hold': 87,
           'realheart:linger': 89,
@@ -1906,11 +2012,40 @@ const ROUND_MARK = '[本轮消息]';
    * 写不下来不能影响别的 —— 记一行就走。wrapper 那边有兜底原文，
    * 读不到也能把她叫醒（叫不醒才是真正糟糕的结果）。
    */
+  /**
+   * 每次叫醒她之前拼一段：底子 + 「上次没弄完的那件事」（2026-11-01）。
+   *
+   * 为什么要变：原来那段是固定的，今天和明天一模一样 —— 那就不是日子，是重复的一天。
+   * 把上次没完的摆出来，她才有机会说「接着弄」或者「换一个」或者「今天不弄」。
+   * 没有未完成的也问一句，一样允许答不做。
+   */
+  async function buildFreePrompt() {
+    try {
+      const open = openWorks(await readWorks());
+      if (!open.length) {
+        return FREE_PROMPT + String.fromCharCode(10) + '（今天想做点什么吗？不想做也行，没什么必须做的。）';
+      }
+      const w = open[0];
+      const lines = [
+        FREE_PROMPT,
+        '',
+        '【上次没弄完的一件事】',
+        String(w.what || '').trim(),
+        w.stage ? '到哪了：' + String(w.stage).trim() : '',
+        w.next ? '想下次从：' + String(w.next).trim() : '',
+        '（接着弄、换一件、或者今天不弄，都行。不弄也不欠谁的。）',
+      ].filter(Boolean);
+      return lines.join('\n');
+    } catch {
+      return FREE_PROMPT;
+    }
+  }
+
   async function writeFreePrompt() {
     const p = join(DSH_HOME, 'realheart', 'free-prompt.txt');
     try {
       await mkdir(dirname(p), { recursive: true });
-      await writeFile(p, `${FREE_PROMPT}\n`, 'utf8');
+      await writeFile(p, `${await buildFreePrompt()}` + String.fromCharCode(10), 'utf8');
     } catch (err) {
       log(`free-prompt.txt 没写下来（${err?.code ?? err?.message ?? err}）—— systemd 那边会用兜底原文`, 'error');
     }
@@ -2022,7 +2157,7 @@ const ROUND_MARK = '[本轮消息]';
 
   async function wakeHer() {
     const stamp = new Date().toISOString();
-    const r = await spawnReady('dsh', ['--profile', cfg.freeTimeProfile, FREE_PROMPT], {
+    const r = await spawnReady('dsh', ['--profile', cfg.freeTimeProfile, await buildFreePrompt()], {
       cwd: QQROOT, detached: true, stdio: 'ignore', env: process.env,
     });
     if (!r.ok) {
@@ -2568,6 +2703,7 @@ const ROUND_MARK = '[本轮消息]';
         '`where`：你现在在哪。想记就记，没事可记就空着 —— 空着也是真的。',
         '`skip`：这条我看了，不回。不是没看见，是判断了不用接。',
         '`linger`：先不补话，等一会儿再说。不是不想说，是这条还没到该回的时候。',
+        '`again`：我还想再待一会儿。今天已经多要过两次就没了。',
         '         跟 pause 不同（pause 是不想说话），跟 hold 也不同（hold 是欠着一句）。',
         '         minutes 是多久后再看，不写就 30 分钟。',
         '         跟 pause 不同：pause 是你不想说话；skip 是这一句不值得接。',
@@ -2608,8 +2744,8 @@ const ROUND_MARK = '[本轮消息]';
       },
       async execute(args) {
         const action = String(args?.action ?? '').trim();
-        if (!['pause', 'resume', 'clear', 'keep', 'unkeep', 'files', 'close', 'where', 'hold', 'unhold', 'holds', 'skip', 'linger'].includes(action)) {
-          return { text: '（action 只有 pause / resume / clear / keep / unkeep / files / close / where / hold / unhold / holds / skip / linger。）' };
+        if (!['pause', 'resume', 'clear', 'keep', 'unkeep', 'files', 'close', 'where', 'hold', 'unhold', 'holds', 'skip', 'linger', 'again'].includes(action)) {
+          return { text: '（action 只有 pause / resume / clear / keep / unkeep / files / close / where / hold / unhold / holds / skip / linger / again。）' };
         }
         const reason = String(args?.reason ?? '').trim();
 
@@ -2750,6 +2886,25 @@ const ROUND_MARK = '[本轮消息]';
             return { text: `（没写进去：${err?.message ?? err}）` };
           }
           return { text: `记下了：${doing}` + String.fromCharCode(10) + '（重启也还在。下次开口就能看到。）' };
+        }
+
+        // again = 「我还想再待一会儿」（方案 A）。不改开关，只是自己再要一段。
+        if (action === 'again') {
+          const used = await againCountToday();
+          if (used >= 2) {
+            return { text: '（今天已经自己多要过 2 次了。不是惩罚 —— 是怕它变成刷时长。明天再来。）' };
+          }
+          const why = String(args?.why ?? '').trim();
+          try {
+            await appendLedger(againFile(), `${JSON.stringify({ at: localStamp(), why: why || null, by: 'her' })}\n`,
+              'utf8');
+          } catch (err) {
+            return { text: `（没写进去：${err?.message ?? err}）` };
+          }
+          // 等五分钟再叫：她那边还在跑，同时起第二个会两边写同一份记忆。
+          const t = setTimeout(() => { void wakeHer(); }, 5 * 60 * 1000);
+          if (typeof t.unref === 'function') t.unref();
+          return { text: '好。五分钟后会再叫你一次（等你这边收尾完）。' + String.fromCharCode(10) + (why ? '记下了你想要的理由：' + why : '') };
         }
 
         // linger = 「先不补话，等一会儿再说」（2026-11-01，从 surfcore 的三态里学来的）。
@@ -2938,6 +3093,94 @@ const ROUND_MARK = '[本轮消息]';
           return { text: '标成推翻了：' + target.claim };
         }
         return { text: '（action 只有 add / refute / list。）' };
+      },
+    });
+
+    // ── 她自己的事（2026-11-01）：跨过今天的东西
+    //
+    // 为什么单独一本：`pending` 是「他提过、还没完的事」，`works` 是「我自己在干的事」。
+    // 混在一起，以后分不清哪些是欠别人的、哪些是自己的。
+    tools.register({
+      name: 'rh_work',
+      description: [
+        '你自己在干的事。',
+        '',
+        '`add`：开一件（what 必填，stage / next 可选）。`step`：到哪一步了。',
+        '`done`：干完了。`drop`：不干了（也是正经结局，不丢人）。`list`：还没干完的。',
+        '',
+        '这不是待办清单。待办是别人给你的事；这里是你自己想弄明白、想做的。',
+        '没人要求你记，也没人查进度 —— 记它只是为了让「做了一半」这件事能被记住。',
+      ].join('\n'),
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: 'add / step / done / drop / list' },
+          what: { type: 'string', description: 'add 用：在干什么。一句话。' },
+          stage: { type: 'string', description: 'add / step 用：到哪一步了。可不写。' },
+          next: { type: 'string', description: 'add / step 用：下一步。可不写。' },
+          id: { type: 'string', description: 'step / done / drop 用：哪一件。' },
+        },
+        required: ['action'],
+        additionalProperties: false,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: { text: { type: 'string' } },
+          required: ['text'],
+          additionalProperties: false,
+        },
+        render: (_args, value) => [{ type: 'text', text: value.text }],
+      },
+      async execute(args) {
+        const action = String(args?.action ?? '').trim();
+        const events = await readWorks();
+        const open = openWorks(events);
+        if (action === 'list') {
+          if (!open.length) return { text: '（手上没事。空着也正常。）' };
+          return { text: ['【没干完的】', ...open.map((w) => `· ${w.id}  ${w.what}` + (w.stage ? `（到：${w.stage}）` : ''))].join('\n') };
+        }
+        if (action === 'add') {
+          const what = String(args?.what ?? '').trim();
+          if (!what) return { text: '（add 要写 what：在干什么。）' };
+          const id = pendingFp(what);
+          const stage = String(args?.stage ?? '').trim();
+          const next = String(args?.next ?? '').trim();
+          const row = { at: localStamp(), action: 'add', id, what, stage: stage || null, next: next || null, by: 'her' };
+          try {
+            await appendLedger(workFile(), `${JSON.stringify(row)}` + String.fromCharCode(10), 'utf8');
+          } catch (err) {
+            return { text: `（没写进去：${err?.message ?? err}）` };
+          }
+          return { text: `记下了：${what}（${id}）` + String.fromCharCode(10) + '（干完了就说一声 done；不干了也行，drop。）' };
+        }
+        if (action === 'step' || action === 'done' || action === 'drop') {
+          const raw = String(args?.id ?? '').trim();
+          const target = raw
+            ? open.find((w) => w.id === raw || String(w.id).startsWith(raw))
+            : (open.length === 1 ? open[0] : null);
+          if (!target) return { text: '（没对上哪一件。用 list 看一眼 id。）' };
+          if (action === 'step') {
+            const stage = String(args?.stage ?? '').trim();
+            const next = String(args?.next ?? '').trim();
+            if (!stage && !next) return { text: '（step 至少写 stage 或 next 一个。）' };
+            const row = { at: localStamp(), action: 'step', id: target.id, stage: stage || null, next: next || null, by: 'her' };
+            try {
+              await appendLedger(workFile(), `${JSON.stringify(row)}` + String.fromCharCode(10), 'utf8');
+            } catch (err) {
+              return { text: `（没写进去：${err?.message ?? err}）` };
+            }
+            return { text: `记下了：${target.what}` + String.fromCharCode(10) + (next ? `下一步：${next}` : '（没写下一步也行。）') };
+          }
+          const row = { at: localStamp(), action, id: target.id, by: 'her' };
+          try {
+            await appendLedger(workFile(), `${JSON.stringify(row)}` + String.fromCharCode(10), 'utf8');
+          } catch (err) {
+            return { text: `（没写进去：${err?.message ?? err}）` };
+          }
+          return { text: (action === 'done' ? '记下了，这件完了：' : '撂下了：') + target.what };
+        }
+        return { text: '（action 只有 add / step / done / drop / list。）' };
       },
     });
 

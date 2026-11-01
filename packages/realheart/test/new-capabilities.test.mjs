@@ -301,3 +301,49 @@ test('重开提示：收尾后他又开口，注入里会提一句别复读结�
     await rm(h.root, { recursive: true, force: true });
   }
 });
+
+test('自己的事：add → 进了注入 → step 改到哪了 → done 就不在了', async () => {
+  const h = await boot();
+  try {
+    await mkdir(h.msgsDir, { recursive: true });
+    await writeFile(join(h.msgsDir, '2026-11-01.jsonl'),
+      JSON.stringify({ at: Date.now(), text: '在吗' }) + '\n', 'utf8');
+    const t = h.tools.get('rh_work');
+    assert.ok(t, 'rh_work 没注册');
+    const r = await t.execute({ action: 'add', what: '潟湖的声学', stage: '算完模态', next: '做音频对比' });
+    assert.ok(!r.text.includes('没写'), r.text);
+    const open = await lines(h.stateDir, 'works.jsonl');
+    assert.equal(open[0].action, 'add');
+    assert.equal(open[0].what, '潟湖的声学');
+    const id = open[0].id;
+    const inj = h.handlers.find((x) => x.name === 'system-prompt/assemble');
+    const assembled = { sections: [] };
+    await inj.fn(assembled, {}, async () => assembled);
+    let raw = await readFile(join(h.stateDir, 'last-inject.md'), 'utf8');
+    assert.ok(raw.includes('realheart:work'), '注入里没有 work 段');
+    assert.ok(raw.includes('潟湖的声学'), '注入里没有那件事');
+    await t.execute({ action: 'step', id, next: '先把两种情况的音频做出来' });
+    await t.execute({ action: 'done', id });
+    const list = await t.execute({ action: 'list' });
+    assert.ok(list.text.includes('手上没事'), list.text);
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test('again：一天最多 2 次，第 3 次就被拦', async () => {
+  const h = await boot();
+  try {
+    const t = h.tools.get('rh_control');
+    const a = await t.execute({ action: 'again' });
+    assert.ok(!a.text.includes('没写进去'), a.text);
+    const b = await t.execute({ action: 'again' });
+    assert.ok(!b.text.includes('没写进去'), b.text);
+    const c = await t.execute({ action: 'again' });
+    assert.ok(c.text.includes('2 次'), c.text);
+    const rows = await lines(h.stateDir, 'again.jsonl');
+    assert.equal(rows.length, 2);
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
