@@ -108,6 +108,24 @@ async function collectIds(cfg) {
     notes.push(`history 读不到（${err?.code ?? err?.message ?? err}）`);
   }
 
+  // ── 落盘消息：m:<日期>#<行号>
+  // 来自 qqbot-memory 的 data/msgs —— 实测它的 text 是真话（带 [昵称] 前缀），
+  // 而 history 的 user 行里 98.6% 只有时间戳噪音。心情的来处多半是一句话，这一路才是真有话的。
+  try {
+    const names = (await readdir(cfg.msgsDir)).filter((n) => n.endsWith('.jsonl') && !n.startsWith('_'));
+    let n = 0;
+    for (const fn of names) {
+      const text = await readFile(join(cfg.msgsDir, fn), 'utf8');
+      for (const id of lineIds(text, `m:${fn.slice(0, -6)}`)) {
+        ids.add(id);
+        n += 1;
+      }
+    }
+    notes.push(`msgs ${n}`);
+  } catch (err) {
+    notes.push(`msgs 读不到（${err?.code ?? err?.message ?? err}）`);
+  }
+
   // ── 原生会话包：n:<尾号>#<seq>（要解 zstd，慢一点但只在建索引时跑）
   try {
     let n = 0;
@@ -480,10 +498,14 @@ export function apply(ctx, config = {}) {
    *
    * audit 还在，但只补剩下的位子。读不到就少那一半，不猜。
    */
+/** 这一轮他的话就埋在 history 的 user 行里这个标记之后 */
+const ROUND_MARK = '[本轮消息]';
+
   async function recentEventIds(limit = 3) {
     const out = [];
+    let miss = 0;
     const hhmm = (iso) => {
-      const d = new Date(String(iso || ''));
+      const d = typeof iso === 'number' ? new Date(iso) : new Date(String(iso || ''));
       if (Number.isNaN(d.getTime())) return '';
       const p = (n) => String(n).padStart(2, '0');
       return `${p(d.getHours())}:${p(d.getMinutes())}`;
@@ -492,7 +514,43 @@ export function apply(ctx, config = {}) {
       const t = String(v || '').replace(/\s+/g, ' ').trim();
       return t.length > n ? `${t.slice(0, n)}…` : t;
     };
-    // ① history 里的 user 行
+    /**
+     * 从一条 history 的 user 行里取出「这一轮他真说的那段」。
+     *
+     * 为什么不能直接用 text：实测 111 条 user 行里，抽样 6 条全是 <system-reminder>，
+     * 其余是「Time sampled…」这类时间戳和跨会话摘要 —— 那是 harness 拼进去的，不是他说的话。
+     * 拿它当来处，等于引用一段噪音。
+     *
+     * 切不到就返回 null（调用方负责丢 + 留痕），**不退回块头** ——
+     * 退回整块会让候选又变回噪音，而且从外面看不出这样做过。
+     */
+    const roundBody = (text) => {
+      const s = String(text || '');
+      const i = s.indexOf(ROUND_MARK);
+      if (i < 0) return null;
+      const body = s.slice(i + ROUND_MARK.length).trim();
+      return body === '' ? null : body;
+    };
+    // ① 落盘消息（data/msgs）—— 真话在这儿，优先用它
+    try {
+      const names = (await readdir(cfg.msgsDir)).filter((n) => n.endsWith('.jsonl') && !n.startsWith('_')).sort();
+      const fn = names[names.length - 1];
+      if (fn) {
+        const text = await readFile(join(cfg.msgsDir, fn), 'utf8');
+        const lines = text.split('\n');
+        const day = fn.slice(0, -6);
+        for (let i = lines.length - 1; i >= 0 && out.length < limit; i -= 1) {
+          const raw = lines[i];
+          if (!raw.trim()) continue;
+          let o = null;
+          try { o = JSON.parse(raw); } catch { continue; }
+          const body = String(o?.text || '').replace(/^\[[^\]]{1,40}\]\s*/, '').trim();
+          if (!body) { miss += 1; continue; }
+          out.push({ id: `m:${day}#${i + 1}`, at: hhmm(o?.at), kind: String(o?.name || '他'), detail: flat(body) });
+        }
+      }
+    } catch { /* 读不到就少这一路 */ }
+    // ② history 里的 user 行（标记切不全，见 roundBody 注释）
     try {
       const names = (await readdir(cfg.historyDir)).filter((n) => n.endsWith('.jsonl'));
       let best = '';
@@ -513,7 +571,13 @@ export function apply(ctx, config = {}) {
           let o = null;
           try { o = JSON.parse(raw); } catch { continue; }
           if (o?.role !== 'user') continue;
-          out.push({ id: `${prefix}#${i + 1}`, at: hhmm(o?.ts), kind: '他说', detail: flat(o?.text) });
+          const body = roundBody(o?.text);
+          if (body === null) { miss += 1; continue; }
+          out.push({ id: `${prefix}#${i + 1}`, at: hhmm(o?.ts), kind: '他说', detail: flat(body) });
+        }
+        if (miss) {
+          void appendFile(join(cfg.stateDir, 'history-extract-misses.jsonl'),
+            `${JSON.stringify({ at: localStamp(), miss, file: best })}\n`, 'utf8').catch(() => {});
         }
       }
     } catch { /* 读不到就少这一半 */ }
