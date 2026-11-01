@@ -43,11 +43,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sayasaikou/saya-dsh-realhuman.git"
+    "url": "git+https://github.com/sayasaikou/saya-dsh-realheart.git"
   },
-  "homepage": "https://github.com/sayasaikou/saya-dsh-realhuman#readme",
+  "homepage": "https://github.com/sayasaikou/saya-dsh-realheart#readme",
   "bugs": {
-    "url": "https://github.com/sayasaikou/saya-dsh-realhuman/issues"
+    "url": "https://github.com/sayasaikou/saya-dsh-realheart/issues"
   },
   "license": "MIT"
 }

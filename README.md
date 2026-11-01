@@ -1,4 +1,4 @@
-# saya-dsh-realhuman
+# saya-dsh-realheart
 
 把「让 agent **行为上**像人」的整套东西做成可复现方案 —— 不是更会聊天，是做事的样子变。
 
@@ -53,7 +53,7 @@
 ## 目录结构
 
 ```
-saya-dsh-realhuman/
+saya-dsh-realheart/
 ├─ README.md
 ├─ PLAN.md                 分期、验收判据、已知坑
 ├─ CREDITS.md              出处、许可与致谢
