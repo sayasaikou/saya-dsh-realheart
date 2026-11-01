@@ -41,7 +41,9 @@ export const DEFAULTS = {
   // 每轮开口前把当前心情注入提示词
   injectMood: true,
   // 注入的总字数上限。超了就从优先级低的那段开始裁，裁掉的会留痕（M1-6）。
-  injectBudgetChars: 1200,
+  // 2026-11-01：从 1200 提到 1600。今天新增了 where / admit / view / recall / hold / 处境
+  // 六段（空的时候不注入，一有内容就占位），实测当前 859 字符，再长就会把低优先级段裁掉。
+  injectBudgetChars: 1600,
   // 注入时只读心情账本的最后 N 条。账本长大了不该整份读进来（M1-4）。
   moodTailLines: 200,
   // 观测页：默认只在 127.0.0.1 上开，手机想看自己去反代或改 pageBind
