@@ -1545,20 +1545,67 @@ const ROUND_MARK = '[本轮消息]';
     log(`自由时间：已叫她（PID ${r.child.pid}）`);
   }
 
-  function scheduleNextWake() {
-    const now = new Date();
-    const next = new Date(now);
+  const freeScheduleFile = () => join(cfg.stateDir, 'free-time-schedule.json');
+
+  /**
+   * 下次叫醒的时刻要落盘（2026-11-01）。
+   *
+   * 为什么：原来每次启动都重新掷一次随机时刻 —— 一天重启三次就有三个独立的
+   * 「今天 10:00~12:00 之间某一刻」，可能一天叫三遍，也可能一次都没叫到。
+   * 实测她今天重启了四回。落盘之后，重启只是把同一个时刻重新挂上去。
+   *
+   * 到点时进程不在怎么办：同一天就补叫一次（「今天还没被叫过」这件事本身就是空的），
+   * 跳天了就不追账 —— 昨天的自由时间今天补，那叫补作业，不叫自由。
+   */
+  async function readScheduledAt() {
+    try {
+      const raw = await readFile(freeScheduleFile(), 'utf8');
+      const t = Number(JSON.parse(raw)?.nextAt);
+      return Number.isFinite(t) && t > 0 ? t : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  async function writeScheduledAt(ms) {
+    try {
+      await writeFile(freeScheduleFile(), JSON.stringify({ nextAt: ms, at: localStamp() }), 'utf8');
+    } catch (err) {
+      log(`自由时间：下次时刻没存下来（${err?.message ?? err}）`, 'error');
+    }
+  }
+
+  /** 起点往后随机 0~2 小时 —— 固定的时刻就叫排班，不叫自由 */
+  function pickNextAt(from = new Date()) {
+    const next = new Date(from);
     next.setHours(cfg.freeTimeFrom, 0, 0, 0);
-    // 起点往后随机 0~2 小时 —— 固定的时刻就叫排班，不叫自由
     next.setTime(next.getTime() + Math.floor(Math.random() * 2 * 3600 * 1000));
-    if (next <= now) next.setDate(next.getDate() + 1);
-    const delay = next.getTime() - now.getTime();
+    if (next <= from) next.setDate(next.getDate() + 1);
+    return next.getTime();
+  }
+
+  async function scheduleNextWake() {
+    const now = Date.now();
+    let nextAt = await readScheduledAt();
+    if (!nextAt) {
+      nextAt = pickNextAt(new Date(now));
+      await writeScheduledAt(nextAt);
+    } else if (nextAt <= now) {
+      const was = new Date(nextAt);
+      if (was.toDateString() === new Date(now).toDateString()) {
+        log(`自由时间：到点那一刻不在（${was.toLocaleString()}），补叫一次`);
+        void wakeHer();
+      }
+      nextAt = pickNextAt(new Date(now));
+      await writeScheduledAt(nextAt);
+    }
+    const delay = Math.max(1000, nextAt - Date.now());
     const timer = setTimeout(() => {
       void wakeHer();
-      scheduleNextWake();
+      void scheduleNextWake();
     }, delay);
     if (typeof timer.unref === 'function') timer.unref();
-    log(`下一次自由时间：${next.toLocaleString()}`);
+    log(`下一次自由时间：${new Date(nextAt).toLocaleString()}`);
   }
   /**
    * 把账本收成只有自己读得到（P-4 那条「账本目录 600」）。
@@ -1665,7 +1712,7 @@ const ROUND_MARK = '[本轮消息]';
     if (cfg.freeTime !== false) {
       const freeErr = await ensureFreeProfile();
       if (freeErr) log(`自由时间没铺好（${freeErr}）`, 'error');
-      else scheduleNextWake();
+      else await scheduleNextWake();
     }
 
     const pageUrl = await ensureRuntime();
