@@ -358,6 +358,14 @@ details.cfggrp>summary::-webkit-details-marker{display:none}
 details.cfggrp>summary::before{content:"▸ ";color:#5f6b7c}
 details.cfggrp[open]>summary::before{content:"▾ "}
 .gcount{color:#6f7885;font-weight:400;font-size:12px;margin-left:6px}
+/* tabs */
+.cfgtabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px;padding-bottom:9px;border-bottom:1px solid #232a35}
+.cfgtab{background:#151a22;color:#98a2b3;border:1px solid #232a35;border-radius:8px;padding:6px 12px;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
+.cfgtab:hover{color:#cfd6e2;border-color:#3f5a78}
+.cfgtab.active{background:#1d2b3a;color:#dbe6f2;border-color:#3f5a78}
+.cfgtab .gcount{margin-left:5px;color:#6f7885;font-size:11px}
+.cfgpanel{display:none}
+.cfgpanel.active{display:block}
 a{color:#6ea8fe;text-decoration:none}
 .wide{grid-column:1/-1}
 .wk{display:grid;grid-template-columns:52px 1fr 1fr 1fr 1.6fr;gap:8px;
@@ -1132,22 +1140,28 @@ def render_config_edit(flash=''):
     for f in schema['fields']:
         by_group.setdefault(f.get('group') or 'other', []).append(f)
 
-    blocks = []
+    tabs = []
+    panels = []
+    first = True
     for gid, gname, opened in GROUP_META:
         fields = by_group.get(gid) or []
         if not fields:
             continue
         rows = ''.join(row_html(f) for f in fields)
-        blocks.append(
-            '<details class="cfggrp"%s><summary>%s <span class="gcount">%d 项</span></summary>'
-            '<table class="cfg">%s%s</table></details>'
-            % (' open' if opened else '', esc(gname), len(fields), head, rows))
+        tabs.append('<button type="button" class="cfgtab%s" data-g="%s" onclick="rhTab(this)">%s'
+                    '<span class="gcount">%d</span></button>'
+                    % (' active' if first else '', gid, esc(gname), len(fields)))
+        panels.append('<div class="cfgpanel%s" data-g="%s"><table class="cfg">%s%s</table></div>'
+                      % (' active' if first else '', gid, head, rows))
+        first = False
     # 没归类的也列出来，不能因为写漏就消失
     leftover = [f for f in schema['fields'] if (f.get('group') or 'other') not in dict((g, 1) for g, _, _ in GROUP_META)]
     if leftover:
         rows = ''.join(row_html(f) for f in leftover)
-        blocks.append('<details class="cfggrp" open><summary>未归类 <span class="gcount">%d 项</span></summary>'
-                      '<table class="cfg">%s%s</table></details>' % (len(leftover), head, rows))
+        tabs.append('<button type="button" class="cfgtab" data-g="__left" onclick="rhTab(this)">'
+                    '未归类<span class="gcount">%d</span></button>' % len(leftover))
+        panels.append('<div class="cfgpanel" data-g="__left"><table class="cfg">%s%s</table></div>'
+                      % (head, rows))
 
     esc_hint = esc(schema.get('escape', {}).get('note', ''))
     flash_html = ('<p class="ok">%s</p>' % esc(flash)) if flash else ''
@@ -1156,7 +1170,9 @@ def render_config_edit(flash=''):
         '<div class="card wide"><h2>配置（改了要重启）</h2>'
         + flash_html
         + '<form method="post" action="config" onsubmit="return rhConfirm(this)">'
-        + ''.join(blocks)
+        + '<div class="cfgtabs">' + ''.join(tabs) + '</div>'
+        + '<div class="cfgpanels">' + ''.join(panels) + '</div>'
+
         + '<div class="cfgbar">'
         '<input type="text" name="__why" placeholder="为什么改（会写进改动记录，可留空）" size="42">'
         '<button type="submit">保存到 config.user.json</button>'
@@ -1167,6 +1183,10 @@ def render_config_edit(flash=''):
         'var t=[];for(var i=0;i<f.elements.length;i++){var e=f.elements[i];'
         'if(!e.name||e.name==="__why")continue;'
         'if(e.getAttribute("data-danger")==="1"&&e.value!==e.getAttribute("data-was"))t.push(e.name);}'
+        'function rhTab(b){var g=b.getAttribute("data-g");var p=b.parentNode;'
+        'for(var i=0;i<p.children.length;i++){p.children[i].className="cfgtab"+(p.children[i]===b?" active":"");}'
+        'var ps=document.querySelectorAll(".cfgpanel");'
+        'for(var j=0;j<ps.length;j++){ps[j].className="cfgpanel"+(ps[j].getAttribute("data-g")===g?" active":"");}}'
         'if(!t.length)return true;'
         'return confirm("这些是危险项：\n"+t.join("、")+"\n\n改了要重启才生效。确定？");}'
         '</script>'
