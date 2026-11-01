@@ -1528,6 +1528,44 @@ const ROUND_MARK = '[本轮消息]';
     return '';
   }
 
+  /**
+   * 他最后一句是不是在问我，而我还没回。
+   *
+   * 为什么要这个（M3 closeGate）：她可以说「停」，但**有待接的话时不能一停了之** ——
+   * 那不是休息，是把人摆在半空。清单里她自己把这条标成「这份里最值钱的」。
+   *
+   * 只信 msgs（真话源）：倒着扫，先碰到「我」就说接上了；先碰到「他」且结尾是问号就是未接。
+   * ownerId 没配就不拦 —— 宁可漏拦，不凭猜拦人。
+   */
+  async function hasUnansweredQuestion() {
+    const owner = String(cfg.ownerId || '').trim();
+    if (!owner) return null;
+    try {
+      const names = (await readdir(cfg.msgsDir)).filter((n) => n.endsWith('.jsonl') && !n.startsWith('_')).sort();
+      const fn = names[names.length - 1];
+      if (!fn) return null;
+      const text = await readFile(join(cfg.msgsDir, fn), 'utf8');
+      const lines = text.split('\n');
+      for (let i = lines.length - 1; i >= 0; i -= 1) {
+        const raw = lines[i];
+        if (!raw.trim()) continue;
+        let o = null;
+        try { o = JSON.parse(raw); } catch { continue; }
+        const who = String(o?.openid || '');
+        const body = String(o?.text || '').trim();
+        if (!body) continue;
+        if (who === owner) {
+          return /[？?]\s*$/.test(body) ? { at: o?.at, text: body.slice(0, 80) } : null;
+        }
+        // 不是他说的 → 那就是我们这边说过了，算接上
+        return null;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   async function wakeHer() {
     const stamp = new Date().toISOString();
     const r = await spawnReady('dsh', ['--profile', cfg.freeTimeProfile, FREE_PROMPT], {
@@ -2067,6 +2105,7 @@ const ROUND_MARK = '[本轮消息]';
           action: { type: 'string', description: 'pause / resume / clear / keep / unkeep / files' },
           reason: { type: 'string', description: '为什么。可以不写，但你自己以后翻记录时会想知道。' },
           kind: { type: 'string', description: 'pause 用：tired / not_interested / wrong_time / hurt。停下来的原因分类，比自由文本好翻。' },
+          force: { type: 'boolean', description: 'pause 用：有待接的话时仍要停。默认不带 —— 拦是提醒，不是锁。' },
           text: { type: 'string', description: 'keep 用：要留下的那句话，原样。' },
           id: { type: 'string', description: 'unkeep 用：撤掉哪一条（先用 files 看 id）。' },
         },
@@ -2186,6 +2225,22 @@ const ROUND_MARK = '[本轮消息]';
             text: '记下了：这一条算「你说你好了」。'
               + '它不是自己淡掉的（decayed），两个数将来分开算，别混。',
           };
+        }
+
+        // 有待接的话时不许一停了之（M3 closeGate）。force 能绕过 —— 拦是提醒，不是锁。
+        if (action === 'pause' && args?.force !== true) {
+          const pending = await hasUnansweredQuestion();
+          if (pending) {
+            try {
+              await appendLedger(join(cfg.stateDir, 'control.jsonl'),
+                `${JSON.stringify({ at: localStamp(), action: 'pause_blocked', why: 'unanswered', at_asked: pending.at, by: 'plugin' })}\n`,
+                'utf8');
+            } catch { /* 拦这件事记不上，也照样拦 */ }
+            return {
+              text: `（先别停：他最后一句还在问你 ——「${pending.text}」。`
+                + '接完再停。真要现在停，带上 force: true，但那一笔会留下。',
+            };
+          }
         }
 
         // 停下来的原因分类（2026-11-01）：四种够了。全写成自由文本的话，

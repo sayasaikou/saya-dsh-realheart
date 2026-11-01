@@ -34,6 +34,8 @@ export const DEFAULTS = {
   historyDir: join(QQROOT, 'data', 'history'),
   // 第四路：qqbot-memory 落盘的消息（data/msgs）—— text 里是真话，不是时间戳
   msgsDir: join(QQROOT, 'data', 'msgs'),
+  // 他本人的 QQ 号。用来看「最后一句是不是他在问我」。不填就不拦 pause。
+  ownerId: '',
   // 索引多久重建一次（毫秒）。默认一小时。
   indexTtlMs: 3600000,
   // 每轮开口前把当前心情注入提示词
@@ -74,6 +76,7 @@ export const Config = Schema.object({
   auditDir: Schema.string().default(DEFAULTS.auditDir),
   historyDir: Schema.string().default(DEFAULTS.historyDir),
   msgsDir: Schema.string().default(DEFAULTS.msgsDir),
+  ownerId: Schema.string().default(DEFAULTS.ownerId),
   indexTtlMs: Schema.number().min(RANGES.indexTtlMs.min).max(RANGES.indexTtlMs.max).default(DEFAULTS.indexTtlMs),
   injectMood: Schema.boolean().default(DEFAULTS.injectMood),
   injectBudgetChars: Schema.number().min(200).max(20000).default(DEFAULTS.injectBudgetChars),
