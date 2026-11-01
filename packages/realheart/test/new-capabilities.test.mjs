@@ -258,3 +258,46 @@ test('断言账：add 要 about；refute 要 evidence；推翻后原文不删', 
     await rm(h.root, { recursive: true, force: true });
   }
 });
+
+test('linger：写进去后会出现在注入里（带剩余分钟）', async () => {
+  const h = await boot();
+  try {
+    await mkdir(h.msgsDir, { recursive: true });
+    await writeFile(join(h.msgsDir, '2026-11-01.jsonl'),
+      JSON.stringify({ at: Date.now(), openid: '1418499574', text: '在吗' }) + '\n',
+      'utf8');
+    const r = await h.tools.get('rh_control').execute({ action: 'linger', minutes: 20, why: '先想想怎么说' });
+    assert.ok(!r.text.includes('没写进去'), r.text);
+    const rows = await lines(h.stateDir, 'control.jsonl');
+    assert.equal(rows[0].action, 'linger');
+    assert.equal(rows[0].minutes, 20);
+    const inj = h.handlers.find((x) => x.name === 'system-prompt/assemble');
+    const assembled = { sections: [] };
+    await inj.fn(assembled, {}, async () => assembled);
+    const raw = await readFile(join(h.stateDir, 'last-inject.md'), 'utf8');
+    assert.ok(raw.includes('realheart:linger'), '注入里没有 linger 段');
+    assert.ok(raw.includes('先等一会儿'), '注入里没有那句提示');
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test('重开提示：收尾后他又开口，注入里会提一句别复读结尾', async () => {
+  const h = await boot();
+  try {
+    await mkdir(h.msgsDir, { recursive: true });
+    const f = join(h.msgsDir, '2026-11-01.jsonl');
+    await writeFile(f, JSON.stringify({ at: Date.now() - 3600000, text: '早' }) + '\n', 'utf8');
+    await h.tools.get('rh_control').execute({ action: 'close', summary: '聊到扯平这件事', next_opening: '问周末去不去看展' });
+    await writeFile(f, JSON.stringify({ at: Date.now() - 3600000, text: '早' }) + '\n'
+      + JSON.stringify({ at: Date.now(), text: '醒着吗' }) + '\n', 'utf8');
+    const inj = h.handlers.find((x) => x.name === 'system-prompt/assemble');
+    const assembled = { sections: [] };
+    await inj.fn(assembled, {}, async () => assembled);
+    const raw = await readFile(join(h.stateDir, 'last-inject.md'), 'utf8');
+    assert.ok(raw.includes('realheart:reopen'), '没有 reopen 段');
+    assert.ok(raw.includes('别复读'), '没有那句提醒');
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});

@@ -27,6 +27,17 @@ audit 还在，但只补剩下的位子。读不到就少那一半，不猜。
 
 ---
 
+## 0.2.47
+
+**两件从 surfcore 学来的（github.com/Mieksido/surfcore）。**
+
+- `rh_control` 多了 `linger`：先不补话，等一会儿再说。跟 `pause` 不同（那是不想说话），
+  跟 `hold` 也不同（那是欠着一句）。`linger` 没欠，只是不急；`minutes` 不写默认 30，最多 240。
+  注入里会报还剩多少分钟，且明写「想改主意随时开口，这不是锁」。
+- 新增重开提示：收尾后六小时内他又开口，注入里提一句「上次收过尾，现在是新的一段，别复读上次的结尾」，
+  顺带把当时的 `summary` 和 `nextOpening` 也摆出来。
+- 为什么：没有这一句，她会用同一个开头反复重开 —— 因为她以为什么都没发生过。
+- 依据：surfcore 的 `docs/guides/CONVERSATION_CLOSURE.md`（三态 continue / linger / close）。
 ## 0.2.46
 
 **修：配置页的切标签点不动。**两个原因，都在。

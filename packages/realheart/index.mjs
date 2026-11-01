@@ -900,6 +900,89 @@ const ROUND_MARK = '[本轮消息]';
     }
   }
 
+  /**
+   * linger（2026-11-01）：她说过「先等一会儿」且还没到点。
+   *
+   * 只说剩下多少分钟，不催。想改主意随时开口 —— 它不是锁。
+   */
+  async function lingerSectionText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    try {
+      const text = await readFile(join(cfg.stateDir, 'control.jsonl'), 'utf8');
+      let live = null;
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        let o = null;
+        try {
+          o = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (o?.action === 'linger') live = o;
+        else if (o?.action === 'close' || o?.action === 'skip') live = null;
+      }
+      if (!live) return '';
+      const at = Date.parse(String(live.at || ''));
+      if (Number.isNaN(at)) return '';
+      const mins = Number(live.minutes) || 30;
+      const left = Math.round((at + mins * 60000 - Date.now()) / 60000);
+      if (left <= 0) return '';
+      const why = String(live.why || '').trim();
+      return ['【你说过先等一会儿】', `还剩 ${left} 分钟。` + (why ? '当时想的：' + why : ''), '（不急着补话；想改主意随时开口，这不是锁。）'].join('\n');
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * 重开提示（2026-11-01，从 surfcore 学的）：刚收过尾，现在是新的一段。
+   *
+   * 为什么需要：没有这句，她会用同一个开头反复重开 —— 因为她以为什么都没发生过。
+   * 只在「收尾之后他又开口了」时提，不刷屏：六小时内、且最后一条消息晚于收尾。
+   */
+  async function reopenSectionText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    try {
+      const text = await readFile(join(cfg.stateDir, 'control.jsonl'), 'utf8');
+      let lastClose = null;
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        let o = null;
+        try {
+          o = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (o?.action === 'close') lastClose = o;
+      }
+      if (!lastClose) return '';
+      const at = Date.parse(String(lastClose.at || ''));
+      if (Number.isNaN(at)) return '';
+      if (Date.now() - at > 6 * 3600000) return '';
+      const names = (await readdir(cfg.msgsDir)).filter((n) => n.endsWith('.jsonl') && !n.startsWith('_')).sort();
+      const fn2 = names[names.length - 1];
+      if (!fn2) return '';
+      const t2 = await readFile(join(cfg.msgsDir, fn2), 'utf8');
+      const ls = t2.split('\n').filter((l) => l.trim());
+      if (!ls.length) return '';
+      let lastAt = NaN;
+      try {
+        lastAt = Number(JSON.parse(ls[ls.length - 1])?.at) || Date.parse(String(JSON.parse(ls[ls.length - 1])?.at));
+      } catch {
+        return '';
+      }
+      if (Number.isNaN(lastAt) || lastAt <= at) return '';
+      const sum = String(lastClose.summary || '').trim();
+      const next = String(lastClose.nextOpening || '').trim();
+      const lines = ['【上次收过尾，现在是新的一段】', sum ? '上次收在：' + sum : '', next ? '当时想下次从这儿接：' + next : '', '（别复读上次的结尾。他是个新开头。）'].filter(Boolean);
+      return lines.join('\n');
+    } catch {
+      return '';
+    }
+  }
+
   async function holdSectionText() {
     const ctl = await readControl();
     if (ctl.paused) return '';
@@ -1336,6 +1419,18 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('admit', err);
         }
         try {
+          const linger = await lingerSectionText();
+          if (linger) parts.push(sec('realheart:linger', 912, linger));
+        } catch (err) {
+          await noteInjectProblem('linger', err);
+        }
+        try {
+          const reopen = await reopenSectionText();
+          if (reopen) parts.push(sec('realheart:reopen', 913, reopen));
+        } catch (err) {
+          await noteInjectProblem('reopen', err);
+        }
+        try {
           const hold = await holdSectionText();
           if (hold) parts.push(sec('realheart:hold', 911, hold));
         } catch (err) {
@@ -1410,6 +1505,8 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:view': 88,
           'realheart:recall': 86,
           'realheart:hold': 87,
+          'realheart:linger': 89,
+          'realheart:reopen': 91,
           'realheart:situation': 45,
           'realheart:kept': 80,
           'realheart:pending': 60,
@@ -2469,6 +2566,9 @@ const ROUND_MARK = '[本轮消息]';
         '         （`pause` 是我闭嘴；`close` 是这段完了。两件事，别混。）',
         '`where`：你现在在哪。想记就记，没事可记就空着 —— 空着也是真的。',
         '`skip`：这条我看了，不回。不是没看见，是判断了不用接。',
+        '`linger`：先不补话，等一会儿再说。不是不想说，是这条还没到该回的时候。',
+        '         跟 pause 不同（pause 是不想说话），跟 hold 也不同（hold 是欠着一句）。',
+        '         minutes 是多久后再看，不写就 30 分钟。',
         '         跟 pause 不同：pause 是你不想说话；skip 是这一句不值得接。',
         '',
         '这条权力是他答应给你的，不是借的，别客气。',
@@ -2486,6 +2586,7 @@ const ROUND_MARK = '[本轮消息]';
           doing: { type: 'string', description: 'where 用：你现在在干什么。一句话。' },
           about: { type: 'string', description: 'hold 用：欠着的是哪一句。一句话。' },
           reason: { type: 'string', description: 'skip 用：为什么不接。可以不写。' },
+          minutes: { type: 'number', description: 'linger 用：多久后再看（分钟）。不写默认 30，最多 240。' },
           id: { type: 'string', description: 'unhold 用：销哪一条。不给就销最早那条。' },
           stage: { type: 'string', description: 'where 用：到哪一步了。可以不写。' },
           next: { type: 'string', description: 'where 用：下一步干什么。可以不写。' },
@@ -2506,8 +2607,8 @@ const ROUND_MARK = '[本轮消息]';
       },
       async execute(args) {
         const action = String(args?.action ?? '').trim();
-        if (!['pause', 'resume', 'clear', 'keep', 'unkeep', 'files', 'close', 'where', 'hold', 'unhold', 'holds', 'skip'].includes(action)) {
-          return { text: '（action 只有 pause / resume / clear / keep / unkeep / files / close / where / hold / unhold / holds / skip。）' };
+        if (!['pause', 'resume', 'clear', 'keep', 'unkeep', 'files', 'close', 'where', 'hold', 'unhold', 'holds', 'skip', 'linger'].includes(action)) {
+          return { text: '（action 只有 pause / resume / clear / keep / unkeep / files / close / where / hold / unhold / holds / skip / linger。）' };
         }
         const reason = String(args?.reason ?? '').trim();
 
@@ -2648,6 +2749,23 @@ const ROUND_MARK = '[本轮消息]';
             return { text: `（没写进去：${err?.message ?? err}）` };
           }
           return { text: `记下了：${doing}` + String.fromCharCode(10) + '（重启也还在。下次开口就能看到。）' };
+        }
+
+        // linger = 「先不补话，等一会儿再说」（2026-11-01，从 surfcore 的三态里学来的）。
+        // 跟 pause 不同：pause 是「我不想说话」；linger 是「这条还没到该回的时候」。
+        // 跟 hold 不同：hold 是「欠着一句」，linger 没欠，只是不急。
+        if (action === 'linger') {
+          const minutes = Number(args?.minutes);
+          const why = String(args?.why ?? '').trim();
+          const mins = Number.isFinite(minutes) && minutes > 0 ? Math.min(Math.round(minutes), 240) : 30;
+          try {
+            await appendLedger(join(cfg.stateDir, 'control.jsonl'),
+              `${JSON.stringify({ at: localStamp(), action: 'linger', minutes: mins, why: why || null, by: 'her' })}\n`,
+              'utf8');
+          } catch (err) {
+            return { text: `（没写进去：${err?.message ?? err}）` };
+          }
+          return { text: `先等着：${mins} 分钟内不急着补话` + String.fromCharCode(10) + '（想改主意随时开口，这不是锁。）' };
         }
 
         // close = 「这段到这儿了」。pause 是「我不想说话」，close 是「这件事结束了」——
