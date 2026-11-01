@@ -2445,6 +2445,8 @@ const ROUND_MARK = '[本轮消息]';
         '         （`pause` 是我闭嘴；`close` 是这段完了。两件事，别混。）',
         '`where`：你现在在哪。可以看，别把它当任务清单。',
         '         **什么时候别写**：根本没有「正在做的事」的时候 —— 硬编一个出来比空着糟。',
+        '`skip`：这条我看了，不回。不是没看见，是判断了不用接。',
+        '         跟 pause 不同：pause 是你不想说话；skip 是这一句不值得接。',
         '',
         '这条权力是他答应给你的，不是借的，别客气。',
         '它只管心情这一层；你在 QQ 里说什么，不在它管的范围。',
@@ -2460,6 +2462,7 @@ const ROUND_MARK = '[本轮消息]';
           next_opening: { type: 'string', description: 'close 用：下次从哪接。可以不写。' },
           doing: { type: 'string', description: 'where 用：你现在在干什么。一句话。' },
           about: { type: 'string', description: 'hold 用：欠着的是哪一句。一句话。' },
+          reason: { type: 'string', description: 'skip 用：为什么不接。可以不写。' },
           id: { type: 'string', description: 'unhold 用：销哪一条。不给就销最早那条。' },
           stage: { type: 'string', description: 'where 用：到哪一步了。可以不写。' },
           next: { type: 'string', description: 'where 用：下一步干什么。可以不写。' },
@@ -2480,8 +2483,8 @@ const ROUND_MARK = '[本轮消息]';
       },
       async execute(args) {
         const action = String(args?.action ?? '').trim();
-        if (!['pause', 'resume', 'clear', 'keep', 'unkeep', 'files', 'close', 'where', 'hold', 'unhold', 'holds'].includes(action)) {
-          return { text: '（action 只有 pause / resume / clear / keep / unkeep / files / close / where / hold / unhold / holds。）' };
+        if (!['pause', 'resume', 'clear', 'keep', 'unkeep', 'files', 'close', 'where', 'hold', 'unhold', 'holds', 'skip'].includes(action)) {
+          return { text: '（action 只有 pause / resume / clear / keep / unkeep / files / close / where / hold / unhold / holds / skip。）' };
         }
         const reason = String(args?.reason ?? '').trim();
 
@@ -2558,6 +2561,22 @@ const ROUND_MARK = '[本轮消息]';
           } catch (err) {
             return { text: `（没查成：${err?.message ?? err}）` };
           }
+        }
+
+        // skip = 「这条我看了，不回」（M3 沉默拆四种里的第一种：看过了划走）。
+        // 为什么要留痕：不回和没看见在账上是一模一样的 —— 以前分不出来，
+        // 于是「她漏看了」和「她不想接」混成一堆。
+        if (action === 'skip') {
+          const about = String(args?.about ?? '').trim();
+          if (!about) return { text: '（skip 要写 about：哪一句你没接。）' };
+          const reason = String(args?.reason ?? '').trim();
+          const row = { at: localStamp(), action: 'skip', about, reason: reason || null, by: 'her' };
+          try {
+            await appendLedger(join(cfg.stateDir, 'control.jsonl'), `${JSON.stringify(row)}` + String.fromCharCode(10), 'utf8');
+          } catch (err) {
+            return { text: `（没写进去：${err?.message ?? err}）` };
+          }
+          return { text: `记下了：这句不接 —— ${about}` + String.fromCharCode(10) + '（看了不回也是决定，留个痕就行。）' };
         }
 
         // hold / unhold / holds（P-6 ⑧）：先把一句欠着，回了再销。
