@@ -243,3 +243,77 @@ test('formatDoctor：有 fail 就给一句总的指导', () => {
   assert.match(out, /有 FAIL/);
   assert.match(out, /0 ok · 0 warn · 1 fail/);
 });
+
+// ── 安装收据（2026-11-01）──
+// 四条各自钉一个状态：没装过 / 装了且依赖有人管 / 卸了但依赖还在 / 本来就有不算尾巴。
+// 第三、四条的分别就是 autoAdded 那个布尔值 —— 它错了就会误删别人的依赖，或者永远留着尾巴。
+
+async function makeProfileHome(receipt) {
+  const home = await mkdtemp(join(tmpdir(), 'rh-doc-rc-'));
+  const p = join(home, 'profiles', 'qqbot');
+  await mkdir(p, { recursive: true });
+  if (receipt) await writeFile(join(p, '.realheart-install-receipt.json'), JSON.stringify(receipt));
+  return { home, profile: p };
+}
+
+test('安装收据：没装过 → ok，并说重装一次会补上', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'rh-doc-rc-'));
+  try {
+    const r = await runDoctor({ dshHome: home });
+    const item = pick(r, '安装收据');
+    assert.equal(item.level, 'ok');
+    assert.match(item.detail, /没有安装收据/);
+    assert.match(item.fix, /install/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('安装收据：安装器补的依赖还在、插件也在 → ok，且说清卸载会带走', async () => {
+  const h = await makeProfileHome({
+    profile: 'qqbot',
+    peerAdds: [{ name: '@deepseek-ai/schemastery', autoAdded: true }],
+  });
+  await mkdir(join(h.profile, 'node_modules', 'realheart'), { recursive: true });
+  try {
+    const r = await runDoctor({ dshHome: h.home });
+    const item = pick(r, '安装收据');
+    assert.equal(item.level, 'ok');
+    assert.match(item.detail, /@deepseek-ai\/schemastery/);
+    assert.match(item.detail, /卸载时会一起带走/);
+  } finally {
+    await rm(h.home, { recursive: true, force: true });
+  }
+});
+
+test('安装收据：插件已卸、补装的依赖还在 → warn，且修法能照着敲', async () => {
+  const h = await makeProfileHome({
+    profile: 'qqbot',
+    peerAdds: [{ name: '@deepseek-ai/schemastery', autoAdded: true }],
+  });
+  try {
+    const r = await runDoctor({ dshHome: h.home });
+    const item = pick(r, '安装收据');
+    assert.equal(item.level, 'warn');
+    assert.match(item.detail, /插件已卸/);
+    assert.match(item.fix, /uninstall\.sh/);
+    assert.match(item.fix, /qqbot/);
+  } finally {
+    await rm(h.home, { recursive: true, force: true });
+  }
+});
+
+test('安装收据：autoAdded 是 false 的不算尾巴（那本来就是别人的依赖）', async () => {
+  const h = await makeProfileHome({
+    profile: 'qqbot',
+    peerAdds: [{ name: '@deepseek-ai/schemastery', autoAdded: false }],
+  });
+  try {
+    const r = await runDoctor({ dshHome: h.home });
+    const item = pick(r, '安装收据');
+    assert.equal(item.level, 'ok');
+    assert.match(item.detail, /依赖本来就在/);
+  } finally {
+    await rm(h.home, { recursive: true, force: true });
+  }
+});

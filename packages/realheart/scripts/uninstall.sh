@@ -187,6 +187,69 @@ else
 fi
 echo
 
+# ── 3.5 卸掉安装器为它补装过的依赖（2026-11-01）──
+# 尾巴的来源：装的时候安装器补了 @deepseek-ai/schemastery（pnpm 不装 peer），
+# 卸的时候只卸 realheart —— 装两样、卸一样。
+#
+# 这里不猜「哪些是我补的」：装的那一刻结论就写进了 profile 里的收据。
+# 三道闸，缺一条就不动：
+#   ① 收据里 autoAdded 必须是 true（本来就是这台机器上有的，卸了会连累别人）
+#   ② 插件本体得真的卸掉了（node_modules/realheart 还在 → 它还要用这个依赖）
+#   ③ 别的 bundle 不能依赖这个名字（那说明它不只归我要）
+RECEIPT="$PROFILE/.realheart-install-receipt.json"
+if [ ! -f "$RECEIPT" ]; then
+  echo "没有安装收据（0.2.12 之前装的没有这份）—— 补装过的依赖不自动卸"
+  echo "  真觉得多余，自己看一眼再定：ls $PROFILE/node_modules/@deepseek-ai/ 2>/dev/null"
+elif [ -d "$PROFILE/node_modules/$PKG" ]; then
+  echo "插件本体还在（$PKG 没卸掉）—— 它补装的依赖留着，它还要用"
+else
+  PEERS=$(node -e '
+    const fs=require("fs");
+    try{
+      const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+      const rows=Array.isArray(r?.peerAdds)?r.peerAdds:[];
+      process.stdout.write(rows.filter(x=>x&&x.autoAdded===true&&x.name).map(x=>x.name).join(" "));
+    }catch(e){}
+  ' "$RECEIPT" 2>/dev/null || true)
+  if [ -z "$PEERS" ]; then
+    echo "收据里没有「安装器补的」依赖 —— 不用卸"
+  else
+    for _peer in $PEERS; do
+      # 还有谁依赖它：扫 bundles 里每个包的 dependencies / peerDependencies
+      USERS=$(node -e '
+        const fs=require("fs"),path=require("path");
+        const profile=process.argv[1], name=process.argv[2];
+        const out=[];
+        try{
+          const d=JSON.parse(fs.readFileSync(path.join(profile,"package.json"),"utf8"));
+          for(const b of (d?.dsh?.profile?.bundles||[])){
+            try{
+              const p=JSON.parse(fs.readFileSync(path.join(profile,"node_modules",b,"package.json"),"utf8"));
+              const deps={...(p.dependencies||{}),...(p.peerDependencies||{}),...(p.optionalDependencies||{})};
+              if(deps[name]) out.push(b);
+            }catch{}
+          }
+        }catch{}
+        process.stdout.write(out.join(" "));
+      ' "$PROFILE" "$_peer" 2>/dev/null || true)
+      if [ -n "$USERS" ]; then
+        echo "不卸 $_peer：还有 ${USERS} 在依赖它（那不是为我补的）"
+      elif [ "$CLI" -eq 0 ]; then
+        echo "跳过卸 $_peer（--no-cli）"
+      elif [ "$DRY" -eq 1 ]; then
+        echo "  [dry-run] dsh plugin --profile $(basename "$PROFILE") remove $_peer"
+      elif command -v dsh >/dev/null 2>&1; then
+        dsh plugin --profile "$(basename "$PROFILE")" remove "$_peer" >/dev/null 2>&1 \
+          && echo "卸了安装器补装的依赖：$_peer" \
+          || echo "卸 $_peer 没成功（自己看一眼：$PROFILE/node_modules）"
+      else
+        echo "没有 dsh 命令 —— 跳过卸 $_peer"
+      fi
+    done
+  fi
+fi
+echo
+
 # ── 4. 摘 bundles 那一行 ──
 # 这是最容易漏、后果最难看的一步：包没了但那行还挂着 → 下次启动报错。
 # 交给 setup.mjs（唯一知道包名和格式的地方），幂等，摘不到也不报错。

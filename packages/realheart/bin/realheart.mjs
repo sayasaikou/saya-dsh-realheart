@@ -184,12 +184,44 @@ function install(opts) {
   //   qqbot 那台没暴露，是因为它的 profile 里本来就有整套 dsh 包，顺带带进来了。
   //   所以装完自检一次：缺就补；补不上就明说要多敲哪句，别让人对着一句报错猜。
   const PEER = '@deepseek-ai/schemastery';
+
+  // ── 收据（2026-11-01）──
+  // 为什么要收据：装的那一刻才知道「这个依赖本来有没有」。
+  // 卸载时没有这份记录，就只能靠猜 —— 而「猜着删别人的依赖」比留着尾巴更糟。
+  // 位置放 profile 里，不放 $DSH_HOME/realheart：那个目录卸载时会被删，收据得在卸的时候还读得到。
+  const RECEIPT = join(profileDir, '.realheart-install-receipt.json');
+  const recordPeer = (name, autoAdded) => {
+    let receipt = { profile: profileName, peerAdds: [] };
+    try {
+      receipt = JSON.parse(readFileSync(RECEIPT, 'utf8'));
+    } catch {
+      /* 没有就是第一次装 */
+    }
+    const rows = Array.isArray(receipt?.peerAdds) ? receipt.peerAdds : [];
+    const at = new Date().toISOString();
+    const found = rows.find((r) => r?.name === name);
+    if (found) {
+      // 已经记过「是我补的」就别被后来的「能解析」冲掉 —— 它确实是我带来的。
+      found.autoAdded = Boolean(found.autoAdded) || Boolean(autoAdded);
+      found.lastSeenAt = at;
+    } else {
+      rows.push({ name, autoAdded: Boolean(autoAdded), firstAt: at, lastSeenAt: at });
+    }
+    writeFileSync(
+      RECEIPT,
+      `${JSON.stringify({ profile: profileName, updatedAt: at, peerAdds: rows }, null, 2)}\n`,
+      'utf8',
+    );
+  };
+
   const peerResolves = () => spawnSync(
     process.execPath,
     ['-e', `try{require.resolve("${PEER}");process.exit(0)}catch(e){process.exit(42)}`],
     { cwd: profileDir, stdio: 'ignore' },
   ).status === 0;
   if (peerResolves()) {
+    // 这台 profile 里本来就有 → 不是我们带进来的，卸的时候不许带走
+    if (!opts.dryRun) recordPeer(PEER, false);
     say(`依赖 ${PEER} 能解析，不用补`);
   } else if (opts.dryRun) {
     say(`[dry-run] 缺 ${PEER}，正式跑会自动补装`);
@@ -199,6 +231,8 @@ function install(opts) {
       ? spawnSync(`dsh plugin --profile ${profileName} add ${PEER}`, { cwd: profileDir, stdio: 'inherit', shell: true })
       : spawnSync('dsh', ['plugin', '--profile', profileName, 'add', PEER], { cwd: profileDir, stdio: 'inherit' });
     if (r3.status === 0 && peerResolves()) {
+      // 是安装器补的 → 写进收据，卸载时才知道该不该带走
+      recordPeer(PEER, true);
       say(`补上了：${PEER}`);
     } else {
       fail(`装完还是解析不到 ${PEER}。手动补一句：` + String.fromCharCode(10) + `dsh plugin --profile ${profileName} add ${PEER}`);

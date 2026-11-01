@@ -225,6 +225,50 @@ export async function runDoctor({ dshHome = DSH_HOME } = {}) {
     }
   }
 
+  // ── 安装收据：安装器补装过的依赖有没有人管（2026-11-01）──
+  // 为什么它得在 doctor 里：「装的时候补了一个 peer 依赖、卸的时候没带走」这件事，
+  // 在装完和卸完两种状态下**看起来都毫无异常** —— 只能翻 node_modules 才发现。
+  // 为什么它不能排在后面：它只看 dshHome，不依赖 stateDir —— 而下面那个
+  // `if (!stateDir) return` 会在「没装成过」的机器上把最后几项全部跳过，
+  // 恰恰那种机器最该看到「你这里还留着安装器补的依赖」。
+  const profilesDir = join(dshHome, 'profiles');
+  const receipts = [];
+  try {
+    for (const name of await readdir(profilesDir)) {
+      const rp = join(profilesDir, name, '.realheart-install-receipt.json');
+      if (!existsSync(rp)) continue;
+      const stillInstalled = existsSync(join(profilesDir, name, 'node_modules', 'realheart'));
+      try {
+        const r = JSON.parse(await readFile(rp, 'utf8'));
+        const rows = Array.isArray(r?.peerAdds) ? r.peerAdds : [];
+        const auto = rows.filter((x) => x && x.autoAdded === true && x.name).map((x) => x.name);
+        receipts.push({ name, auto, stillInstalled });
+      } catch {
+        receipts.push({ name, auto: [], stillInstalled, broken: true });
+      }
+    }
+  } catch {
+    /* 没有 profiles 目录 —— 这台机器没装过任何 profile，下面照 ok 报 */
+  }
+  const brokenReceipts = receipts.filter((r) => r.broken);
+  const orphanDeps = receipts.filter((r) => r.auto.length && !r.stillInstalled);
+  const coveredDeps = receipts.filter((r) => r.auto.length && r.stillInstalled);
+  if (brokenReceipts.length) {
+    add('warn', '安装收据', `${brokenReceipts.map((r) => r.name).join(' / ')} 的收据读不出来（JSON 坏了）`,
+      '删掉那个 .realheart-install-receipt.json 就行 —— 删了等于「不知道是不是安装器补的」，卸载不会自动带走');
+  } else if (orphanDeps.length) {
+    const one = orphanDeps[0];
+    add('warn', '安装收据', `插件已卸、但安装器补装的依赖还在：${orphanDeps.map((r) => `${r.name}（${r.auto.join(' / ')}）`).join('；')}`,
+      `跑一次 sh scripts/uninstall.sh --profile ${one.name}（插件本体已经没了，它只会收拾依赖）；或者手动 dsh plugin --profile ${one.name} remove ${one.auto[0]}`);
+  } else if (coveredDeps.length) {
+    add('ok', '安装收据', `${coveredDeps.map((r) => `${r.name} 补装了 ${r.auto.join(' / ')}`).join('；')} —— 卸载时会一起带走`);
+  } else if (receipts.length) {
+    add('ok', '安装收据', '有收据，但没有「安装器补的」依赖（依赖本来就在）');
+  } else {
+    add('ok', '安装收据', '没有安装收据（0.2.12 之前装的，卸载不会自动处理补装依赖）',
+      '重跑一次 npx realheart install 就会补上这份收据 —— 它只写一个文件，不改别的');
+  }
+
   // ── 8. 账本有没有坏行 ──
   // 走到这里还没有 stateDir，说明运行时配置根本不存在 —— 后面几项（账本、渲染、注入）
   // 都是「不知道该查哪个目录」。**不猜**：猜错会往别人家里建目录或者读别人的账本。
