@@ -2406,7 +2406,10 @@ const ROUND_MARK = '[本轮消息]';
       return;
     }
 
-    tools.register({
+    // 2026-11-01：日志里那串工具名原来靠手写 —— 加一个就漏一个，而“注册成功”唯一的外部证据就是这行日志。
+    const registered = [];
+    const registerTool = (spec) => { registered.push(spec.name); return tools.register(spec); };
+    registerTool({
       name: 'rh_mood',
       description: DESCRIPTION,
       parameters: {
@@ -2561,7 +2564,7 @@ const ROUND_MARK = '[本轮消息]';
     //
     // 为什么给她这个：状态是事实，表现是选择。让她自己写这一层，比别人替她定「你这个心情该怎么说」对得多。
     // 它滚动覆盖：每写一条，新的顶掉旧的（旧的还在流水里，可以查）。
-    tools.register({
+    registerTool({
       name: 'rh_style',
       description: [
         '写「这个状态下的我怎么说话」。',
@@ -2622,7 +2625,7 @@ const ROUND_MARK = '[本轮消息]';
     // 为什么要有这个工具：文件（pending.md）是给她和人看的，账要靠事件流水。
     // 「真做了」必须由流水佐证 —— 勾一下不等于做了，所以 check 可以不带佐证，
     // 但不带的勾记成 claimed_done，永远不进续接率。这条是她定的。
-    tools.register({
+    registerTool({
       name: 'rh_pending',
       description: [
         '没完的事：加一条、勾掉、或者删掉。',
@@ -2732,7 +2735,7 @@ const ROUND_MARK = '[本轮消息]';
     //
     // 她说过：「我能喊停。我说停就停，不是再试一次。」
     // 这句话要是只靠别人记得去按，就等于没给。所以给她一个能自己按的。
-    tools.register({
+    registerTool({
       name: 'rh_control',
       description: [
         '你自己按开关。',
@@ -3065,7 +3068,7 @@ const ROUND_MARK = '[本轮消息]';
     // 为什么单独一本：断言（「这个接口不支持 X」）和看法（「我不喜欢 X」）不是一个东西 ——
     // 前一个能被证伪，后一个不能。混在一起，以后分不清「她说错了」和「她不喜欢」。
     // 被推翻不删原文，只标 refuted：删了就只能看见「她没错过」。
-    tools.register({
+    registerTool({
       name: 'rh_claim',
       description: [
         '记一条可以被对账的断言。',
@@ -3150,7 +3153,7 @@ const ROUND_MARK = '[本轮消息]';
     //
     // 为什么单独一本：`pending` 是「他提过、还没完的事」，`works` 是「我自己在干的事」。
     // 混在一起，以后分不清哪些是欠别人的、哪些是自己的。
-    tools.register({
+    registerTool({
       name: 'rh_work',
       description: [
         '你自己在干的事。',
@@ -3235,7 +3238,7 @@ const ROUND_MARK = '[本轮消息]';
     });
 
     // ── 看法账（P-6 ⑨）
-    tools.register({
+    registerTool({
       name: 'rh_view',
       description: [
         '记一条你的看法。',
@@ -3283,7 +3286,7 @@ const ROUND_MARK = '[本轮消息]';
     // ── 认过的错（P-6 ⑩）
     //
     // 认错这件事得有个地方放。放在嘴上，下一轮就没了；放在改动账里，跟「改了什么」分不清。
-    tools.register({
+    registerTool({
       name: 'rh_admit',
       description: [
         '认个错。',
@@ -3329,7 +3332,7 @@ const ROUND_MARK = '[本轮消息]';
     //
     // 她说：「别只靠问我，要留一个我能查的东西。」
     // 这就是那个东西 —— 她自己能翻，不用等谁解释。
-    tools.register({
+    registerTool({
       name: 'rh_changes',
       description: '查别人动过你什么：谁、什么时候、改了哪一层、为什么、怎么退回去。',
       parameters: {
@@ -3362,7 +3365,7 @@ const ROUND_MARK = '[本轮消息]';
     });
 
     const idx = await indexIds();
-    log(`rh_mood / rh_pending / rh_control / rh_changes / rh_style / rh_admit / rh_view / rh_claim 已注册；事件索引 ${idx.ids.size} 条（${idx.note}）`);
+    log(`${registered.join(' / ')} 已注册；事件索引 ${idx.ids.size} 条（${idx.note}）`);
   })();
 }
 
