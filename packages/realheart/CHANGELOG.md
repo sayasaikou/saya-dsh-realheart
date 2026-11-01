@@ -27,6 +27,16 @@ audit 还在，但只补剩下的位子。读不到就少那一半，不猜。
 
 ---
 
+## 0.2.48
+
+**自由时间多一句：能用 agent-reach 去看。**
+
+- 她那台今天装了 [Agent Reach](https://github.com/Panniantong/Agent-Reach) 1.6.1（B站 / GitHub /
+  V2EX / YouTube / 网页），五个默认渠道全部就绪，B站 search / hot 实测有数据。
+- `FREE_PROMPT` 加一句：「B站、GitHub、V2EX、网页都能查：agent-reach 这个命令，用法在你自己那份 skill 里。」
+- skill 已经链到 `.dsh/profiles/qqbot/skills/agent-reach`，她自己会读。
+- 安装过程踩到两个坑：系统缺 `python3-venv`（报「No module named pip」，其实是缺包），
+  而且 SSH 中间断了三次 —— 这两个都记进待办增补了。
 ## 0.2.47
 
 **两件从 surfcore 学来的（github.com/Mieksido/surfcore）。**
