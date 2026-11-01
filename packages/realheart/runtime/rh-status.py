@@ -456,6 +456,48 @@ def _lv(row):
         return 0
 
 
+STYLE_LOG = os.path.join(RH_STATE, 'style.jsonl')
+
+
+def render_style():
+    """她的表现层 —— 她自己写的「这个状态下怎么说」。
+
+    2026-11-01 加：跟心情分开存（style.jsonl），因为它管的是调子，不是状态本身。
+    """
+    text, err = read_text(STYLE_LOG)
+    if text is None:
+        return ('<div class="card"><h2>她现在 · 说话的样子</h2>'
+                '<p class="muted">还没写过。她调 rh_style 写一句，这里就出来。</p></div>')
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            rows.append(obj)
+    if not rows:
+        return ('<div class="card"><h2>她现在 · 说话的样子</h2>'
+                '<p class="err">文件在，但一行都解析不出来。</p></div>')
+    last = rows[-1]
+    how = str(last.get('how') or '').strip()
+    at = _fmt_at(last.get('at'))
+    if not how:
+        return ('<div class="card"><h2>她现在 · 说话的样子</h2>'
+                '<p class="muted">最近一条是空的 —— 她自己把这个调子清掉了（%s）。</p></div>' % esc(at))
+    out = ['<div class="mood">%s</div>' % esc(how)]
+    out.append('<div class="kv"><b>写于</b><span>%s</span></div>' % esc(at))
+    decay = str(last.get('decay') or '').strip()
+    if decay:
+        out.append('<div class="kv"><b>她自己说</b><span>%s</span></div>' % esc(decay))
+    return ('<div class="card"><h2>她现在 · 说话的样子</h2>%s'
+            '<p class="note">来自 <span class="muted">work/realheart/style.jsonl</span></p></div>'
+            % ''.join(out))
+
+
 CONTROL_LOG = os.path.join(RH_STATE, 'control.jsonl')
 
 
@@ -687,7 +729,7 @@ def render_free_time():
 
 
 def render_pending():
-    path = os.path.join(MEM, 'pending.md')
+    path = os.path.join(RH_STATE, 'pending.md')
     text, err = read_text(path)
     st = stat_of(path)
     meta = ('· 改于 %s（%s）' % (stamp(st['mtime']), age_of(st['mtime']))) if st else ''
@@ -708,7 +750,7 @@ def render_pending():
             body = '<ul class="list">%s</ul><p class="note">%d 条未完成 / 共 %d 条</p>' % (
                 ''.join(li), opened, len(items))
     return ('<div class="card"><h2>没完的事</h2>%s<p class="note">来自 '
-            '<span class="muted">work/MEMORY/pending.md</span> %s</p></div>' % (body, meta))
+            '<span class="muted">work/realheart/pending.md</span> %s</p></div>' % (body, meta))
 
 
 def render_memes():
@@ -1132,8 +1174,8 @@ def apply_config_post(form):
 def build_page(flash=''):
     info = sysinfo()
     cards = ''.join([
-        render_mood(),
         render_mood_ledger(),
+        render_style(),
         render_free_time(),
         render_week(),
         render_timeline(),
