@@ -352,6 +352,12 @@ table.cfg input:focus,table.cfg select:focus{outline:none;border-color:#3f5a78}
 .cfgbar button{background:#1d2530;color:#dbe3ee;border:1px solid #2f3a48;border-radius:8px;
 padding:7px 16px;font:inherit;font-size:13px;cursor:pointer}
 .cfgbar button:hover{background:#243040;border-color:#3f5a78}
+details.cfggrp{border:1px solid #1f2530;border-radius:10px;padding:2px 10px;margin:0 0 10px;background:#12161d}
+details.cfggrp>summary{cursor:pointer;padding:9px 2px;font-weight:600;color:#cfd6e2;font-size:13.5px;list-style:none}
+details.cfggrp>summary::-webkit-details-marker{display:none}
+details.cfggrp>summary::before{content:"▸ ";color:#5f6b7c}
+details.cfggrp[open]>summary::before{content:"▾ "}
+.gcount{color:#6f7885;font-weight:400;font-size:12px;margin-left:6px}
 a{color:#6ea8fe;text-decoration:none}
 .wide{grid-column:1/-1}
 .wk{display:grid;grid-template-columns:52px 1fr 1fr 1fr 1.6fr;gap:8px;
@@ -1091,6 +1097,19 @@ def _field_input(f, cur):
         key, danger, esc(cur), esc(cur))
 
 
+# 配置分组（2026-11-01）：二十项一页太长，危险项和普通项还搔在一起。
+# 用 <details> 折叠 —— 不靠 JS，窄屏也不会挤成一团。
+GROUP_META = [
+    ('switch', '开关', True),
+    ('inject', '每轮注入', True),
+    ('freetime', '自由时间', True),
+    ('boundary', '边界：改她的心', True),
+    ('ledger', '账本与目录', False),
+    ('page', '观测页', False),
+    ('other', '其他', False),
+]
+
+
 def render_config_edit(flash=''):
     schema = _cfg_schema()
     if not schema:
@@ -1098,18 +1117,38 @@ def render_config_edit(flash=''):
                 '还没拿到配置描述 —— 重启一次插件，它会在运行时目录写一份 config-schema.json。'
                 '在那之前这一块只能看不能改。</p></div>')
     user = _user_cfg()
-    rows = []
-    for f in schema['fields']:
+
+    def row_html(f):
         lv = f.get('level') or 'normal'
         cur = user.get(f['key'], f.get('current'))
-        rows.append(
-            '<tr class="lv-%s"><td class="lv">%s</td>'
-            '<td><b>%s</b><br><span class="mono">%s</span></td>'
-            '<td>%s</td><td class="mono">%s</td><td class="why">%s</td></tr>'
-            % (lv, LEVEL_TEXT.get(lv, lv), esc(f.get('label') or f['key']), esc(f['key']),
-               _field_input(f, cur), esc(f.get('range') or ''), esc(f.get('why') or '')))
+        return ('<tr class="lv-%s"><td class="lv">%s</td>'
+                '<td><b>%s</b><br><span class="mono">%s</span></td>'
+                '<td>%s</td><td class="mono">%s</td><td class="why">%s</td></tr>'
+                % (lv, LEVEL_TEXT.get(lv, lv), esc(f.get('label') or f['key']), esc(f['key']),
+                   _field_input(f, cur), esc(f.get('range') or ''), esc(f.get('why') or '')))
 
-    head = ('<tr><th>级别</th><th>项</th><th>当前值</th><th>合法范围</th><th>改了会怎样</th></tr>')
+    head = '<tr><th>级别</th><th>项</th><th>当前值</th><th>合法范围</th><th>改了会怎样</th></tr>'
+    by_group = {}
+    for f in schema['fields']:
+        by_group.setdefault(f.get('group') or 'other', []).append(f)
+
+    blocks = []
+    for gid, gname, opened in GROUP_META:
+        fields = by_group.get(gid) or []
+        if not fields:
+            continue
+        rows = ''.join(row_html(f) for f in fields)
+        blocks.append(
+            '<details class="cfggrp"%s><summary>%s <span class="gcount">%d 项</span></summary>'
+            '<table class="cfg">%s%s</table></details>'
+            % (' open' if opened else '', esc(gname), len(fields), head, rows))
+    # 没归类的也列出来，不能因为写漏就消失
+    leftover = [f for f in schema['fields'] if (f.get('group') or 'other') not in dict((g, 1) for g, _, _ in GROUP_META)]
+    if leftover:
+        rows = ''.join(row_html(f) for f in leftover)
+        blocks.append('<details class="cfggrp" open><summary>未归类 <span class="gcount">%d 项</span></summary>'
+                      '<table class="cfg">%s%s</table></details>' % (len(leftover), head, rows))
+
     esc_hint = esc(schema.get('escape', {}).get('note', ''))
     flash_html = ('<p class="ok">%s</p>' % esc(flash)) if flash else ''
 
@@ -1117,8 +1156,8 @@ def render_config_edit(flash=''):
         '<div class="card wide"><h2>配置（改了要重启）</h2>'
         + flash_html
         + '<form method="post" action="config" onsubmit="return rhConfirm(this)">'
-        '<table class="cfg">%s%s</table>'
-        '<div class="cfgbar">'
+        + ''.join(blocks)
+        + '<div class="cfgbar">'
         '<input type="text" name="__why" placeholder="为什么改（会写进改动记录，可留空）" size="42">'
         '<button type="submit">保存到 config.user.json</button>'
         '<span class="note">%s</span>'
@@ -1129,10 +1168,10 @@ def render_config_edit(flash=''):
         'if(!e.name||e.name==="__why")continue;'
         'if(e.getAttribute("data-danger")==="1"&&e.value!==e.getAttribute("data-was"))t.push(e.name);}'
         'if(!t.length)return true;'
-        'return confirm("这些是危险项：\\n"+t.join("、")+"\\n\\n改了要重启才生效。确定？");}'
+        'return confirm("这些是危险项：\n"+t.join("、")+"\n\n改了要重启才生效。确定？");}'
         '</script>'
         '</div>'
-    ) % (head, ''.join(rows), esc_hint)
+    ) % esc_hint
 
 
 def apply_config_post(form):
