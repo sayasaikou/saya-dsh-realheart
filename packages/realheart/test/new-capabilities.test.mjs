@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,15 +40,17 @@ const settle = (ms = 400) => new Promise((r) => setTimeout(r, ms));
 async function boot() {
   const root = await mkdtemp(join(tmpdir(), 'rh-new-state-'));
   const stateDir = join(root, 'state');
+  const msgsDir = join(root, 'msgs');
   const h = makeCtx();
   apply(h.ctx, {
     stateDir,
+    msgsDir,
     servePage: false,
     freeTime: false,
     announceOnInstall: false,
   });
   await settle();
-  return { ...h, stateDir, root };
+  return { ...h, stateDir, msgsDir, root };
 }
 
 async function lines(dir, name) {
@@ -165,6 +167,46 @@ test('rh_control pause 的 kind 只认四个；非法值不进账', async () => 
     const rows = await lines(h.stateDir, 'control.jsonl');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].kind, 'tired');
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test('主动想起：他提到那件事时，注入里出现她以前的看法', async () => {
+  const h = await boot();
+  try {
+    await mkdir(h.msgsDir, { recursive: true });
+    await writeFile(join(h.msgsDir, '2026-11-01.jsonl'),
+      JSON.stringify({ at: Date.now(), openid: '1418499574', name: 'SaYask', text: '适配层到底要不要做' }) + '\n',
+      'utf8');
+    await h.tools.get('rh_view').execute({ subject: '适配层', view: '不该做，会白白多养一层' });
+    const inj = h.handlers.find((x) => x.name === 'system-prompt/assemble');
+    const assembled = { sections: [] };
+    await inj.fn(assembled, {}, async () => assembled);
+    const raw = await readFile(join(h.stateDir, 'last-inject.md'), 'utf8');
+    assert.ok(raw.includes('realheart:recall'), '注入里没有 recall 段');
+    assert.ok(raw.includes('不该做，会白白多养一层'), '注入里没有那条看法');
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test('主动想起：没提到就不提（不刷屏）', async () => {
+  const h = await boot();
+  try {
+    await mkdir(h.msgsDir, { recursive: true });
+    await writeFile(join(h.msgsDir, '2026-11-01.jsonl'),
+      JSON.stringify({ at: Date.now(), openid: '1418499574', name: 'SaYask', text: '今天天气不错' }) + '\n',
+      'utf8');
+    await h.tools.get('rh_view').execute({ subject: '适配层', view: '不该做' });
+    const inj = h.handlers.find((x) => x.name === 'system-prompt/assemble');
+    const assembled = { sections: [] };
+    await inj.fn(assembled, {}, async () => assembled);
+    let raw = '';
+    try {
+      raw = await readFile(join(h.stateDir, 'last-inject.md'), 'utf8');
+    } catch { /* 没落盘也正常 */ }
+    assert.ok(!raw.includes('realheart:recall'), '没提到却注入了 recall');
   } finally {
     await rm(h.root, { recursive: true, force: true });
   }

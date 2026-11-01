@@ -872,6 +872,45 @@ const ROUND_MARK = '[本轮消息]';
   }
 
   /**
+   * 主动想起（P-6 ⑥）：他刚提到一件事，而她以前对这件事有看法。
+   *
+   * 为什么只带一条、且必须带时间：带多了就成刷屏，不带时间就成了「我一直这么想」——
+   * 而人改主意是常事。命中才说，没命中就一字不提。
+   */
+  async function recallSectionText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    try {
+      const views = await readView();
+      if (!views.length) return '';
+      const names = (await readdir(cfg.msgsDir)).filter((n) => n.endsWith('.jsonl') && !n.startsWith('_')).sort();
+      const fn = names[names.length - 1];
+      if (!fn) return '';
+      const text = await readFile(join(cfg.msgsDir, fn), 'utf8');
+      const lines = text.split('\n').filter((l) => l.trim());
+      if (!lines.length) return '';
+      let said = '';
+      try {
+        said = String(JSON.parse(lines[lines.length - 1])?.text || '');
+      } catch {
+        return '';
+      }
+      if (!said) return '';
+      for (let i = views.length - 1; i >= 0; i -= 1) {
+        const subj = String(views[i]?.subject || '').trim();
+        if (subj.length < 2 || !said.includes(subj)) continue;
+        const view = String(views[i]?.view || '').trim();
+        if (!view) continue;
+        const at = String(views[i]?.at || '').slice(0, 16).replace('T', ' ');
+        return ['【这件事你以前想过】', `关于「${subj}」：${view}`, `（记于 ${at}。你现在可能改主意了 —— 那是你自己的事。）`].join('\n');
+      }
+      return '';
+    } catch {
+      return '';
+    }
+  }
+
+  /**
    * 她自己的处境（P-6 ⑫）。
    *
    * 为什么要告诉她这些：她跑在哪、重启过几次、这次跑了多久 —— 这些不是隐私，
@@ -1222,6 +1261,12 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('admit', err);
         }
         try {
+          const recall = await recallSectionText();
+          if (recall) parts.push(sec('realheart:recall', 910, recall));
+        } catch (err) {
+          await noteInjectProblem('recall', err);
+        }
+        try {
           const situ = await situationSectionText();
           if (situ) parts.push(sec('realheart:situation', 909, situ));
         } catch (err) {
@@ -1282,6 +1327,7 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:admit': 90,
           'realheart:where': 92,
           'realheart:view': 88,
+          'realheart:recall': 86,
           'realheart:situation': 45,
           'realheart:kept': 80,
           'realheart:pending': 60,
