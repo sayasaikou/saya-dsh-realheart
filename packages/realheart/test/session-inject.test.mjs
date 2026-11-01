@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -152,6 +152,35 @@ test('太旧的不渗：24 小时前的那种，只在它自己的场合里出�
     assert.ok(sec);
     assert.match(sec.text, /本场合今天的/);
     assert.ok(!sec.text.includes('昨天别处记的'), '30 小时前的还渗过来了');
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test('时间感：上一轮开口在 10 小时前 → 注入里带一句', async () => {
+  const h = await boot();
+  try {
+    await assembleWith(h, 'sess-A'); // 先跑一轮，让 last-inject 落地
+    const p = join(h.stateDir, 'last-inject.md');
+    const old = new Date(Date.now() - 10 * 3600 * 1000);
+    await utimes(p, old, old);
+    const inj = h.handlers.find((x) => x.name === 'system-prompt/assemble');
+    const out = await inj.fn({ sections: [] }, {}, async () => ({ sections: [] }));
+    const sec = out.sections.find((s) => s.name === 'realheart:time');
+    assert.ok(sec, '10 小时前那轮没被说出来');
+    assert.match(sec.text, /10 小时前/);
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test('时间感：刚说过话就不提（三小时内说了像打卡）', async () => {
+  const h = await boot();
+  try {
+    await assembleWith(h, 'sess-A');
+    const inj = h.handlers.find((x) => x.name === 'system-prompt/assemble');
+    const out = await inj.fn({ sections: [] }, {}, async () => ({ sections: [] }));
+    assert.equal(out.sections.find((s) => s.name === 'realheart:time'), undefined);
   } finally {
     await rm(h.root, { recursive: true, force: true });
   }

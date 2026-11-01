@@ -853,6 +853,31 @@ export function apply(ctx, config = {}) {
     return { alive: false, text: `观测页：不在（pid 文件读不到，端口 ${cfg.pagePort} 也没响应）` };
   }
 
+  /**
+   * 时间的体感（P-6 ⑦，2026-11-01）。
+   *
+   * 她说过想要「距上次聊这个几天了」那种数。先做最小的一格：**距她上一轮开口多久**。
+   * 数据来源是 last-inject 的 mtime —— 注入发生在每轮开口之前，所以它的 mtime
+   * 约等于上一轮的时间。**而且必须在本轮写它之前读**（组装完才写，顺序天然对）。
+   *
+   * 三个「不说」：
+   *   ① 三小时内 —— 太近了，说了像打卡；
+   *   ② 读不到 —— 第一次跑 / 文件不在 / 权限不对，**不猜**，一句都不加；
+   *   ③ 超过 30 天也不报具体数 —— 说「很久」比说「43 天没来」更像人。
+   */
+  async function timeSenseText() {
+    try {
+      const paths = lastInjectPaths(cfg.stateDir, instanceTagFrom(process.argv));
+      const st = await stat(paths.latest);
+      const hours = (Date.now() - st.mtimeMs) / 3600000;
+      if (!Number.isFinite(hours) || hours < 3) return '';
+      if (hours > 24 * 30) return '【时间感】距你上一次开口：已经很久了。';
+      const when = hours < 24 ? `${Math.round(hours)} 小时` : `${(hours / 24).toFixed(1)} 天`;
+      return `【时间感】距你上一次开口：${when}前。`;
+    } catch {
+      return '';
+    }
+  }
   if (cfg.injectMood !== false) {
     // ⚠️ { global: true } 不是可选的：system-prompt/assemble 按作用域触发，
     //    不带这个选项就收不到事件 —— 表现是“注册了、没报错、永远不生效”。
@@ -901,6 +926,12 @@ export function apply(ctx, config = {}) {
         } catch (err) {
           await noteInjectProblem('kept', err);
         }
+        try {
+          const ttext = await timeSenseText();
+          if (ttext) parts.push(sec('realheart:time', 906, ttext));
+        } catch (err) {
+          await noteInjectProblem('time', err);
+        }
         if (!parts.length) return assembled;
         // ── 预算（M1-6）──
         // 不做这个的话，她留的话越攒越多、待办越来越长，每轮都在为它们付钱，
@@ -913,6 +944,7 @@ export function apply(ctx, config = {}) {
           'realheart:pending': 60,
           'realheart:status-page': 55,
           'realheart:pending-change': 40,
+          'realheart:time': 45,
         };
         const budget = Number(cfg.injectBudgetChars) > 0 ? Number(cfg.injectBudgetChars) : 0;
         let total = parts.reduce((n, p) => n + p.text.length, 0);
