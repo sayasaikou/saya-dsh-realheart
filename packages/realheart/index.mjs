@@ -45,7 +45,7 @@ const execFileAsync = promisify(execFile);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 三种事件 id 都长这样 */
-const REF_RE = /(^|[^A-Za-z0-9_])([nah]):([A-Za-z0-9_-]+)#(\d+)/g;
+const REF_RE = /(^|[^A-Za-z0-9_])([nahm]):([A-Za-z0-9_-]+)#(\d+)/g;
 
 function localStamp(d = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
