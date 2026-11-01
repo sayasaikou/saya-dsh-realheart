@@ -154,6 +154,33 @@ export async function runDoctor({ dshHome = DSH_HOME } = {}) {
     }
   }
 
+  // ── 4b. 心情的新鲜度（2026-11-01）──
+  // 为什么查这条：10-26 到 11-01 那份心情四天没动，页面照旧显示「她现在的状态」——
+  // 账本里的字是旧的，读的人以为是真的。这条不判对错，只把「多久没动」摆出来。
+  if (stateDir) {
+    try {
+      const raw = await readFile(join(stateDir, 'mood.jsonl'), 'utf8');
+      const rows = raw.split('\n').filter((l) => l.trim());
+      const last = rows.length ? JSON.parse(rows[rows.length - 1]) : null;
+      const at = Date.parse(String(last?.at || ''));
+      if (Number.isNaN(at)) {
+        add('ok', '心情新鲜度', `账本里 ${rows.length} 笔，最后一笔时间读不出（格式变了？）`);
+      } else {
+        const hours = (Date.now() - at) / 3600000;
+        const label = hours < 24 ? `${Math.round(hours)} 小时前` : `${Math.round(hours / 24)} 天前`;
+        if (hours > 24 * 7) {
+          add('warn', '心情新鲜度', `最后一条是 ${label} 记的（共 ${rows.length} 笔）`,
+            '她没觉得需要改就不算错；但页面上那行「现在」是旧的 —— 别拿它当此刻');
+        } else {
+          add('ok', '心情新鲜度', `最后一条 ${label}（共 ${rows.length} 笔）`);
+        }
+      }
+    } catch (err) {
+      if (err?.code === 'ENOENT') add('ok', '心情新鲜度', '还没有第一笔（正常，不是故障）');
+      else add('warn', '心情新鲜度', `读不了 mood.jsonl（${err?.code ?? err?.message ?? err}）`);
+    }
+  }
+
   // ── 5. 账本权限（P-4：账本目录 600）──
   // 这里每一样都是她写过的话。同机器上的别的账号顺手能读，是不该有的默认。
   if (stateDir) {
