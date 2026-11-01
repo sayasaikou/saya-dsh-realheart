@@ -1537,6 +1537,35 @@ const ROUND_MARK = '[本轮消息]';
    * 只信 msgs（真话源）：倒着扫，先碰到「我」就说接上了；先碰到「他」且结尾是问号就是未接。
    * ownerId 没配就不拦 —— 宁可漏拦，不凭猜拦人。
    */
+  /**
+   * 这个来处到底是「我自己的」「他说的」还是「别人说的」（M2 owner 四分）。
+   *
+   * 为什么分：同样一条心情，「因为他一句话」和「因为我做错一件事」不是一个成因 ——
+   * 混成一类，以后看统计只会看到一堆「有来处」。
+   *
+   * 只对 m: 能真分（那一行有 openid）；a: / n: 都是我自己这边，记 self；
+   * 分不出来就返回 null —— 不猜。
+   */
+  async function ownerOfEventId(id) {
+    const ref = String(id || '');
+    if (!ref) return null;
+    if (/^[an]:/.test(ref)) return 'self';
+    const m = /^m:(\d{4}-\d{2}-\d{2})#(\d+)$/.exec(ref);
+    if (!m) return null;
+    try {
+      const text = await readFile(join(cfg.msgsDir, `${m[1]}.jsonl`), 'utf8');
+      const line = text.split('\n')[Number(m[2]) - 1];
+      if (!line) return null;
+      const o = JSON.parse(line);
+      const who = String(o?.openid || '');
+      const owner = String(cfg.ownerId || '');
+      if (!owner || !who) return null;
+      return who === owner ? 'owner' : 'member';
+    } catch {
+      return null;
+    }
+  }
+
   async function hasUnansweredQuestion() {
     const owner = String(cfg.ownerId || '').trim();
     if (!owner) return null;
@@ -1893,6 +1922,7 @@ const ROUND_MARK = '[本轮消息]';
           why_ref: hit,
           why_kind: whyKind,
           why_enum: whyEnum,
+          why_owner: await ownerOfEventId(hit),
           decay: decay || null,
           // 哪个会话记的。拿不到就写 null（= 全局可见），不编一个。
           session: sessionIdOfExec(exec) || null,
