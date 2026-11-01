@@ -2182,12 +2182,18 @@ const ROUND_MARK = '[本轮消息]';
         while ((m = REF_RE.exec(whyRef)) !== null) {
           found.push(`${m[2]}:${m[3]}#${m[4]}`);
         }
-        if (found.length === 0) {
+        // 干净机器上（没装任何输入通道、一条记录都没有）本来就没有事件可指 ——
+        // 这时候拦下来等于「装好了但用不了」。所以退一步：记成 none:unexplained，
+        // 但在账本里标 why_auto，以后能分出「她说不清」和「这里还没有记录」。
+        const idxProbe = await indexIds();
+        const noSource = idxProbe.ids.size === 0;
+        if (found.length === 0 && !noSource) {
           await noteMoodReject('no event id in why_ref', args);
           return {
             text: '（没记。why_ref 里没有事件 id。）\n'
               + '心情必须有来处。去观测页的时间线上找一个 id（鼠标悬停能看到），'
-              + '或者直接说清是因为哪句话、哪件事——但那个“哪件事”得能指到一个具体记录上。',
+              + '或者直接说清是因为哪句话、哪件事——但那个“哪件事”得能指到一个具体记录上。'
+              + '说不清就写 none:unexplained。',
           };
         }
 
@@ -2195,7 +2201,8 @@ const ROUND_MARK = '[本轮消息]';
         // 枚举写死：不接受自由文本，免得它退化成一句敷衍。
         // 这类记录不进「有成因」统计，来处也不进注入。
         const NONE_ENUM = ['unexplained', 'body', 'weather', 'sleep', 'unknown'];
-        const noneMatch = /^none:([a-z_]+)$/i.exec(whyRef);
+        const effectiveRef = found.length === 0 && noSource ? 'none:unexplained' : whyRef;
+        const noneMatch = /^none:([a-z_]+)$/i.exec(effectiveRef);
         let whyKind = 'ref';
         let whyEnum = null;
         let hit = null;
@@ -2248,6 +2255,7 @@ const ROUND_MARK = '[本轮消息]';
           why_kind: whyKind,
           why_enum: whyEnum,
           why_owner: await ownerOfEventId(hit),
+          why_auto: found.length === 0 && noSource ? true : null,
           decay: decay || null,
           // 哪个会话记的。拿不到就写 null（= 全局可见），不编一个。
           session: sessionIdOfExec(exec) || null,
