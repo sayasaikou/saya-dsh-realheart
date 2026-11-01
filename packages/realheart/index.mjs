@@ -241,6 +241,23 @@ export function apply(ctx, config = {}) {
   const moodFile = () => join(cfg.stateDir, 'mood.jsonl');
 
   /**
+   * 写账本文件的唯一入口。
+   * 为什么要有：appendFile 默认吃 umask（一般 644），而收权限那段只在启动跑一次 ——
+   * 运行期新建的表会一直裸到下次重启。2026-10-31 的 last-inject 踩过一次，
+   * 2026-11-01 的 mood-rejects / style 又踩一次：同一条坑，说明当时只补了那两个文件，没抽成入口。
+   * 所以：新建带 mode，已存在的补一次 chmod。别的地方不要直接调 appendFile / writeFile 写账本。
+   */
+  async function appendLedger(path, text) {
+    await appendFile(path, text, { encoding: 'utf8', mode: 0o600 });
+    await chmod(path, 0o600).catch(() => {});
+  }
+
+  async function writeLedger(path, text) {
+    await writeFile(path, text, { encoding: 'utf8', mode: 0o600 });
+    await chmod(path, 0o600).catch(() => {});
+  }
+
+  /**
    * 被拒绝的心情写入也要留痕（2026-11-01，她提的）。
    *
    * 为什么：10-26 到 10-31 她调过 rh_mood、返回「没记」、审计记的是成功，
@@ -257,7 +274,7 @@ export function apply(ctx, config = {}) {
       why_ref: String(args?.why_ref ?? '').slice(0, 160),
     };
     try {
-      await appendFile(moodRejectFile(), `${JSON.stringify(row)}` + String.fromCharCode(10), 'utf8');
+      await appendLedger(moodRejectFile(), `${JSON.stringify(row)}` + String.fromCharCode(10), 'utf8');
     } catch {
       /* 记不上不影响拒绝本身 */
     }
@@ -414,7 +431,7 @@ export function apply(ctx, config = {}) {
         return { ok: false, error: '回放结果与本次状态不一致，已放弃这次写入' };
       }
       try {
-        await appendFile(pendingLog(), `${JSON.stringify(ev)}\n`, 'utf8');
+        await appendLedger(pendingLog(), `${JSON.stringify(ev)}\n`, 'utf8');
         await writeFile(pendingFile(), text, 'utf8');
         const back = await readFile(pendingFile(), 'utf8');
         if (back !== text) return { ok: false, error: '落盘后回读不一致' };
@@ -571,6 +588,31 @@ export function apply(ctx, config = {}) {
    * 为什么用 system-prompt/assemble：她要“被影响”，就得在她开始想之前看见。
    * 放进对话里（agent.inject）也行，但那会变成一条消息，她可能当成别人说的。
    */
+  /**
+   * 「现在没有心情」的唯一出口。
+   * 三处（没账本 / 全被作废 / 最后一条 feeling 空）以前各 return '' ——
+   * 于是注入里空着，分不出「从没写过」和「试过但被拒」。
+   * 试过被拒就明说，从没试过就仍然不提：不造空记录。
+   */
+  async function noMoodText() {
+    try {
+      const text = await readFile(moodRejectFile(), 'utf8');
+      const rows = text.split('\n').filter((l) => l.trim());
+      if (!rows.length) return '';
+      let row = null;
+      try { row = JSON.parse(rows[rows.length - 1]); } catch { row = null; }
+      if (!row) return '';
+      const why = String(row.why || '（没写原因）');
+      const at = String(row.at || '');
+      return [
+        '心情：无记录（最近一次被拒：' + why + (at ? '，' + at : '') + '）',
+        '这是「试过写、被挡住了」，不是「没试过」。',
+      ].join('\n');
+    } catch {
+      return '';
+    }
+  }
+
   async function moodSectionText() {
     const ctl = await readControl();
     // 停着就不提。不是“提一句被冻了”，是彻底当没这回事——
@@ -578,7 +620,7 @@ export function apply(ctx, config = {}) {
     if (ctl.paused) return '';
 
     const rows = await readMood({ tail: Number(cfg.moodTailLines) > 0 ? Number(cfg.moodTailLines) : 0 });
-    if (!rows.length) return '';
+    if (!rows.length) return await noMoodText();
 
     // 从最后一笔往前找，跳过被他作废的。
     // 两种键都要看：行号（老记录）和 at（新记录，不受截断影响）。
@@ -590,10 +632,10 @@ export function apply(ctx, config = {}) {
       last = row;
       break;
     }
-    if (!last) return '';
+    if (!last) return await noMoodText();
 
     const feeling = String(last.feeling || '').trim();
-    if (!feeling) return '';
+    if (!feeling) return await noMoodText();
 
     const level = Number(last.level);
     const decay = String(last.decay || '').trim();
@@ -689,7 +731,7 @@ export function apply(ctx, config = {}) {
   async function noteInjectProblem(which, err) {
     const line = `${new Date().toISOString()}\t${which}\t${err?.message ?? err}\n`;
     try {
-      await appendFile(join(cfg.stateDir, 'inject-problems.log'), line, 'utf8');
+      await appendLedger(join(cfg.stateDir, 'inject-problems.log'), line, 'utf8');
     } catch {
       /* 连这个都写不了，说明账本目录本身坏了 —— doctor 的「账本目录」那项会报 */
     }
@@ -839,6 +881,11 @@ export function apply(ctx, config = {}) {
           });
           for (const p of order) {
             if (total <= budget) break;
+            // 心情永不裁（2026-11-01 测试抓出来的）。
+            // 之前 PRIORITY 里 mood=100 只保证它「最后被丢」，不保证「不丢」——
+            // 一条写得长的心情就能把预算孬光，结果整轮注入变空。
+            // 而 FIELD_META 与 CHANGELOG 两边都写着「心情永不裁」，代码没兑现。
+            if (p.name === 'realheart:mood') continue;
             parts.splice(parts.indexOf(p), 1);
             total -= p.text.length;
             dropped.push(p.name.replace('realheart:', ''));
@@ -862,11 +909,8 @@ export function apply(ctx, config = {}) {
           // 它收不到。2026-10-31 实测：`last-inject.qqbot.md` 出来时是 -rw-r--r--，
           // doctor 的「账本权限」当场从 ok 变成 warn。
           // mode 只管新建；已存在的文件得补一次 chmod，两个都做才算收干净。
-          const W600 = { encoding: 'utf8', mode: 0o600 };
-          await writeFile(injectPaths.latest, payload, W600);
-          await writeFile(injectPaths.perInstance, payload, W600);
-          await chmod(injectPaths.latest, 0o600).catch(() => {});
-          await chmod(injectPaths.perInstance, 0o600).catch(() => {});
+          await writeLedger(injectPaths.latest, payload);
+          await writeLedger(injectPaths.perInstance, payload);
         } catch (err) {
           // 落盘失败不能只是「算了」（2026-10-31 真机验出来的）。
           // 账本目录不可写时：注入照常发出、她也照常说话，但快照写不下来 ——
@@ -1254,7 +1298,7 @@ export function apply(ctx, config = {}) {
     }
     r.child.unref();
     try {
-      await appendFile(join(cfg.stateDir, 'free-time.jsonl'),
+      await appendLedger(join(cfg.stateDir, 'free-time.jsonl'),
         `${JSON.stringify({ at: stamp, kind: 'wake', by: 'plugin' })}\n`, 'utf8');
     } catch { /* 记不上不影响唤醒本身 */ }
     log(`自由时间：已叫她（PID ${r.child.pid}）`);
@@ -1330,7 +1374,7 @@ export function apply(ctx, config = {}) {
           // 自动写成「还没跑到，重启一次就会生成」—— 而真相是拿不到服务，
           // 重启一百次也不会生成。提示说 A、真相是 B，正是今天立得最粗的那条禁忌。
           log('jobs：插件里拿不到 jobs 服务 —— 后台作业不可用，且重启不会自愈', 'error');
-          void appendFile(join(cfg.stateDir, 'jobs-controller.jsonl'),
+          void appendLedger(join(cfg.stateDir, 'jobs-controller.jsonl'),
             `${JSON.stringify({ at: new Date().toISOString(), branch: 'no-service' })}\n`, 'utf8')
             .catch(() => { /* 写不了不影响结论 */ });
           return;
@@ -1354,13 +1398,13 @@ export function apply(ctx, config = {}) {
         }
         // 落一行给 doctor 看：它是另起的进程，看不到这里的运行时。
         // 不写这一行，「后台作业靠兜底活着」就只活在 journald 里，得有人想起来翻。
-        void appendFile(join(cfg.stateDir, 'jobs-controller.jsonl'),
+        void appendLedger(join(cfg.stateDir, 'jobs-controller.jsonl'),
           `${JSON.stringify({ at: new Date().toISOString(), branch, before: String(before) })}\n`, 'utf8')
           .catch(() => { /* 写不了不影响兜底本身 */ });
       } catch (err) {
         log(`jobs 兜底失败：${err?.message ?? err}`, 'error');
         // 抛了也要留一行 —— 不然 doctor 又会把「出错了」读成「还没跑到」
-        void appendFile(join(cfg.stateDir, 'jobs-controller.jsonl'),
+        void appendLedger(join(cfg.stateDir, 'jobs-controller.jsonl'),
           `${JSON.stringify({ at: new Date().toISOString(), branch: 'exception', why: String(err?.message ?? err) })}\n`, 'utf8')
           .catch(() => {});
       }
@@ -1516,7 +1560,7 @@ export function apply(ctx, config = {}) {
         };
 
         try {
-          await appendFile(moodFile(), `${JSON.stringify(row)}\n`, 'utf8');
+          await appendLedger(moodFile(), `${JSON.stringify(row)}\n`, 'utf8');
         } catch (err) {
           return { text: `（写不进帐本：${err?.message ?? err}）` };
         }
@@ -1576,7 +1620,7 @@ export function apply(ctx, config = {}) {
         const how = (raw === '清掉' || raw === '空') ? '' : raw;
         const row = { at: localStamp(), how, decay: decay || null };
         try {
-          await appendFile(styleFile(), `${JSON.stringify(row)}\n`, 'utf8');
+          await appendLedger(styleFile(), `${JSON.stringify(row)}\n`, 'utf8');
         } catch (err) {
           return { text: `（写不进去：${err?.message ?? err}）` };
         }
@@ -1747,7 +1791,7 @@ export function apply(ctx, config = {}) {
               if (!text) return { text: '（要留的那句话是空的。）' };
               if (kept.some((k) => k.text === text)) return { text: '（这句已经留着了。）' };
               const id = pendingFp(text);
-              await appendFile(keptFile(),
+              await appendLedger(keptFile(),
                 `${JSON.stringify({ at: localStamp(), action: 'keep', id, text, by: 'her' })}\n`, 'utf8');
               return { text: `留着了：${text}\n下一轮它自己回来，我不动它。` };
             }
@@ -1756,7 +1800,7 @@ export function apply(ctx, config = {}) {
               const text = String(args?.text ?? '').trim();
               const hit = kept.find((k) => (id && k.id === id) || (text && k.text === text));
               if (!hit) return { text: '（没找到这一条。用 files 看一眼 id。）' };
-              await appendFile(keptFile(),
+              await appendLedger(keptFile(),
                 `${JSON.stringify({ at: localStamp(), action: 'unkeep', id: hit.id, text: hit.text, by: 'her' })}\n`, 'utf8');
               return { text: `撤掉了：${hit.text}\n（撤这件事也记了一笔 —— 留过什么、撤过什么，都算数。）` };
             }
@@ -1825,7 +1869,7 @@ export function apply(ctx, config = {}) {
             /* 没有心情账本也允许她声明 */
           }
           try {
-            await appendFile(join(cfg.stateDir, 'control.jsonl'),
+            await appendLedger(join(cfg.stateDir, 'control.jsonl'),
               `${JSON.stringify({ at: localStamp(), action: 'declared_clear', target, reason, by: 'her' })}\n`,
               'utf8');
           } catch (err) {
@@ -1838,7 +1882,7 @@ export function apply(ctx, config = {}) {
         }
 
         try {
-          await appendFile(join(cfg.stateDir, 'control.jsonl'),
+          await appendLedger(join(cfg.stateDir, 'control.jsonl'),
             `${JSON.stringify({ at: localStamp(), action, reason, by: 'her' })}\n`, 'utf8');
         } catch (err) {
           return { text: `（没写进去：${err?.message ?? err}）` };
