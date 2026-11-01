@@ -71,12 +71,18 @@ dsh plugin --profile <profile> add <包目录> && node node_modules/realheart/se
 默认只绑 `127.0.0.1`。手机要看自己改 `config.json` 的 `bind` 或走反代 ——
 **这个页面是明文 HTTP，别直接开公网做写操作**。
 
-### 装完先验三条（0.2.0 起）
+### 装完先验三条
 
 装完重启，看这三样，缺一条就是没装上：
 
-1. **启动日志里有这行**：`rh_mood / rh_pending / rh_control / rh_changes 已注册`
-   —— 少了 `rh_pending` 说明装的是旧包（0.2.0 之前它不存在）；
+1. **启动日志里有这行**，数一数是不是**九个**（0.2.51 起由注册处自己收，不再手写）：
+
+   ```
+   rh_mood / rh_style / rh_pending / rh_control / rh_claim / rh_work / rh_view / rh_admit / rh_changes 已注册
+   ```
+
+   —— 少 `rh_pending` 说明装的是 0.2.0 之前的包；少 `rh_work` 是 0.2.49 之前的；
+   ⚠️ **0.2.51 之前这行是手写的，加一个工具就漏一个**，老版本上它只能当参考，不能当证据；
 2. **`<stateDir>/pending.md` 生成了**（空的时候是「（空着。）」一行）；
 3. **下一轮的注入里多一段**「【没完的事】未完成 N 条」。
    注入原文落在 `<stateDir>/last-inject.md`，直接翻那个文件最省事。
@@ -311,7 +317,7 @@ ls <stateDir>                               # 3. 她的账本还在，位置对
 ## 停一下、导出、删掉
 
 ```
-npx realheart off                                    # 全停：不注入、不记账、四个工具都不注册
+npx realheart off                                    # 全停：不注入、不记账、九个工具都不注册
 npx realheart on                                     # 恢复
 npx realheart export --out ~/realheart-导出           # 把账本原文导出来
 npx realheart wipe --state-dir <账本目录> --why "…"   # 删整份账本（先打清单，再要确认）
@@ -328,7 +334,7 @@ npx realheart forget --path <文件或目录> --why "…"    # 删单个产物�
   空着比写明更糟 —— 看不出是漏了还是不用写。
 - 非交互环境必须 `--yes`。
 
-**她的四个工具里没有删除动作。** 记账的人不能同时握毁账的权 —— 这不是不信任她，
+**她的九个工具里没有删除动作。** 记账的人不能同时握毁账的权 —— 这不是不信任她，
 是这条机制的全部意义在「账比人可靠」。她想删就提出来，由人动手；她提出这件事本身会留在流水里。
 
 **`off` 就是一个文件**：`$DSH_HOME/realheart/DISABLED`。它在，`apply` 一进门就返回。
