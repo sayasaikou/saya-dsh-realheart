@@ -871,6 +871,47 @@ const ROUND_MARK = '[本轮消息]';
   }
 
   /**
+   * 断点快照（P-6 ④）：她现在在哪。
+   *
+   * 为什么要有：上下文一压缩，「我在干嘛」就没了；她下一轮只能重头猜。
+   * 存在盘上，重启也还在 —— 这是「停机不丢」跟「只是记性好」的区别。
+   * 追加写、取最后一条：历史留痕，但注入只看当下。
+   */
+  const whereFile = () => join(cfg.stateDir, 'where.jsonl');
+  async function readWhere() {
+    try {
+      const text = await readFile(whereFile(), 'utf8');
+      const out = [];
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          out.push(JSON.parse(line));
+        } catch {
+          /* 坏行跳过 */
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  async function whereSectionText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    const rows = await readWhere();
+    if (!rows.length) return '';
+    const last = rows[rows.length - 1];
+    const doing = String(last.doing || '').trim();
+    if (!doing) return '';
+    const lines = ['【上次断在这儿】', doing];
+    if (last.stage) lines.push('到哪步：' + String(last.stage).trim());
+    if (last.next) lines.push('下一步：' + String(last.next).trim());
+    lines.push('（这条是你自己写的，不是别人告诉你的。不认就重写一条。）');
+    return lines.join('\n');
+  }
+
+  /**
    * 她认过的错（P-6 ⑩）。
    *
    * 为什么单开一个账：认错跟「改了什么」不是一回事 —— 改动账记的是动作，
@@ -1088,6 +1129,12 @@ const ROUND_MARK = '[本轮消息]';
         } catch (err) {
           await noteInjectProblem('admit', err);
         }
+        try {
+          const where = await whereSectionText();
+          if (where) parts.push(sec('realheart:where', 907, where));
+        } catch (err) {
+          await noteInjectProblem('where', err);
+        }
         const style = await styleSectionText();
         if (style) parts.push(sec('realheart:style', 905, style));
         const pending = await pendingChangeText();
@@ -1129,6 +1176,7 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:mood': 100,
           'realheart:style': 95,
           'realheart:admit': 90,
+          'realheart:where': 92,
           'realheart:kept': 80,
           'realheart:pending': 60,
           'realheart:status-page': 55,
@@ -2184,6 +2232,9 @@ const ROUND_MARK = '[本轮消息]';
           force: { type: 'boolean', description: 'pause 用：有待接的话时仍要停。默认不带 —— 拦是提醒，不是锁。' },
           summary: { type: 'string', description: 'close 用：这段发生了什么。必填。' },
           next_opening: { type: 'string', description: 'close 用：下次从哪接。可以不写。' },
+          doing: { type: 'string', description: 'where 用：你现在在干什么。一句话。' },
+          stage: { type: 'string', description: 'where 用：到哪一步了。可以不写。' },
+          next: { type: 'string', description: 'where 用：下一步干什么。可以不写。' },
           text: { type: 'string', description: 'keep 用：要留下的那句话，原样。' },
           id: { type: 'string', description: 'unkeep 用：撤掉哪一条（先用 files 看 id）。' },
         },
@@ -2201,8 +2252,8 @@ const ROUND_MARK = '[本轮消息]';
       },
       async execute(args) {
         const action = String(args?.action ?? '').trim();
-        if (!['pause', 'resume', 'clear', 'keep', 'unkeep', 'files', 'close'].includes(action)) {
-          return { text: '（action 只有 pause / resume / clear / keep / unkeep / files / close。）' };
+        if (!['pause', 'resume', 'clear', 'keep', 'unkeep', 'files', 'close', 'where'].includes(action)) {
+          return { text: '（action 只有 pause / resume / clear / keep / unkeep / files / close / where。）' };
         }
         const reason = String(args?.reason ?? '').trim();
 
@@ -2279,6 +2330,21 @@ const ROUND_MARK = '[本轮消息]';
           } catch (err) {
             return { text: `（没查成：${err?.message ?? err}）` };
           }
+        }
+
+        // where = 「我现在在哪」（P-6 ④）。写一次覆盖一次，注入只看最后一条。
+        if (action === 'where') {
+          const doing = String(args?.doing ?? '').trim();
+          const stage = String(args?.stage ?? '').trim();
+          const nextStep = String(args?.next ?? '').trim();
+          if (!doing) return { text: '（where 要写 doing：你现在在干什么。）' };
+          const row = { at: localStamp(), doing, stage: stage || null, next: nextStep || null, by: 'her' };
+          try {
+            await appendLedger(whereFile(), `${JSON.stringify(row)}` + String.fromCharCode(10), 'utf8');
+          } catch (err) {
+            return { text: `（没写进去：${err?.message ?? err}）` };
+          }
+          return { text: `记下了：${doing}` + String.fromCharCode(10) + '（重启也还在。下次开口就能看到。）' };
         }
 
         // close = 「这段到这儿了」。pause 是「我不想说话」，close 是「这件事结束了」——
