@@ -467,45 +467,86 @@ export function apply(ctx, config = {}) {
   let building = null;
 
   /**
-   * 最近几条可引用的事件 id（2026-11-01）。
+   * 最近几条可引用的事件 id（2026-11-01，二版）。
    *
-   * 为什么要给这个：她记心情必须指一件具体的事，而**她手上没有那个 id** ——
-   * 观测页在 QQ 里根本看不到。云端实测：mood.jsonl 全机不存在，
-   * 她唯一一条记录是拿假 id 撞拒绝路径留下的。
-   * 这很可能就是「心情功能从上线到今天一次没成功过」的真因。
+   * 第一版只读 audit —— 只会吐 a: 前缀，而**心情的来处多半是一句话**。
+   * 她 10:48 直接指出根子：「最近的 3 条」永远是我自己的动作，等于自己给自己作证。
    *
-   * 只读最新的那个 audit 文件（她的工具调用），取最后几行 ——
-   * 便宜，而且一定是最新的事。读不到就返回空，不猜。
+   * 二版遵她三条：
+   *   ① 主来源换成 history，而且**只取 user 行**（来处得能解释「我为什么这样」，
+   *      那个为什么通常是对方做了什么；拿我自己的话当来处就是自证）；
+   *   ② 带 HH:MM（同一句话可能说过两遍，光看字分不出哪一次）；
+   *   ③ 预览不硬切 40 字（会切在词中间），改成压空白 + 60 字带省略号。
+   *
+   * audit 还在，但只补剩下的位子。读不到就少那一半，不猜。
    */
   async function recentEventIds(limit = 3) {
+    const out = [];
+    const hhmm = (iso) => {
+      const d = new Date(String(iso || ''));
+      if (Number.isNaN(d.getTime())) return '';
+      const p = (n) => String(n).padStart(2, '0');
+      return `${p(d.getHours())}:${p(d.getMinutes())}`;
+    };
+    const flat = (v, n = 60) => {
+      const t = String(v || '').replace(/\s+/g, ' ').trim();
+      return t.length > n ? `${t.slice(0, n)}…` : t;
+    };
+    // ① history 里的 user 行
+    try {
+      const names = (await readdir(cfg.historyDir)).filter((n) => n.endsWith('.jsonl'));
+      let best = '';
+      let bestAt = 0;
+      for (const n of names) {
+        try {
+          const st = await stat(join(cfg.historyDir, n));
+          if (st.mtimeMs > bestAt) { bestAt = st.mtimeMs; best = n; }
+        } catch { /* 比不了就跳过 */ }
+      }
+      if (best) {
+        const text = await readFile(join(cfg.historyDir, best), 'utf8');
+        const lines = text.split('\n');
+        const prefix = `h:${tagOf(best.slice(0, -6))}`;
+        for (let i = lines.length - 1; i >= 0 && out.length < limit; i -= 1) {
+          const raw = lines[i];
+          if (!raw.trim()) continue;
+          let o = null;
+          try { o = JSON.parse(raw); } catch { continue; }
+          if (o?.role !== 'user') continue;
+          out.push({ id: `${prefix}#${i + 1}`, at: hhmm(o?.ts), kind: '他说', detail: flat(o?.text) });
+        }
+      }
+    } catch { /* 读不到就少这一半 */ }
+    // ② audit：我自己刚做的动作，补剩下的位子
     try {
       const names = (await readdir(cfg.auditDir)).filter((n) => n.endsWith('.jsonl')).sort();
       const fn = names[names.length - 1];
-      if (!fn) return [];
-      const text = await readFile(join(cfg.auditDir, fn), 'utf8');
-      const lines = text.split('\n');
-      const out = [];
-      for (let i = lines.length - 1; i >= 0 && out.length < limit; i -= 1) {
-        const raw = lines[i];
-        if (!raw.trim()) continue;
-        let obj = null;
-        try { obj = JSON.parse(raw); } catch { continue; }
-        const tool = String(obj?.tool ?? '?');
-        let detail = '';
-        const kept = obj?.args?.kept;
-        if (kept && typeof kept === 'object') {
-          for (const v of Object.values(kept)) {
-            if (typeof v === 'string' && v.trim()) { detail = v; break; }
+      if (fn) {
+        const text = await readFile(join(cfg.auditDir, fn), 'utf8');
+        const lines = text.split('\n');
+        for (let i = lines.length - 1; i >= 0 && out.length < limit; i -= 1) {
+          const raw = lines[i];
+          if (!raw.trim()) continue;
+          let o = null;
+          try { o = JSON.parse(raw); } catch { continue; }
+          let detail = '';
+          const kept = o?.args?.kept;
+          if (kept && typeof kept === 'object') {
+            for (const v of Object.values(kept)) {
+              if (typeof v === 'string' && v.trim()) { detail = v; break; }
+            }
           }
+          if (!detail && typeof o?.args?.command === 'string') detail = o.args.command;
+          out.push({
+            id: `a:${fn.slice(0, -6)}#${i + 1}`,
+            at: hhmm(o?.at),
+            kind: String(o?.tool ?? '?'),
+            detail: flat(detail),
+          });
         }
-        if (!detail && typeof obj?.args?.command === 'string') detail = obj.args.command;
-        detail = detail.replace(/\s+/g, ' ').trim().slice(0, 40);
-        out.push({ id: `a:${fn.slice(0, -6)}#${i + 1}`, tool, detail });
       }
-      return out.reverse();
-    } catch {
-      return [];
-    }
+    } catch { /* 读不到就少这一半 */ }
+    return out;
   }
   async function indexIds() {
     const now = Date.now();
@@ -1683,8 +1724,8 @@ export function apply(ctx, config = {}) {
             // 光说「找不到」不够 —— 她手上根本没有 id。给几个真的能用的。
             const recent = await recentEventIds(3);
             const hint = recent.length
-              ? '\n\n最近能用的几个（从旧到新，后面那段是那条事件本身）：\n'
-                + recent.map((r) => `  ${r.id}  ${r.tool}${r.detail ? '：' + r.detail : ''}`).join('\n')
+              ? '\n\n最近能用的几个（新的在前；id / 时间 / 那件事）：\n'
+                + recent.map((r) => `  ${r.id}  ${r.at}  ${r.kind}：${r.detail}`).join('\n')
                 + '\n挑一条真对得上的；挑不出来就写 none:unexplained，别硬凑。'
               : '';
             return {
