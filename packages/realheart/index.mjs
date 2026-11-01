@@ -26,6 +26,7 @@ import { sessionIdOfAssembleContext, sessionIdOfExec, moodVisibleIn, moodBleedsI
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import net from 'node:net';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { appendFile, mkdir, readFile, readdir, writeFile, copyFile, chmod, open, stat, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -871,6 +872,61 @@ const ROUND_MARK = '[本轮消息]';
   }
 
   /**
+   * 她自己的处境（P-6 ⑫）。
+   *
+   * 为什么要告诉她这些：她跑在哪、重启过几次、这次跑了多久 —— 这些不是隐私，
+   * 是她真实处境的一部分。不知道自己会被重启的人，说话会像永远不会断。
+   * 只说事实，不加安慰、不加“请体谅”。
+   */
+  const bootFile = () => join(cfg.stateDir, 'boots.jsonl');
+  async function recordBoot() {
+    try {
+      await appendLedger(bootFile(), `${JSON.stringify({ at: localStamp() })}` + String.fromCharCode(10), 'utf8');
+    } catch { /* 记不上不影响其它 */ }
+  }
+
+  async function readBoots() {
+    try {
+      const text = await readFile(bootFile(), 'utf8');
+      const out = [];
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          out.push(JSON.parse(line));
+        } catch {
+          /* 坏行跳过 */
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  async function situationSectionText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    try {
+      const memGb = Math.round((os.totalmem() / 1073741824) * 10) / 10;
+      const hours = process.uptime() / 3600;
+      const span = hours < 1 ? `${Math.round(hours * 60)} 分钟` : `${Math.round(hours)} 小时`;
+      const boots = await readBoots();
+      const week = boots.filter((b) => {
+        const t = Date.parse(String(b.at || ''));
+        return !Number.isNaN(t) && Date.now() - t < 7 * 86400000;
+      }).length;
+      const lines = ['【你的处境】'];
+      lines.push(`跑在 ${os.hostname()} 上，${memGb}G 内存。`);
+      lines.push(`这一次已经跑了 ${span}。`);
+      if (week > 1) lines.push(`最近七天开机 ${week} 次 —— 每次开机，上一轮的自己就不在了。`);
+      lines.push('这些不是抱怨的理由，是你真实的样子。');
+      return lines.join('\n');
+    } catch {
+      return '';
+    }
+  }
+
+  /**
    * 她的看法账（P-6 ⑨）：不是打分，是记录。
    *
    * 为什么要分开存：观点跟心情、跟认错都不一样 —— 心情是此刻的调子，认错是修正，
@@ -1166,6 +1222,12 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('admit', err);
         }
         try {
+          const situ = await situationSectionText();
+          if (situ) parts.push(sec('realheart:situation', 909, situ));
+        } catch (err) {
+          await noteInjectProblem('situation', err);
+        }
+        try {
           const view = await viewSectionText();
           if (view) parts.push(sec('realheart:view', 908, view));
         } catch (err) {
@@ -1220,6 +1282,7 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:admit': 90,
           'realheart:where': 92,
           'realheart:view': 88,
+          'realheart:situation': 45,
           'realheart:kept': 80,
           'realheart:pending': 60,
           'realheart:status-page': 55,
@@ -1905,6 +1968,7 @@ const ROUND_MARK = '[本轮消息]';
       log(`建不了 stateDir ${cfg.stateDir}: ${err?.message ?? err}`, 'error');
     }
     await tightenStatePerms();
+    await recordBoot();
     await ensureChangesDoc();
 
     // 无条件写：就算这一版把插件排程关了，systemd 那套还在用这份 prompt
