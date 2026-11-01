@@ -6,7 +6,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, utimes, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -181,6 +182,19 @@ test('时间感：刚说过话就不提（三小时内说了像打卡）', async
     const inj = h.handlers.find((x) => x.name === 'system-prompt/assemble');
     const out = await inj.fn({ sections: [] }, {}, async () => ({ sections: [] }));
     assert.equal(out.sections.find((s) => s.name === 'realheart:time'), undefined);
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test('启动时把自由时间的 prompt 落到文件里（systemd 那边要读它）', async () => {
+  const h = await boot();
+  try {
+    const p = join(HOME, 'realheart', 'free-prompt.txt');
+    assert.ok(existsSync(p), 'free-prompt.txt 没写出来 —— systemd 那边就只能用兜底原文');
+    const text = await readFile(p, 'utf8');
+    assert.match(text, /自由时间/);
+    assert.match(text, /free-time\.jsonl/, '缺了记流水那一句');
   } finally {
     await rm(h.root, { recursive: true, force: true });
   }

@@ -1325,6 +1325,24 @@ export function apply(ctx, config = {}) {
     + `做完（或者决定不做），往 ${join(cfg.stateDir, 'free-time.jsonl')} 追一行 JSON，`
     + '记下这次干了什么、或者为什么没干。';
 
+  /**
+   * 把 FREE_PROMPT 落到 $DSH_HOME/realheart/free-prompt.txt（2026-11-01）。
+   *
+   * 为什么：这段 prompt 以前在 systemd unit 里也有一份手抄本，改一句两边就岔。
+   * 现在一份真本（这里）+ 一份生成物（这个文件），unit 那边走 wrapper 读它。
+   *
+   * 写不下来不能影响别的 —— 记一行就走。wrapper 那边有兜底原文，
+   * 读不到也能把她叫醒（叫不醒才是真正糟糕的结果）。
+   */
+  async function writeFreePrompt() {
+    const p = join(DSH_HOME, 'realheart', 'free-prompt.txt');
+    try {
+      await mkdir(dirname(p), { recursive: true });
+      await writeFile(p, `${FREE_PROMPT}\n`, 'utf8');
+    } catch (err) {
+      log(`free-prompt.txt 没写下来（${err?.code ?? err?.message ?? err}）—— systemd 那边会用兜底原文`, 'error');
+    }
+  }
   async function ensureFreeProfile() {
     const dir = join(DSH_HOME, 'profiles', cfg.freeTimeProfile);
     try {
@@ -1494,6 +1512,9 @@ export function apply(ctx, config = {}) {
     }
     await tightenStatePerms();
     await ensureChangesDoc();
+
+    // 无条件写：就算这一版把插件排程关了，systemd 那套还在用这份 prompt
+    await writeFreePrompt();
 
     if (cfg.freeTime !== false) {
       const freeErr = await ensureFreeProfile();
