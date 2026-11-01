@@ -944,7 +944,20 @@ const ROUND_MARK = '[本轮消息]';
         const view = String(views[i]?.view || '').trim();
         if (!view) continue;
         const at = String(views[i]?.at || '').slice(0, 16).replace('T', ' ');
-        return ['【这件事你以前想过】', `关于「${subj}」：${view}`, `（记于 ${at}。你现在可能改主意了 —— 那是你自己的事。）`].join('\n');
+        // 他到底提过几次（M2 观察账）：同一件事被反复提起，本身是个信号。
+        // 只数字面出现次数，不猜语气、不猜强烈程度。
+        let times = 0;
+        try {
+          for (const name of names) {
+            const t2 = await readFile(join(cfg.msgsDir, name), 'utf8');
+            for (const ln of t2.split('\n')) {
+              if (!ln.trim() || !ln.includes(subj)) continue;
+              times += 1;
+            }
+          }
+        } catch { /* 数不出来就不说次数 */ }
+        const timesText = times > 1 ? `（这件事在记录里出现过 ${times} 次。）` : '';
+        return ['【这件事你以前想过】', `关于「${subj}」：${view}`, `（记于 ${at}。你现在可能改主意了 —— 那是你自己的事。）`, timesText].filter(Boolean).join('\n');
       }
       return '';
     } catch {
