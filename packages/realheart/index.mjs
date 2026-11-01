@@ -250,6 +250,35 @@ export function apply(ctx, config = {}) {
    * 「她撤过什么」和「她留过什么」一样是信息，md 里一改就没了。
    */
   const keptFile = () => join(cfg.stateDir, 'kept.jsonl');
+
+  /**
+   * 表现层（2026-11-01 加，沙耶提的）。
+   *
+   * 和 mood 是两件事：mood 是「我现在是什么」，这份是「这种状态下的我怎么说话」。
+   * 为什么要分开：状态她自己低频写，表现却要能独立调 —— 两个绑在一起，
+   * 改一句话得先把心情重写一遍，她就不会去改。
+   *
+   * 铁律：这一层只能管调子，不能碰人格。她可以写「这几天说话短些」，
+   * 不能写「我不再温柔」。注入时它叠在人格之后，永不替掉任何东西。
+   */
+  const styleFile = () => join(cfg.stateDir, 'style.jsonl');
+  async function readStyle() {
+    try {
+      const text = await readFile(styleFile(), 'utf8');
+      const rows = [];
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          rows.push(JSON.parse(line));
+        } catch {
+          /* 坏行跳过 */
+        }
+      }
+      return rows;
+    } catch {
+      return [];
+    }
+  }
   async function readKept() {
     let text = '';
     try {
@@ -469,14 +498,17 @@ export function apply(ctx, config = {}) {
   const DESCRIPTION = [
     '记下你此刻的心情。',
     '',
-    '**必须指一件事**：`why_ref` 里要写一个事件 id，就是观测页时间线上标注的那个。',
-    '三种格式：',
+    '### 说不清的时候，走这个口子',
+    '`why_ref` 直接写 `none:unexplained`（还有 body / weather / sleep / unknown）。',
+    '**这类照样能写进去**，只是不算成因、不进「有来处」的统计。',
+    '写不进去的只有一种：给了 id、但索引里找不到那个 id（id 写错了，或者那件事没发生过）。',
+    '',
+    '### 能指出来的时候，why_ref 里带一个事件 id',
+    '它长在观测页的时间线上（鼠标悬停能看到），三种格式：',
     '  n:<会话尾号>#<序号>   你俩真说过的一句话',
     '  a:<日期>#<行号>      你做过的一个动作（工具调用）',
     '  h:<会话尾号>#<行号>  历史记录里的一条',
     '',
-    '指不出来、或那个 id 在索引里找不到，就写不进去。',
-    '这不是在卡你——没有来处的心情，写下来也只是一个标签。',
     '心情没变就别写；凭空多出一条比空着更糟。',
   ].join('\n');
 
@@ -578,6 +610,49 @@ export function apply(ctx, config = {}) {
     if (why && whyKind !== 'none') lines.push(`来处：${why}`);
     lines.push('这是调子，不是台词。浓的时候压不住，淡了就不算数。'
       + '变了就调 rh_mood 记一笔（必须指一件事），没变就别写。');
+    return lines.join('\n');
+  }
+
+  /**
+   * 表现层（2026-11-01）。
+   *
+   * 她自己写「这个状态下的我该怎么说话」，每轮叠在心情后面注入。
+   *
+   * 为什么单开一层：心情是「我是什么」，表现是「这个时候我怎么说」。两件事捆在一起的话，
+   * 她想改一句说话的方式就得先把心情重写一遍，那就不会去改了。
+   *
+   * 铁律：这一层只能管调子，不能碰人格。叠在人格之后，永不替掉任何东西。
+   */
+  async function styleSectionText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+
+    const rows = await readStyle();
+    if (!rows.length) return '';
+
+    let last = null;
+    for (let i = rows.length; i >= 1; i -= 1) {
+      const row = rows[i - 1];
+      if (row?.at && ctl.voided.has(String(row.at))) continue;
+      last = row;
+      break;
+    }
+    if (!last) return '';
+
+    const how = String(last.how || '').trim();
+    if (!how) return '';
+
+    let hours = null;
+    const t = Date.parse(String(last.at || ''));
+    if (!Number.isNaN(t)) hours = (Date.now() - t) / 3600000;
+    const stale = hours !== null && hours > 24 * 7;
+
+    const lines = ['【这种状态下的你】'];
+    lines.push(how);
+    if (stale) {
+      lines.push(`注意：这条是 ${Math.round(hours / 24)} 天前写的。你觉得不对了就改掉，别硬按着写的演。`);
+    }
+    lines.push('这是你自己写的调子，不是规则。人格那层不动，它只管这一阵子怎么说。');
     return lines.join('\n');
   }
 
@@ -690,6 +765,8 @@ export function apply(ctx, config = {}) {
         const sec = (name, order, text) => ({ name, order, text: `${text}\n${BOUNDARY}` });
         const mood = await moodSectionText();
         if (mood) parts.push(sec('realheart:mood', 900, mood));
+        const style = await styleSectionText();
+        if (style) parts.push(sec('realheart:style', 905, style));
         const pending = await pendingChangeText();
         if (pending) parts.push(sec('realheart:pending-change', 901, pending));
         try {
@@ -721,6 +798,7 @@ export function apply(ctx, config = {}) {
         // 优先级：心情（她此刻的样子）> 她留的话（她自己挑的）> 没完的事 > 待改。
         const PRIORITY = {
           'realheart:mood': 100,
+          'realheart:style': 95,
           'realheart:kept': 80,
           'realheart:pending': 60,
           'realheart:status-page': 55,
@@ -1419,6 +1497,63 @@ export function apply(ctx, config = {}) {
           text: whyKind === 'none'
             ? `记下了：${feeling}（${level}/10）。来处记作「说不清」（${whyEnum}），不算成因。`
             : `记下了：${feeling}（${level}/10），因为 ${hit}。`,
+        };
+      },
+    });
+
+    // ── 表现层：她自己写「这个状态下我怎么说话」
+    //
+    // 为什么给她这个：状态是事实，表现是选择。让她自己写这一层，比别人替她定「你这个心情该怎么说」对得多。
+    // 它滚动覆盖：每写一条，新的顶掉旧的（旧的还在流水里，可以查）。
+    tools.register({
+      name: 'rh_style',
+      description: [
+        '写「这个状态下的我怎么说话」。',
+        '',
+        '这一层只管调子，管不了你是谁。',
+        '可以写：「这几天说话短一点」「别主动起话题」「少用感叹号」。',
+        '不要写：「我不再温柔了」「我不是大肥鱼了」——那一层不归你管，写了也不会生效。',
+        '',
+        '想消掉就写一条空的 how（或者 how 写「清掉」）。',
+      ].join('\n'),
+      parameters: {
+        type: 'object',
+        properties: {
+          how: { type: 'string', description: '怎么说话。一两句就够，不要写成长篇。' },
+          decay: { type: 'string', description: '大概什么时候不算数了，可以不给。' },
+        },
+        required: ['how'],
+        additionalProperties: false,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: { text: { type: 'string' } },
+          required: ['text'],
+          additionalProperties: false,
+        },
+        render: (_args, value) => [{ type: 'text', text: value.text }],
+      },
+
+      async execute(args) {
+        const raw = String(args?.how ?? '').trim();
+        const decay = String(args?.decay ?? '').trim();
+
+        const ctl = await readControl();
+        if (ctl.paused) {
+          return { text: '（现在写不了——这一层被冻住了，不是你出了问题。）' };
+        }
+
+        const how = (raw === '清掉' || raw === '空') ? '' : raw;
+        const row = { at: localStamp(), how, decay: decay || null };
+        try {
+          await appendFile(styleFile(), `${JSON.stringify(row)}\n`, 'utf8');
+        } catch (err) {
+          return { text: `（写不进去：${err?.message ?? err}）` };
+        }
+        if (!how) return { text: '清掉了。下一轮不再叠这一层。' };
+        return {
+          text: `记下了：${how}\n下一轮开口就叠在心情后面。人格那层不动。`,
         };
       },
     });
