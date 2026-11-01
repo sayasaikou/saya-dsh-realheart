@@ -534,6 +534,36 @@ def read_control():
     return paused, reason, voided
 
 
+REJECT_LOG = os.path.join(RH_STATE, 'mood-rejects.jsonl')
+
+
+def reject_hint():
+    """最近一次被拒的心情写入 —— 「试过被挡」和「没试过」是两件事。
+
+    2026-11-01 加：光有帐本不行，被挡住的那一刻也得在页面上留个影。
+    背景：她调过两次 rh_mood、两次被闸挡住、盘上什么都没有，于是「她试过」
+    这件事一个人都不知道，直到有人去翻审计。
+    """
+    text, _err = read_text(REJECT_LOG)
+    if text is None:
+        return ''
+    last = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            last = obj
+    if not last:
+        return ''
+    return ('<p class="err">最近一次被拒：%s，%s —— 她试过写，被闸挡住了。</p>'
+            % (esc(last.get('why') or '原因没记'), esc(_fmt_at(last.get('at')))))
+
+
 def render_mood_ledger():
     """心情帐本。有数据就看帐本，没数据就说没开张 —— 不拿旧文件冒充新机制。"""
     rows, err = read_mood_ledger()
@@ -551,11 +581,11 @@ def render_mood_ledger():
         return ('<div class="card"><h2>心情帐本</h2>%s'
                 '<p class="muted">还没开张（%s）。等她第一次用 rh_mood 记一笔。</p>'
                 '<p class="note">帐本在 %s，一行一笔，只增不改。写成必须有来处：'
-                'why_ref 里那个事件 id 在索引里找不到，就写不进去。</p></div>' % (
-                    banner, esc(err), src))
+                'why_ref 里那个事件 id 在索引里找不到，就写不进去。</p>%s</div>' % (
+                    banner, esc(err), src, reject_hint()))
     if not rows:
         return ('<div class="card"><h2>心情帐本</h2>%s'
-                '<p class="muted">文件在，还是空的。</p></div>' % banner)
+                '<p class="muted">文件在，还是空的。</p>%s</div>' % (banner, reject_hint()))
 
     total = len(rows)
     last = rows[-1]
