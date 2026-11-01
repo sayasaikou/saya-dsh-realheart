@@ -475,3 +475,31 @@ test('账本目录写不进去时，注入照常发出，日志里必须有一�
     await rm(root, { recursive: true, force: true });
   }
 });
+// ── 读不到 ≠ 空账本（2026-11-01）──
+// 怎么造「读不到」：把 pending.jsonl 建成一个**目录** —— readFile 会报 EISDIR（不是 ENOENT），
+// 跟权限不够、IO 出错走同一条分支。跨平台可用，不用改权限。
+
+test('pending.jsonl 读不到时，add 必须拒绝 —— 不能拿假空账本覆盖整份流水', async () => {
+  const h = await boot();
+  try {
+    await mkdir(join(h.stateDir, 'pending.jsonl'), { recursive: true });
+    const r = await h.tools.get('rh_pending').execute({ action: 'add', text: '这条不该写进去' });
+    assert.match(r.text, /读不到/);
+    // 关键：没有生成 pending.md —— 那说明它没拿空账本往下写
+    assert.equal(existsSync(join(h.stateDir, 'pending.md')), false, '渲染被写出来了 —— 假空账本已经落盘');
+  } finally {
+    await rm(h.root ?? h.stateDir, { recursive: true, force: true });
+  }
+});
+
+test('pending.jsonl 读不到时，list 要说「读不到」，不许报「空着」', async () => {
+  const h = await boot();
+  try {
+    await mkdir(join(h.stateDir, 'pending.jsonl'), { recursive: true });
+    const r = await h.tools.get('rh_pending').execute({ action: 'list' });
+    assert.match(r.text, /读不到/);
+    assert.ok(!r.text.includes('没完的事：空着'), '把读不到报成「空着」，是这套东西最坏的谎');
+  } finally {
+    await rm(h.root ?? h.stateDir, { recursive: true, force: true });
+  }
+});

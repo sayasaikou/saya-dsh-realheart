@@ -354,7 +354,19 @@ export function apply(ctx, config = {}) {
   const pendingFile = () => join(cfg.stateDir, 'pending.md');
   const pendingLog = () => join(cfg.stateDir, 'pending.jsonl');
 
-  async function readPendingEvents() {
+  /**
+   * 读 pending 流水。**返回不只看内容，还看「读没读到」** —— 这是 2026-11-01 补的。
+   *
+   * 以前读不到返回空数组，调用方分不出「还没写过」和「读不到」。而 commitPendingEvent
+   * 是「读全部 → 回放 → 渲染 → 写回」：读不到当空账本，就会把整份 pending.jsonl
+   * 覆盖成只有这一条。**那不是少一段，是数据损失。**
+   *
+   * 三种情况分开：
+   *   文件不存在（ENOENT）—— 真的还没写过，error 留空；
+   *   读到了 —— 坏行跳过（坏行不该拦住写入，别的行都是好的）；
+   *   读不到（权限 / IO）—— error 带原因，调用方自己决定是不写还是照说。
+   */
+  async function readPending() {
     try {
       const text = await readFile(pendingLog(), 'utf8');
       const out = [];
@@ -366,10 +378,16 @@ export function apply(ctx, config = {}) {
           /* 坏行跳过，不拿它当数据 */
         }
       }
-      return out;
-    } catch {
-      return [];
+      return { events: out, error: '' };
+    } catch (err) {
+      if (err?.code === 'ENOENT') return { events: [], error: '' };
+      return { events: [], error: `${err?.code ?? err?.message ?? err}　${pendingLog()}` };
     }
+  }
+
+  /** 只要内容、不要错误的那种用法（注入那段用得着：少一段也能说话）。 */
+  async function readPendingEvents() {
+    return (await readPending()).events;
   }
 
   /**
@@ -422,7 +440,9 @@ export function apply(ctx, config = {}) {
   /** 写一条事件 → 重放 → 渲染 → 回放校验 → 落盘。返回 { ok, state, error } */
   async function commitPendingEvent(ev) {
     return withLock(async () => {
-      const events = await readPendingEvents();
+      // 读不到 ≠ 账本是空的。读不到还往下写，会把整份 pending.jsonl 覆盖成只有这一条。
+      const { events, error: readErr } = await readPending();
+      if (readErr) return { ok: false, error: `读不到 pending 账本，这次没写：${readErr}` };
       const next = pendingApply(pendingReplay(events), ev);
       if (!next) return { ok: false, error: '这条事件没通过校验（动作非法 / 引用找不到 / 重复）' };
       const withNew = [...events, ev];
@@ -1703,7 +1723,10 @@ export function apply(ctx, config = {}) {
 
       async execute(args) {
         const action = String(args?.action ?? '').trim();
-        const events = await readPendingEvents();
+        const { events, error: pendErr } = await readPending();
+        if (pendErr) {
+          return { text: `（读不到 pending 账本：${pendErr}。这不是「空着」，是没读到。）` };
+        }
         const state = pendingReplay(events);
 
         if (action === 'list') {
