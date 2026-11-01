@@ -466,6 +466,47 @@ export function apply(ctx, config = {}) {
   let cache = { at: 0, ids: new Set(), note: '' };
   let building = null;
 
+  /**
+   * 最近几条可引用的事件 id（2026-11-01）。
+   *
+   * 为什么要给这个：她记心情必须指一件具体的事，而**她手上没有那个 id** ——
+   * 观测页在 QQ 里根本看不到。云端实测：mood.jsonl 全机不存在，
+   * 她唯一一条记录是拿假 id 撞拒绝路径留下的。
+   * 这很可能就是「心情功能从上线到今天一次没成功过」的真因。
+   *
+   * 只读最新的那个 audit 文件（她的工具调用），取最后几行 ——
+   * 便宜，而且一定是最新的事。读不到就返回空，不猜。
+   */
+  async function recentEventIds(limit = 3) {
+    try {
+      const names = (await readdir(cfg.auditDir)).filter((n) => n.endsWith('.jsonl')).sort();
+      const fn = names[names.length - 1];
+      if (!fn) return [];
+      const text = await readFile(join(cfg.auditDir, fn), 'utf8');
+      const lines = text.split('\n');
+      const out = [];
+      for (let i = lines.length - 1; i >= 0 && out.length < limit; i -= 1) {
+        const raw = lines[i];
+        if (!raw.trim()) continue;
+        let obj = null;
+        try { obj = JSON.parse(raw); } catch { continue; }
+        const tool = String(obj?.tool ?? '?');
+        let detail = '';
+        const kept = obj?.args?.kept;
+        if (kept && typeof kept === 'object') {
+          for (const v of Object.values(kept)) {
+            if (typeof v === 'string' && v.trim()) { detail = v; break; }
+          }
+        }
+        if (!detail && typeof obj?.args?.command === 'string') detail = obj.args.command;
+        detail = detail.replace(/\s+/g, ' ').trim().slice(0, 40);
+        out.push({ id: `a:${fn.slice(0, -6)}#${i + 1}`, tool, detail });
+      }
+      return out.reverse();
+    } catch {
+      return [];
+    }
+  }
   async function indexIds() {
     const now = Date.now();
     if (cache.ids.size > 0 && now - cache.at < cfg.indexTtlMs) return cache;
@@ -1639,10 +1680,17 @@ export function apply(ctx, config = {}) {
           hit = found.find((id) => idx.ids.has(id));
           if (!hit) {
             await noteMoodReject('event id not in index', args);
+            // 光说「找不到」不够 —— 她手上根本没有 id。给几个真的能用的。
+            const recent = await recentEventIds(3);
+            const hint = recent.length
+              ? '\n\n最近能用的几个（从旧到新，后面那段是那条事件本身）：\n'
+                + recent.map((r) => `  ${r.id}  ${r.tool}${r.detail ? '：' + r.detail : ''}`).join('\n')
+                + '\n挑一条真对得上的；挑不出来就写 none:unexplained，别硬凑。'
+              : '';
             return {
               text: `（没记。索引里找不到 ${found[0]}。）\n`
                 + `索引现有 ${idx.ids.size} 条事件（${idx.note}）。\n`
-                + '要么 id 写错了，要么那件事根本没发生过。',
+                + '要么 id 写错了，要么那件事根本没发生过。' + hint,
             };
           }
         }
