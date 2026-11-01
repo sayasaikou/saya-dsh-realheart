@@ -1188,6 +1188,45 @@ const ROUND_MARK = '[本轮消息]';
     return n;
   }
 
+  /**
+   * 「这几天」（2026-11-01）。
+   *
+   * 为什么要：账本里有一件件事，却没有「最近怎么样」。
+   * 人有一种东西叫「这几天」，她只有「这一轮」。
+   *
+   * 只说数，不评价 —— 不写「你最近真好」「你有点低落」。
+   * 数字她自己看，怎么想是她的事。
+   */
+  async function recentDaysText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    try {
+      const span = 7 * 86400000;
+      const now = Date.now();
+      const within = (e) => {
+        const at = Date.parse(String(e?.at || ''));
+        return !Number.isNaN(at) && now - at < span;
+      };
+      const moods = (await readMood()).filter(within);
+      const works = openWorks(await readWorks()).filter((w) => within(w));
+      const views = (await readView()).filter(within);
+      if (!moods.length && !works.length && !views.length) return '';
+      const lines = ['【这几天】'];
+      if (moods.length) {
+        const last = moods[moods.length - 1];
+        const at = Date.parse(String(last?.at || ''));
+        const days = Number.isNaN(at) ? null : Math.floor((now - at) / 86400000);
+        lines.push(`· 心情记了 ${moods.length} 条` + (days === null ? '' : (days <= 0 ? '，最后一条是今天' : `，最后一条 ${days} 天前`)));
+      }
+      if (works.length) lines.push(`· 手上有 ${works.length} 件没干完的事`);
+      if (views.length) lines.push(`· 看法记了 ${views.length} 条`);
+      lines.push('（只是数。没别的意思。）');
+      return lines.join('\n');
+    } catch {
+      return '';
+    }
+  }
+
   async function workSectionText() {
     const ctl = await readControl();
     if (ctl.paused) return '';
@@ -1554,6 +1593,12 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('work', err);
         }
         try {
+          const days = await recentDaysText();
+          if (days) parts.push(sec('realheart:days', 9086, days));
+        } catch (err) {
+          await noteInjectProblem('days', err);
+        }
+        try {
           const view = await viewSectionText();
           if (view) parts.push(sec('realheart:view', 908, view));
         } catch (err) {
@@ -1609,6 +1654,7 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:where': 92,
           'realheart:view': 88,
           'realheart:work': 87,
+          'realheart:days': 86,
           'realheart:recall': 86,
           'realheart:hold': 87,
           'realheart:linger': 89,
@@ -2901,10 +2947,14 @@ const ROUND_MARK = '[本轮消息]';
           } catch (err) {
             return { text: `（没写进去：${err?.message ?? err}）` };
           }
-          // 等五分钟再叫：她那边还在跑，同时起第二个会两边写同一份记忆。
-          const t = setTimeout(() => { void wakeHer(); }, 5 * 60 * 1000);
+          // 自己定多久后再来（2026-11-01）：默认五分钟后。
+          // 为什么默认是五分钟：她那边还在跑，同时起第二个会两边写同一份记忆。
+          // 为什么不限很短：一分钟内重叫等于没停，只是把同一段拉长。
+          const rawMin = Number(args?.minutes);
+          const mins = Number.isFinite(rawMin) && rawMin >= 5 ? Math.min(Math.round(rawMin), 240) : 5;
+          const t = setTimeout(() => { void wakeHer(); }, mins * 60 * 1000);
           if (typeof t.unref === 'function') t.unref();
-          return { text: '好。五分钟后会再叫你一次（等你这边收尾完）。' + String.fromCharCode(10) + (why ? '记下了你想要的理由：' + why : '') };
+          return { text: `好。${mins} 分钟后会再叫你一次（等你这边收尾完）。` + String.fromCharCode(10) + (why ? '记下了你想要的理由：' + why : '') };
         }
 
         // linger = 「先不补话，等一会儿再说」（2026-11-01，从 surfcore 的三态里学来的）。
