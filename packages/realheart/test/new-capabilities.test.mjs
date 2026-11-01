@@ -233,3 +233,28 @@ test('会等：hold 挂一句 → holds 看得到 → unhold 销掉', async () =
     await rm(h.root, { recursive: true, force: true });
   }
 });
+
+test('断言账：add 要 about；refute 要 evidence；推翻后原文不删', async () => {
+  const h = await boot();
+  try {
+    const t = h.tools.get('rh_claim');
+    assert.ok(t, 'rh_claim 没注册');
+    const noAbout = await t.execute({ action: 'add', claim: '这个接口不支持 X' });
+    assert.ok(noAbout.text.includes('about'), noAbout.text);
+    const ok = await t.execute({ action: 'add', claim: '这个接口不支持 X', about: '接口文档' });
+    assert.ok(!ok.text.includes('没写进去'), ok.text);
+    const list1 = await t.execute({ action: 'list' });
+    assert.ok(list1.text.includes('不支持 X'), list1.text);
+    const noEv = await t.execute({ action: 'refute', id: 'x' });
+    assert.ok(noEv.text.includes('evidence'), noEv.text);
+    const id = (await lines(h.stateDir, 'claims.jsonl'))[0].id;
+    const off = await t.execute({ action: 'refute', id, evidence: '文档 12.3 节写着支持' });
+    assert.ok(!off.text.includes('没写进去'), off.text);
+    const list2 = await t.execute({ action: 'list' });
+    assert.ok(!list2.text.includes('不支持 X'), '推翻了却还在 list 里');
+    const rows = await lines(h.stateDir, 'claims.jsonl');
+    assert.equal(rows.length, 2, '推翻要留两行：原文 + 那笔推翻');
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});

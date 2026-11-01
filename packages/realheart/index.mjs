@@ -1084,6 +1084,26 @@ const ROUND_MARK = '[本轮消息]';
     return lines.join('\n');
   }
 
+  /** 断言账（P-6 ③）：事件流，add / refute。 */
+  const claimFile = () => join(cfg.stateDir, 'claims.jsonl');
+  async function readClaims() {
+    try {
+      const text = await readFile(claimFile(), 'utf8');
+      const out = [];
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          out.push(JSON.parse(line));
+        } catch {
+          /* 坏行跳过 */
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
   /**
    * 她认过的错（P-6 ⑩）。
    *
@@ -2670,6 +2690,90 @@ const ROUND_MARK = '[本轮消息]';
       },
     });
 
+    // ── 断言账（P-6 ③）：说过的话能被对账
+    //
+    // 为什么单独一本：断言（「这个接口不支持 X」）和看法（「我不喜欢 X」）不是一个东西 ——
+    // 前一个能被证伪，后一个不能。混在一起，以后分不清「她说错了」和「她不喜欢」。
+    // 被推翻不删原文，只标 refuted：删了就只能看见「她没错过」。
+    tools.register({
+      name: 'rh_claim',
+      description: [
+        '记一条可以被对账的断言。',
+        '',
+        '`add`：我说了一件事（claim），关于什么（about）。有来处就带 ref（事件 id）。',
+        '`refute`：这条被推翻了，写证据。**原文不删**，只标 refuted。',
+        '`list`：看还没被推翻的。',
+        '',
+        '区分：看法（rh_view）不能证伪；断言能。写成那种“听着很对、其实没法验”的句子，',
+        '就是不该进这本账的。',
+      ].join('\n'),
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: 'add / refute / list' },
+          claim: { type: 'string', description: 'add 用：我说的那件事。一句话。' },
+          about: { type: 'string', description: 'add 用：关于什么。' },
+          ref: { type: 'string', description: 'add 用：来处（事件 id）。可以不给。' },
+          id: { type: 'string', description: 'refute 用：推翻哪一条（list 里能看到）。' },
+          evidence: { type: 'string', description: 'refute 用：凭什么说它被推翻了。' },
+        },
+        required: ['action'],
+        additionalProperties: false,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: { text: { type: 'string' } },
+          required: ['text'],
+          additionalProperties: false,
+        },
+        render: (_args, value) => [{ type: 'text', text: value.text }],
+      },
+      async execute(args) {
+        const action = String(args?.action ?? '').trim();
+        const events = await readClaims();
+        const live = new Map();
+        for (const e of events) {
+          if (e?.action === 'add' && e.id) live.set(e.id, e);
+          else if (e?.action === 'refute' && e.id) live.delete(e.id);
+        }
+        if (action === 'list') {
+          if (!live.size) return { text: '（没有还没被推翻的断言。）' };
+          return { text: ['【还没被推翻的断言】', ...[...live.values()].map((r) => `· ${r.id}  ${r.claim}（关于${r.about}）`)].join('\n') };
+        }
+        if (action === 'add') {
+          const claim = String(args?.claim ?? '').trim();
+          const about = String(args?.about ?? '').trim();
+          const ref = String(args?.ref ?? '').trim();
+          if (!claim) return { text: '（add 要写 claim。）' };
+          if (!about) return { text: '（add 要写 about：这条是关于什么的。说不清关于什么，就没法对账。）' };
+          const id = pendingFp(claim);
+          const row = { at: localStamp(), action: 'add', id, claim, about, ref: ref || null, by: 'her' };
+          try {
+            await appendLedger(claimFile(), `${JSON.stringify(row)}` + String.fromCharCode(10), 'utf8');
+          } catch (err) {
+            return { text: `（没写进去：${err?.message ?? err}）` };
+          }
+          return { text: `记下了：${claim}（${id}）` };
+        }
+        if (action === 'refute') {
+          const raw = String(args?.id ?? '').trim();
+          const evidence = String(args?.evidence ?? '').trim();
+          if (!raw) return { text: '（refute 要写 id：推翻哪一条。）' };
+          if (!evidence) return { text: '（refute 要写 evidence：凭什么算推翻。没证据的推翻等于换了一个说法。）' };
+          const target = live.get(raw) || [...live.values()].find((r) => String(r.id).startsWith(raw));
+          if (!target) return { text: '（没找到这条。用 list 看一眼 id。）' };
+          try {
+            await appendLedger(claimFile(), `${JSON.stringify({ at: localStamp(), action: 'refute', id: target.id, evidence, by: 'her' })}` + String.fromCharCode(10), 'utf8');
+          } catch (err) {
+            return { text: `（没写进去：${err?.message ?? err}）` };
+          }
+          return { text: '标成推翻了：' + target.claim };
+        }
+        return { text: '（action 只有 add / refute / list。）' };
+      },
+    });
+
     // ── 看法账（P-6 ⑨）
     tools.register({
       name: 'rh_view',
@@ -2794,7 +2898,7 @@ const ROUND_MARK = '[本轮消息]';
     });
 
     const idx = await indexIds();
-    log(`rh_mood / rh_pending / rh_control / rh_changes / rh_style / rh_admit / rh_view 已注册；事件索引 ${idx.ids.size} 条（${idx.note}）`);
+    log(`rh_mood / rh_pending / rh_control / rh_changes / rh_style / rh_admit / rh_view / rh_claim 已注册；事件索引 ${idx.ids.size} 条（${idx.note}）`);
   })();
 }
 
