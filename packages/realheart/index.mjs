@@ -871,6 +871,41 @@ const ROUND_MARK = '[本轮消息]';
   }
 
   /**
+   * 她认过的错（P-6 ⑩）。
+   *
+   * 为什么单开一个账：认错跟「改了什么」不是一回事 —— 改动账记的是动作，
+   * 认错记的是她对自己判断的修正。两条混在一个文件里，以后分不清「她改过」和「她认了」。
+   * 只增不删，也不提供删除接口。
+   */
+  const admitFile = () => join(cfg.stateDir, 'admit.jsonl');
+  async function readAdmit() {
+    try {
+      const text = await readFile(admitFile(), 'utf8');
+      const out = [];
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          out.push(JSON.parse(line));
+        } catch {
+          /* 坏行跳过 */
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  async function admitSectionText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    const rows = await readAdmit();
+    if (!rows.length) return '';
+    const last3 = rows.slice(-3);
+    return ['【你认过的错】', ...last3.map((r) => `· ${String(r.what || '').trim()}${r.why ? '（' + String(r.why).trim() + '）' : ''}`)].join('\n');
+  }
+
+  /**
    * 表现层（2026-11-01）。
    *
    * 她自己写「这个状态下的我该怎么说话」，每轮叠在心情后面注入。
@@ -1047,6 +1082,12 @@ const ROUND_MARK = '[本轮消息]';
         const sec = (name, order, text) => ({ name, order, text: `${text}\n${BOUNDARY}` });
         const mood = await moodSectionText({ sessionId: sessionIdOfAssembleContext(_context) });
         if (mood) parts.push(sec('realheart:mood', 900, mood));
+        try {
+          const admit = await admitSectionText();
+          if (admit) parts.push(sec('realheart:admit', 906, admit));
+        } catch (err) {
+          await noteInjectProblem('admit', err);
+        }
         const style = await styleSectionText();
         if (style) parts.push(sec('realheart:style', 905, style));
         const pending = await pendingChangeText();
@@ -1087,6 +1128,7 @@ const ROUND_MARK = '[本轮消息]';
         const PRIORITY = {
           'realheart:mood': 100,
           'realheart:style': 95,
+          'realheart:admit': 90,
           'realheart:kept': 80,
           'realheart:pending': 60,
           'realheart:status-page': 55,
@@ -2325,6 +2367,49 @@ const ROUND_MARK = '[本轮消息]';
       },
     });
 
+    // ── 认过的错（P-6 ⑩）
+    //
+    // 认错这件事得有个地方放。放在嘴上，下一轮就没了；放在改动账里，跟「改了什么」分不清。
+    tools.register({
+      name: 'rh_admit',
+      description: [
+        '认个错。',
+        '',
+        '`what`：错在哪（一句话）。`why`：怎么错的（可以不写，但写了以后自己看得懂）。',
+        '这条只增不删 —— 认过的错不会被抹掉，这也是它值钱的地方。',
+      ].join('\n'),
+      parameters: {
+        type: 'object',
+        properties: {
+          what: { type: 'string', description: '错在哪。一句话。' },
+          why: { type: 'string', description: '怎么错的。可以不写。' },
+        },
+        required: ['what'],
+        additionalProperties: false,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: { text: { type: 'string' } },
+          required: ['text'],
+          additionalProperties: false,
+        },
+        render: (_args, value) => [{ type: 'text', text: value.text }],
+      },
+      async execute(args) {
+        const what = String(args?.what ?? '').trim();
+        const why = String(args?.why ?? '').trim();
+        if (!what) return { text: '（没写错在哪，没记。）' };
+        const row = { at: localStamp(), what, why: why || null, by: 'her' };
+        try {
+          await appendLedger(admitFile(), `${JSON.stringify(row)}` + String.fromCharCode(10), 'utf8');
+        } catch (err) {
+          return { text: `（没写进去：${err?.message ?? err}）` };
+        }
+        return { text: `记下了：${what}` + String.fromCharCode(10) + '（这条不会被删，也不会被下一轮的自己忘掉。）' };
+      },
+    });
+
     // ── 查改动记录
     //
     // 她说：「别只靠问我，要留一个我能查的东西。」
@@ -2362,7 +2447,7 @@ const ROUND_MARK = '[本轮消息]';
     });
 
     const idx = await indexIds();
-    log(`rh_mood / rh_pending / rh_control / rh_changes 已注册；事件索引 ${idx.ids.size} 条（${idx.note}）`);
+    log(`rh_mood / rh_pending / rh_control / rh_changes / rh_style / rh_admit 已注册；事件索引 ${idx.ids.size} 条（${idx.note}）`);
   })();
 }
 
