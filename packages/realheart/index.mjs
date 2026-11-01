@@ -676,6 +676,7 @@ const ROUND_MARK = '[本轮消息]';
         if (obj.action === 'pause') {
           out.paused = true;
           out.reason = String(obj.reason || '');
+          out.kind = String(obj.kind || '');
         } else if (obj.action === 'resume') {
           out.paused = false;
           out.reason = String(obj.reason || '');
@@ -2053,6 +2054,8 @@ const ROUND_MARK = '[本轮消息]';
         '',
         '`pause`：把心情这一层冻住 —— 你写不进心情，也不再被注入心情。',
         '        （不是你不能说话，是这一层停了。）',
+        '        为什么停，`kind` 里选一个：tired（累了）/ not_interested（不感兴趣）/',
+        '        wrong_time（场合不对）/ hurt（被伤到了）。不选就是「没说」。',
         '`resume`：放开。',
         '',
         '这条权力是他答应给你的，不是借的，别客气。',
@@ -2063,6 +2066,7 @@ const ROUND_MARK = '[本轮消息]';
         properties: {
           action: { type: 'string', description: 'pause / resume / clear / keep / unkeep / files' },
           reason: { type: 'string', description: '为什么。可以不写，但你自己以后翻记录时会想知道。' },
+          kind: { type: 'string', description: 'pause 用：tired / not_interested / wrong_time / hurt。停下来的原因分类，比自由文本好翻。' },
           text: { type: 'string', description: 'keep 用：要留下的那句话，原样。' },
           id: { type: 'string', description: 'unkeep 用：撤掉哪一条（先用 files 看 id）。' },
         },
@@ -2184,13 +2188,28 @@ const ROUND_MARK = '[本轮消息]';
           };
         }
 
+        // 停下来的原因分类（2026-11-01）：四种够了。全写成自由文本的话，
+        // 以后回头看「她为什么停」只能一行行读 —— 分不了类等于没数据。
+        const KINDS = ['tired', 'not_interested', 'wrong_time', 'hurt'];
+        const rawKind = String(args?.kind ?? '').trim().toLowerCase();
+        let kind = null;
+        if (rawKind) {
+          if (!KINDS.includes(rawKind)) {
+            return { text: `（没记。kind 只能是：${KINDS.join(' / ')}。）` };
+          }
+          kind = rawKind;
+        }
         try {
           await appendLedger(join(cfg.stateDir, 'control.jsonl'),
-            `${JSON.stringify({ at: localStamp(), action, reason, by: 'her' })}\n`, 'utf8');
+            `${JSON.stringify({ at: localStamp(), action, reason, kind, by: 'her' })}\n`, 'utf8');
         } catch (err) {
           return { text: `（没写进去：${err?.message ?? err}）` };
         }
-        return { text: action === 'pause' ? '停了。心情这一层冻住：写不进，也不再被注入。' : '放开了。' };
+        if (action === 'pause') {
+          const tag = kind ? `（${kind}）` : '';
+          return { text: `停了${tag}。心情这一层冻住：写不进，也不再被注入。` };
+        }
+        return { text: '放开了。' };
       },
     });
 
