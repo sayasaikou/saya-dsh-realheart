@@ -871,6 +871,42 @@ const ROUND_MARK = '[本轮消息]';
   }
 
   /**
+   * 她的看法账（P-6 ⑨）：不是打分，是记录。
+   *
+   * 为什么要分开存：观点跟心情、跟认错都不一样 —— 心情是此刻的调子，认错是修正，
+   * 观点是「我对这件事怎么想」，能被人反驳、也能被她自己改。
+   * 同 subject 可以有多条（前一条不删）—— 改主意本身就是要看得见的事。
+   */
+  const viewFile = () => join(cfg.stateDir, 'view.jsonl');
+  async function readView() {
+    try {
+      const text = await readFile(viewFile(), 'utf8');
+      const out = [];
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          out.push(JSON.parse(line));
+        } catch {
+          /* 坏行跳过 */
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  async function viewSectionText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    const rows = await readView();
+    if (!rows.length) return '';
+    const last3 = rows.slice(-3);
+    const fmt = (r) => `· 关于「${String(r.subject || '').trim()}」：${String(r.view || '').trim()}`;
+    return ['【你的看法】', ...last3.map(fmt)].join('\n');
+  }
+
+  /**
    * 断点快照（P-6 ④）：她现在在哪。
    *
    * 为什么要有：上下文一压缩，「我在干嘛」就没了；她下一轮只能重头猜。
@@ -1130,6 +1166,12 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('admit', err);
         }
         try {
+          const view = await viewSectionText();
+          if (view) parts.push(sec('realheart:view', 908, view));
+        } catch (err) {
+          await noteInjectProblem('view', err);
+        }
+        try {
           const where = await whereSectionText();
           if (where) parts.push(sec('realheart:where', 907, where));
         } catch (err) {
@@ -1177,6 +1219,7 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:style': 95,
           'realheart:admit': 90,
           'realheart:where': 92,
+          'realheart:view': 88,
           'realheart:kept': 80,
           'realheart:pending': 60,
           'realheart:status-page': 55,
@@ -2433,6 +2476,50 @@ const ROUND_MARK = '[本轮消息]';
       },
     });
 
+    // ── 看法账（P-6 ⑨）
+    tools.register({
+      name: 'rh_view',
+      description: [
+        '记一条你的看法。',
+        '',
+        '`subject`：关于什么（一句话）。`view`：你怎么想。`why`：为什么这么想（可以不写）。',
+        '这不是打分，是记录 —— 可以只写一半（「还没想清，但觉得不对」）。',
+        '改主意就再写一条，旧的不删：改主意本身也是要看得见的事。',
+      ].join('\n'),
+      parameters: {
+        type: 'object',
+        properties: {
+          subject: { type: 'string', description: '关于什么。一句话。' },
+          view: { type: 'string', description: '你怎么想。可以不确定。' },
+          why: { type: 'string', description: '为什么这么想。可以不写。' },
+        },
+        required: ['subject', 'view'],
+        additionalProperties: false,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: { text: { type: 'string' } },
+          required: ['text'],
+          additionalProperties: false,
+        },
+        render: (_args, value) => [{ type: 'text', text: value.text }],
+      },
+      async execute(args) {
+        const subject = String(args?.subject ?? '').trim();
+        const view = String(args?.view ?? '').trim();
+        const why = String(args?.why ?? '').trim();
+        if (!subject || !view) return { text: '（subject 和 view 都要有，没记。）' };
+        const row = { at: localStamp(), subject, view, why: why || null, by: 'her' };
+        try {
+          await appendLedger(viewFile(), `${JSON.stringify(row)}` + String.fromCharCode(10), 'utf8');
+        } catch (err) {
+          return { text: `（没写进去：${err?.message ?? err}）` };
+        }
+        return { text: `记下了：关于「${subject}」—— ${view}` };
+      },
+    });
+
     // ── 认过的错（P-6 ⑩）
     //
     // 认错这件事得有个地方放。放在嘴上，下一轮就没了；放在改动账里，跟「改了什么」分不清。
@@ -2513,7 +2600,7 @@ const ROUND_MARK = '[本轮消息]';
     });
 
     const idx = await indexIds();
-    log(`rh_mood / rh_pending / rh_control / rh_changes / rh_style / rh_admit 已注册；事件索引 ${idx.ids.size} 条（${idx.note}）`);
+    log(`rh_mood / rh_pending / rh_control / rh_changes / rh_style / rh_admit / rh_view 已注册；事件索引 ${idx.ids.size} 条（${idx.note}）`);
   })();
 }
 
