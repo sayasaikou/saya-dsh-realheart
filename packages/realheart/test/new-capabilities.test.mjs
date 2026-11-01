@@ -211,3 +211,25 @@ test('主动想起：没提到就不提（不刷屏）', async () => {
     await rm(h.root, { recursive: true, force: true });
   }
 });
+
+test('会等：hold 挂一句 → holds 看得到 → unhold 销掉', async () => {
+  const h = await boot();
+  try {
+    const t = h.tools.get('rh_control');
+    const bad = await t.execute({ action: 'hold' });
+    assert.ok(bad.text.includes('about'), bad.text);
+    const r = await t.execute({ action: 'hold', about: '那个适配层到底做不做' });
+    assert.ok(!r.text.includes('没写进去'), r.text);
+    const rows = await lines(h.stateDir, 'hold.jsonl');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].action, 'hold');
+    const list = await t.execute({ action: 'holds' });
+    assert.ok(list.text.includes('适配层'), list.text);
+    const off = await t.execute({ action: 'unhold' });
+    assert.ok(off.text.includes('销了'), off.text);
+    const after = await t.execute({ action: 'holds' });
+    assert.ok(after.text.includes('（没欠着的话。）'), after.text);
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});

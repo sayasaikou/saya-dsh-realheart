@@ -872,6 +872,48 @@ const ROUND_MARK = '[本轮消息]';
   }
 
   /**
+   * 欠着的话（P-6 ⑧「会等」）。
+   *
+   * 不是不回，是明确说「这个我想想再说」—— 跟沉默的区别是：沉默没人知道，
+   * 挂起是她自己说过的、也记得住的。没说清就挂，下一轮注入会提醒她。
+   * 回了就 unhold。挂得太多也是在拖，所以注入里只报条数 + 最早那一条。
+   */
+  const holdFile = () => join(cfg.stateDir, 'hold.jsonl');
+  async function readHolds() {
+    try {
+      const text = await readFile(holdFile(), 'utf8');
+      const open = new Map();
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        let o = null;
+        try {
+          o = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (o?.action === 'hold' && o.id) open.set(o.id, o);
+        else if (o?.action === 'unhold' && o.id) open.delete(o.id);
+      }
+      return [...open.values()].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    } catch {
+      return [];
+    }
+  }
+
+  async function holdSectionText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    const rows = await readHolds();
+    if (!rows.length) return '';
+    const first = rows[0];
+    const lines = [`【你还欠着一句话】${rows.length} 条`];
+    lines.push(`· 「${String(first.about || '').trim()}」（${String(first.at || '').slice(0, 16).replace('T', ' ')} 挂的）`);
+    if (rows.length > 1) lines.push(`（还有 ${rows.length - 1} 条，用 rh_control 的 holds 看全部）`);
+    lines.push('想好了就回；回了就 unhold 掉。挂太久也是拖。');
+    return lines.join('\n');
+  }
+
+  /**
    * 主动想起（P-6 ⑥）：他刚提到一件事，而她以前对这件事有看法。
    *
    * 为什么只带一条、且必须带时间：带多了就成刷屏，不带时间就成了「我一直这么想」——
@@ -1261,6 +1303,12 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('admit', err);
         }
         try {
+          const hold = await holdSectionText();
+          if (hold) parts.push(sec('realheart:hold', 911, hold));
+        } catch (err) {
+          await noteInjectProblem('hold', err);
+        }
+        try {
           const recall = await recallSectionText();
           if (recall) parts.push(sec('realheart:recall', 910, recall));
         } catch (err) {
@@ -1328,6 +1376,7 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:where': 92,
           'realheart:view': 88,
           'realheart:recall': 86,
+          'realheart:hold': 87,
           'realheart:situation': 45,
           'realheart:kept': 80,
           'realheart:pending': 60,
@@ -2386,6 +2435,8 @@ const ROUND_MARK = '[本轮消息]';
           summary: { type: 'string', description: 'close 用：这段发生了什么。必填。' },
           next_opening: { type: 'string', description: 'close 用：下次从哪接。可以不写。' },
           doing: { type: 'string', description: 'where 用：你现在在干什么。一句话。' },
+          about: { type: 'string', description: 'hold 用：欠着的是哪一句。一句话。' },
+          id: { type: 'string', description: 'unhold 用：销哪一条。不给就销最早那条。' },
           stage: { type: 'string', description: 'where 用：到哪一步了。可以不写。' },
           next: { type: 'string', description: 'where 用：下一步干什么。可以不写。' },
           text: { type: 'string', description: 'keep 用：要留下的那句话，原样。' },
@@ -2405,8 +2456,8 @@ const ROUND_MARK = '[本轮消息]';
       },
       async execute(args) {
         const action = String(args?.action ?? '').trim();
-        if (!['pause', 'resume', 'clear', 'keep', 'unkeep', 'files', 'close', 'where'].includes(action)) {
-          return { text: '（action 只有 pause / resume / clear / keep / unkeep / files / close / where。）' };
+        if (!['pause', 'resume', 'clear', 'keep', 'unkeep', 'files', 'close', 'where', 'hold', 'unhold', 'holds'].includes(action)) {
+          return { text: '（action 只有 pause / resume / clear / keep / unkeep / files / close / where / hold / unhold / holds。）' };
         }
         const reason = String(args?.reason ?? '').trim();
 
@@ -2483,6 +2534,39 @@ const ROUND_MARK = '[本轮消息]';
           } catch (err) {
             return { text: `（没查成：${err?.message ?? err}）` };
           }
+        }
+
+        // hold / unhold / holds（P-6 ⑧）：先把一句欠着，回了再销。
+        if (action === 'holds') {
+          const rows = await readHolds();
+          if (!rows.length) return { text: '（没欠着的话。）' };
+          return { text: ['【欠着的话】', ...rows.map((r) => `· ${r.id}  「${String(r.about || '').trim()}」`)].join('\n') };
+        }
+        if (action === 'hold') {
+          const about = String(args?.about ?? '').trim();
+          if (!about) return { text: '（hold 要写 about：欠着的是哪一句。）' };
+          const id = pendingFp(about);
+          const row = { at: localStamp(), action: 'hold', id, about, by: 'her' };
+          try {
+            await appendLedger(holdFile(), `${JSON.stringify(row)}` + String.fromCharCode(10), 'utf8');
+          } catch (err) {
+            return { text: `（没写进去：${err?.message ?? err}）` };
+          }
+          return { text: `挂着了：${about}` + String.fromCharCode(10) + `（${id}。想好了回复就 unhold ${id}。）` };
+        }
+        if (action === 'unhold') {
+          const raw = String(args?.id ?? '').trim();
+          const rows = await readHolds();
+          const hit = raw
+            ? rows.find((r) => r.id === raw || r.id.startsWith(raw))
+            : rows[0];
+          if (!hit) return { text: '（没找到这条。用 holds 看一眼 id。）' };
+          try {
+            await appendLedger(holdFile(), `${JSON.stringify({ at: localStamp(), action: 'unhold', id: hit.id, by: 'her' })}` + String.fromCharCode(10), 'utf8');
+          } catch (err) {
+            return { text: `（没写进去：${err?.message ?? err}）` };
+          }
+          return { text: `销了：${hit.about}` };
         }
 
         // where = 「我现在在哪」（P-6 ④）。写一次覆盖一次，注入只看最后一条。
