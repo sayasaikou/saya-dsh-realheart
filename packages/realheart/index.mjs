@@ -241,6 +241,29 @@ export function apply(ctx, config = {}) {
   const moodFile = () => join(cfg.stateDir, 'mood.jsonl');
 
   /**
+   * 被拒绝的心情写入也要留痕（2026-11-01，她提的）。
+   *
+   * 为什么：10-26 到 10-31 她调过 rh_mood、返回「没记」、审计记的是成功，
+   * 盘上却什么都没有 —— 于是「她试过但被挡了」这件事一个人都不知道。
+   * 拒绝不是错，但拒绝必须看得见。
+   */
+  const moodRejectFile = () => join(cfg.stateDir, 'mood-rejects.jsonl');
+  async function noteMoodReject(why, args) {
+    const row = {
+      at: localStamp(),
+      why,
+      feeling: String(args?.feeling ?? '').slice(0, 60),
+      level: args?.level ?? null,
+      why_ref: String(args?.why_ref ?? '').slice(0, 160),
+    };
+    try {
+      await appendFile(moodRejectFile(), `${JSON.stringify(row)}` + String.fromCharCode(10), 'utf8');
+    } catch {
+      /* 记不上不影响拒绝本身 */
+    }
+  }
+
+  /**
    * 她自己留下的句子（P-6 ①）。
    *
    * 她的要求原话是「自己留、自己看」：她标记的那句，下一轮自动回来，
@@ -1408,6 +1431,7 @@ export function apply(ctx, config = {}) {
 
         if (!feeling) return { text: '（没写心情，没记。）' };
         if (!Number.isFinite(level) || level < 1 || level > 10) {
+          await noteMoodReject('level out of 1-10', args);
           return { text: '（强度要在 1-10 之间，没记。）' };
         }
 
@@ -1415,6 +1439,7 @@ export function apply(ctx, config = {}) {
         // 否则她会把“写不进去”归因到自己身上。
         const ctl = await readControl();
         if (ctl.paused) {
+          await noteMoodReject('paused', args);
           return {
             text: '（现在记不了——他把你冻住了'
               + (ctl.reason ? '：' + ctl.reason : '')
@@ -1430,6 +1455,7 @@ export function apply(ctx, config = {}) {
           found.push(`${m[2]}:${m[3]}#${m[4]}`);
         }
         if (found.length === 0) {
+          await noteMoodReject('no event id in why_ref', args);
           return {
             text: '（没记。why_ref 里没有事件 id。）\n'
               + '心情必须有来处。去观测页的时间线上找一个 id（鼠标悬停能看到），'
@@ -1449,6 +1475,7 @@ export function apply(ctx, config = {}) {
         if (noneMatch) {
           const val = noneMatch[1].toLowerCase();
           if (!NONE_ENUM.includes(val)) {
+            await noteMoodReject('bad none enum', args);
             return {
               text: `（没记。none: 后面只能接这几个：${NONE_ENUM.join(' / ')}。）\n`
                 + '这一栏是留给「说不清」的，不是给随手写的。',
@@ -1469,6 +1496,7 @@ export function apply(ctx, config = {}) {
           const idx = await indexIds();
           hit = found.find((id) => idx.ids.has(id));
           if (!hit) {
+            await noteMoodReject('event id not in index', args);
             return {
               text: `（没记。索引里找不到 ${found[0]}。）\n`
                 + `索引现有 ${idx.ids.size} 条事件（${idx.note}）。\n`
@@ -1541,6 +1569,7 @@ export function apply(ctx, config = {}) {
 
         const ctl = await readControl();
         if (ctl.paused) {
+          await noteMoodReject('paused', args);
           return { text: '（现在写不了——这一层被冻住了，不是你出了问题。）' };
         }
 
