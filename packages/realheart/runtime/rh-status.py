@@ -376,6 +376,10 @@ table.cfg .why{color:#8b929c;font-size:12px;line-height:1.6;max-width:34ch}
    所以给它呼吸，别挤成表格。 */
 .say-list{margin-top:8px}
 .say-list .kv{margin-top:10px}
+.firstrun{border-color:#3a4a5e;background:#151d26}
+.firstrun .fr{margin:8px 0 0 18px;padding:0}
+.firstrun .fr li{margin:10px 0;font-size:13px;line-height:1.7;color:#c6ccd6}
+.firstrun .fr b{color:#e6e9ee}
 .tu-yes{color:#7cc46a;font-size:12px}
 .tu-no{color:#8b929c;font-size:12px}
 .say-txt{margin:2px 0 0 0;padding:8px 12px;border-left:2px solid #2f3944;
@@ -1260,6 +1264,44 @@ def render_recommend():
             + ''.join(blocks) + '</div>')
 
 
+def render_firstrun():
+    """第一次用？先做这三件（2026-11-02）。
+
+    ── 为什么这块必须在页面上 ──
+    首日提示原来是 `console.log` —— **只在终端打一次**。用 GUI 的人根本看不到，
+    于是「装完了，然后呢」没人回答。而这个包最容易死人的地方就在这一步：
+    装完不知道怎么试，试不出感觉，就不用了。
+
+    ── 为什么只在「什么都没有」时显示 ──
+    账本一旦有东西（心情 / 待办 / 她说的），这块自动消失。
+    常驻的话它就变成一块永远在那儿的说明书 —— 没人看第二遍。
+    """
+    if not RH_STATE:
+        return ''
+    for fname in ('mood.jsonl', 'pending.jsonl', 'say.jsonl', 'style.jsonl'):
+        p = os.path.join(RH_STATE, fname)
+        if os.path.exists(p):
+            try:
+                with open(p, encoding='utf-8') as fh:
+                    if any(line.strip() for line in fh):
+                        return ''   # 已经有东西了，人已经跑起来了，不用再教
+            except Exception:
+                pass
+    return (
+        '<div class="card wide firstrun"><h2>第一次用？先做这三件</h2>'
+        '<ol class="fr">'
+        '<li><b>跟她说一句「你现在什么感觉」</b><br>'
+        '她会调 <span class="mono">rh_mood</span> 记一笔。'
+        '这一句验的是<b>通路通不通</b>，不是效果好不好。</li>'
+        '<li><b>看下面那本心情账</b><br>'
+        '记完就有了。之后她开口之前，注入里会多一段【你现在的状态】。</li>'
+        '<li><b>三天后再看「她用没用这些」那块</b><br>'
+        '九项里她用上几项、空着哪几项 —— 那比任何配置项都更能说明她的状态。</li>'
+        '</ol>'
+        '<p class="note">这三件看完这块就不再出现。它是一次性的，不是说明书。</p>'
+        '</div>')
+
+
 def render_tool_usage():
     """她用没用这些工具（2026-11-02）。
 
@@ -1552,6 +1594,7 @@ def apply_config_post(form):
 def build_page(flash=''):
     info = sysinfo()
     cards = ''.join([
+        render_firstrun(),
         render_mood_ledger(),
         render_style(),
         render_free_time(),
