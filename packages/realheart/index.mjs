@@ -2322,15 +2322,21 @@ const ROUND_MARK = '[本轮消息]';
    * 为什么单独一个文件：ping-run.sh 是纯 shell，不该去解 DSH 的配置树。
    * 插件写、脚本读 —— 跟 free-prompt.txt 同一个道理。
    *
-   * 为什么 everyMinutes=0 也照写：脚本读到 0 就退出。写下来才有「开关在哪」可查，
+   * 为什么 min=0 也照写：脚本读到 0 就退出。写下来才有「开关在哪」可查，
    * 不然「短唤醒没跑」会被当成 bug 查半天。
    */
   async function writePingConfig() {
     const p = join(DSH_HOME, 'realheart', 'ping.json');
+    const min = Number(cfg.pingMinMinutes) || 0;
+    const max = Number(cfg.pingMaxMinutes) || 0;
     try {
       await mkdir(dirname(p), { recursive: true });
       await writeFile(p, JSON.stringify({
-        everyMinutes: Number(cfg.pingEveryMinutes) || 0,
+        // max 没填就跟着 min 走 —— 填了一个数就以为开了，是最容易踩的坑
+        minMinutes: min,
+        maxMinutes: max > 0 ? Math.max(max, min) : min,
+        fromHour: Number.isFinite(Number(cfg.pingFromHour)) ? Number(cfg.pingFromHour) : 7,
+        toHour: Number.isFinite(Number(cfg.pingToHour)) ? Number(cfg.pingToHour) : 23,
         profile: cfg.freeTimeProfile,
         prompt: PING_PROMPT,
       }, null, 2) + String.fromCharCode(10), 'utf8');

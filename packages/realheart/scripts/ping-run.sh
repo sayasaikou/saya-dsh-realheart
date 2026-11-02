@@ -1,17 +1,21 @@
 #!/bin/bash
-# 短唤醒 —— 每隔 N 分钟叫她醒一下，只做一件事：此刻有没有想说的。
+# 短唤醒 —— 每隔一段随机时间叫她醒一下，只做一件事：此刻有没有想说的。
 #
 # 为什么跟自由时间分开：
 #   自由时间是做东西的，要连续两个小时，隔一会儿打断一次就什么都做不成。
 #   而「想说话」该是随时能发生的 —— 人不是坐下来专门想说才说。
 #
-# 为什么用 cron 每 5 分钟跑、而不是按 N 设 cron：
-#   N 是可配的，cron 写死了就改不动。这里每次只比一下「距上次够不够久」，
-#   所以 N 改成 17 分钟也行，不用重装。
+# 为什么用 cron 每 5 分钟跑、而不是按间隔设 cron：
+#   间隔是可配的、还是随机的，cron 写死了就改不动。
+#   这里每次只比一下「到时间没有」，所以改成 17–43 分钟也行，不用重装。
 #
-# 为什么 N=0 就直接退出：
-#   默认是关的。这东西一天能跑 48 次，每次都是一次完整的模型调用 ——
+# 为什么 min=0 就直接退出：
+#   默认是关的。这东西一天能跑二十来次，每次都是一次完整的模型调用 ——
 #   开不开该由人决定，不该由安装器替他决定。
+#
+# 为什么夜里不跑（2026-11-02 沙耶提的）：
+#   深夜发消息是打扰，不是分享。但只限制「叫醒」，不限制她自己想说的 ——
+#   她在自由时间里想发的那条，什么时候都能发。
 
 set -euo pipefail
 
@@ -36,8 +40,10 @@ cd "$HOME/qqbot" 2>/dev/null || true
 # cron 的 PATH 很窄，dsh 不一定在里头。写绝对路径，跟 freetime-run.sh 保持一致。
 DSH_BIN="${DSH_BIN:-/usr/bin/dsh}"
 
-CFG="${DSH_HOME:-$HOME/.dsh}/realheart/ping.json"
-LAST_FILE="${DSH_HOME:-$HOME/.dsh}/realheart/ping.last"
+BASE="${DSH_HOME:-$HOME/.dsh}/realheart"
+CFG="$BASE/ping.json"
+NEXT_FILE="$BASE/ping.next"
+LAST_FILE="$BASE/ping.last"
 
 # 配置没写出来 = 插件还没起过 / 这一版没有短唤醒。安静退出，不报错。
 [ -f "$CFG" ] || exit 0
@@ -53,19 +59,43 @@ except Exception:
 " "$CFG" "$1" 2>/dev/null
 }
 
-EVERY="$(read_cfg everyMinutes)"
-[ -n "${EVERY:-}" ] || exit 0
-[ "$EVERY" -gt 0 ] 2>/dev/null || exit 0
+MIN="$(read_cfg minMinutes)"
+MAX="$(read_cfg maxMinutes)"
+FROM="$(read_cfg fromHour)"
+TO="$(read_cfg toHour)"
+case "$MIN" in ''|*[!0-9]*) MIN=0 ;; esac
+[ "$MIN" -gt 0 ] 2>/dev/null || exit 0
+case "$MAX" in ''|*[!0-9]*) MAX=$MIN ;; esac
+[ "$MAX" -ge "$MIN" ] 2>/dev/null || MAX=$MIN
+case "$FROM" in ''|*[!0-9]*) FROM=7 ;; esac
+case "$TO" in ''|*[!0-9]*) TO=23 ;; esac
+
+# ── 时段 ──
+HOUR=$(date +%-H)
+if [ "$FROM" -le "$TO" ]; then
+  [ "$HOUR" -ge "$FROM" ] && [ "$HOUR" -lt "$TO" ] || exit 0
+else
+  # 跨午夜（比如 22 点到次日 6 点）也要认
+  [ "$HOUR" -ge "$FROM" ] || [ "$HOUR" -lt "$TO" ] || exit 0
+fi
 
 NOW=$(date +%s)
-LAST=$(cat "$LAST_FILE" 2>/dev/null || echo 0)
-case "$LAST" in ''|*[!0-9]*) LAST=0 ;; esac
 
-NEED=$((EVERY * 60))
-[ $((NOW - LAST)) -ge "$NEED" ] || exit 0
+# 到点没有？有 ping.next 就比它，没有就当场决定下一次。
+NEXT=$(cat "$NEXT_FILE" 2>/dev/null || echo 0)
+case "$NEXT" in ''|*[!0-9]*) NEXT=0 ;; esac
+if [ "$NEXT" -eq 0 ]; then
+  GAP=$(( (RANDOM % (MAX - MIN + 1)) + MIN ))
+  echo "$((NOW + GAP * 60))" > "$NEXT_FILE"
+  exit 0                      # 刚排出下一次，这次不跑
+fi
+[ "$NOW" -ge "$NEXT" ] || exit 0
 
 # 先落时间戳再干活：跑的时候万一卡住，也不会每 5 分钟重复叫一次。
-echo "$NOW" > "$LAST_FILE" 2>/dev/null || exit 0
+echo "$NOW" > "$LAST_FILE" 2>/dev/null || true
+# 排下一次：随机落在 [MIN, MAX] 分钟之后
+GAP=$(( (RANDOM % (MAX - MIN + 1)) + MIN ))
+echo "$((NOW + GAP * 60))" > "$NEXT_FILE"
 
 PROMPT="$(read_cfg prompt)"
 if [ -z "${PROMPT:-}" ]; then
