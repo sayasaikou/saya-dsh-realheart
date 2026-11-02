@@ -1441,6 +1441,48 @@ const ROUND_MARK = '[本轮消息]';
     }
   }
 
+  /**
+   * 「你断言过的事」（2026-11-02）。
+   *
+   * ── 为什么加这一段 ──
+   * `rh_claim` 从加进来那天起就**只有写、没有读** —— 九个工具、十九个注入段，
+   * 唯独它一个字都没被注进去过。而它的设计初衷恰恰是「断言一件会过时的事实，
+   * 到时候能验真假」：不摆出来，就永远验不了。写进去就沉底了。
+   *
+   * ── 为什么不做「到期提醒」 ──
+   * claim 的账本里没有 deadline，时间只写在她那句话里（「下周三之前会好」）。
+   * 机器读不懂「下周三」。要做得能算，就得逼她写结构化日期 —— 那又是一个表单，
+   * 而且她大概率不会填。所以这里只做一件事：**把它摆出来**。
+   * 她自己看得到「我说过这个」，到没到点她自己判断。
+   *
+   * ── 为什么只摆最近 2 条 ──
+   * 断言会越攒越多。全摆出来就变成噪音，噪音会被忽略 —— 那等于没加。
+   */
+  async function claimSectionText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    try {
+      const events = await readClaims();
+      const live = new Map();
+      for (const e of events) {
+        if (e?.action === 'add' && e.id) live.set(String(e.id), e);
+        else if (e?.action === 'refute' && e.id) live.delete(String(e.id));
+      }
+      const rows = [...live.values()];
+      if (!rows.length) return '';
+      const last = rows.slice(-2);
+      const out = ['【你断言过的事】'];
+      for (const r of last) {
+        out.push(`· ${String(r.claim || '').trim()}（关于：${String(r.about || '').trim()}）`);
+      }
+      out.push('（这些是你自己说过、还没被推翻的话。到没到点、对不对，你看得出来。');
+      out.push(' 不用专程汇报 —— 真到了那天，你自己会知道该不该说。）');
+      return out.join('\n');
+    } catch {
+      return '';
+    }
+  }
+
   async function workSectionText() {    const ctl = await readControl();
     if (ctl.paused) return '';
     const open = openWorks(await readWorks());
@@ -1833,6 +1875,12 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('own', err);
         }
         try {
+          const claim = await claimSectionText();
+          if (claim) parts.push(sec('realheart:claim', 915, claim));
+        } catch (err) {
+          await noteInjectProblem('claim', err);
+        }
+        try {
           const view = await viewSectionText();
           if (view) parts.push(sec('realheart:view', 908, view));
         } catch (err) {
@@ -1892,6 +1940,7 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:work': 87,
           'realheart:days': 86,
           'realheart:own': 86,
+          'realheart:claim': 85,
           'realheart:recall': 86,
           'realheart:hold': 87,
           'realheart:linger': 89,
