@@ -128,9 +128,37 @@ function checkEngines() {
 
 function install(opts) {
   const profileDir = resolveProfile(opts.profile);
-  if (!existsSync(join(profileDir, 'package.json'))) {
-    fail(`那个目录里没有 package.json：${profileDir}\n（profile 名字写错了，或者这个 profile 还没建过）`);
+
+  // ── profile 不存在就建一个（2026-11-02）──
+  //
+  // 为什么：以前这里直接 fail「那个目录里没有 package.json」——于是新机上「一条命令装完」
+  // 实际上是两条：先自己建 profile，再装。而建 profile 这件事，一个想装插件的人凭什么会。
+  //
+  // 建最小的一份，但**明说建了**：他本意可能是装到某个已有的 profile 里去，
+  // 悄悄建一个新的会让他以为装上了、其实装在了别处。
+  const pkgPath = join(profileDir, 'package.json');
+  let willCreateProfile = false;
+  if (!existsSync(pkgPath)) {
+    willCreateProfile = true;
+    const guessName = profileDir.split(/[\\/]/).filter(Boolean).pop() || 'default';
+    if (opts.dryRun) {
+      say(`[dry-run] profile 不存在，正式跑会自动建：${profileDir}`);
+    } else {
+      say(`这台机器上还没有 profile「${guessName}」，建一个最小可用的：${profileDir}`);
+      say('（如果你本来想装进某个已有的 profile，Ctrl-C，用 --profile <那个名字> 再跑一次）');
+      mkdirSync(profileDir, { recursive: true });
+      writeFileSync(pkgPath, `${JSON.stringify({
+        name: `dsh-profile-${guessName}`,
+        private: true,
+        dependencies: {},
+        dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } },
+      }, null, 2)}\n`, 'utf8');
+      const cy = join(profileDir, 'cordis.yml');
+      if (!existsSync(cy)) writeFileSync(cy, '[]\n', 'utf8');
+      say('建好了（bundles 里给了 dsh-base + dsh-web-app：只有 base 的话它连界面都没有）');
+    }
   }
+
   const profileName = profileDir.split(/[\\/]/).filter(Boolean).pop();
   // Windows 上调 dsh 得经过 shell（dsh 是 .cmd，Node 从 18.20 起不允许直接 spawn .bat/.cmd）。
   // 经 shell 就意味着参数会被拼接，所以名字必须干净 —— 只允许目录名里正常存在的字符。
@@ -171,6 +199,18 @@ function install(opts) {
   }
 
   // ② bundles。这一步没有「失败就算了」这一说：漏了它整件事等于没做。
+  //
+  // dry-run 时 profile 可能是「还没建、也不打算真建」的 —— 这时候去跑 setup.mjs 必挂
+  // （它要改一个不存在的 package.json），而那个 fail 会让人以为「dry-run 都跑不通，那肯定装不上」。
+  // dry-run 的语义是「把会做的都打出来」，不是「在中间撞墙」。
+  if (willCreateProfile && opts.dryRun) {
+    say('[dry-run] 后面还有三步（真要跑才会执行）：');
+    say('          · 往 bundles 里写 realheart');
+    say('          · 自检 @deepseek-ai/schemastery，缺就自动补');
+    say('          · 铺一份给人看的用法说明（skills/realheart/SKILL.md）和排程文件');
+    say('[dry-run] 到此为止，什么都没改。');
+    return;
+  }
   const setup = join(PKG_ROOT, 'setup.mjs');
   if (!existsSync(setup)) fail(`包里找不到 setup.mjs：${setup}`);
   const args = [setup, profileDir];
@@ -248,7 +288,7 @@ function install(opts) {
   console.log('');
   say('装好了。接着做这四件：');
   say('  1. 重启 dsh —— 配置不热生效（重启会打断正在说话的会话，挑个没人用的时候）');
-  say('  2. 重启后先验一条：日志里出现「已注册」，八个工具都在');
+  say('  2. 重启后先验一条：日志里出现「已注册」，九个工具都在');
   say('  3. 头一周只开观测：把 injectMood 设成 false，先看它记了什么，别急着让它影响说话');
   say('  4. 出事一条命令退：sh scripts/uninstall.sh --profile ' + profileName + ' --dry-run');
   console.log('');
@@ -256,6 +296,8 @@ function install(opts) {
   say('  装一个 OneBot 11 通道，例如 dsh-napcat。它会把对话落到 ~/qqbot/data/msgs，');
   say('  心情的「因为哪句话」才填得上。不装也能用，只是那一栏永远空着。');
   say('  那是别人的项目，怎么装看它自己的文档 —— 我们不碰它的代码，也不替它配置。');
+  say('  （装完之后去观测页看一眼「配套工具」那块：那里会冒出给这个通道配的小工具，');
+  say('    比如掉线时的扫码页。没装就看不到 —— 用不上的东西不往那摆。）');
   console.log('');
   say('三件得先说清楚：');
   say('  · 适用范围：只推荐私聊与少数固定人员。群聊没做深，效果和后果不作保证。');
