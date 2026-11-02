@@ -127,6 +127,56 @@ export async function runDoctor({ dshHome = DSH_HOME } = {}) {
     }
   }
 
+  // ── 2b. 事件源四路（2026-11-02）──
+  //
+  // 为什么单独查：四路都「能读到」不等于「解析得出 id」。
+  // 哪一路的格式变了，表现只会是「来处指不出来」—— 而那时候人只会以为她不想记。
+  // 这里只读一条样本：后缀是不是 .jsonl、第一行能不能 JSON.parse。两样都过就算通。
+  // ⚠️ 只读，不写、不建目录（拿不到路径就不猜，跟下面几条一个规矩）。
+  if (rt) {
+    const srcs = [
+      { name: 'audit', label: '审计日志', dir: rt.auditDir },
+      { name: 'history', label: '对话历史', dir: rt.historyDir },
+      { name: 'msgs', label: '落盘消息', dir: rt.msgsDir },
+    ];
+    for (const s of srcs) {
+      if (!s.dir) {
+        add('warn', `事件源 · ${s.label}`, '运行时配置里没写这个路径',
+          '它会在「心情的来处」里少一整路。检查 runtime/config.json 的 ' + s.name + 'Dir');
+        continue;
+      }
+      let names = [];
+      try {
+        names = (await readdir(s.dir)).filter((n) => n.endsWith('.jsonl') && !n.startsWith('_'));
+      } catch (err) {
+        add('warn', `事件源 · ${s.label}`, `读不到 ${s.dir}（${err?.code ?? err?.message ?? err}）`,
+          `这一路的来处会断。路径对不对？先 ls ${s.dir}`);
+        continue;
+      }
+      if (!names.length) {
+        add('warn', `事件源 · ${s.label}`, `${s.dir} 里没有 .jsonl`,
+          '这一路是空的。第一次装、或者那个插件还没落过盘，都正常；但一直是空的就不是。');
+        continue;
+      }
+      const sample = join(s.dir, names[names.length - 1]);
+      let ok = false;
+      let why = '';
+      try {
+        const text = await readFile(sample, 'utf8');
+        const first = text.split('\n').find((l) => l.trim());
+        if (!first) why = '文件是空的';
+        else if (first.trim().startsWith('{')) ok = true;
+        else why = '第一行不是 JSON 对象';
+      } catch (err) {
+        why = String(err?.code ?? err?.message ?? err);
+      }
+      add(ok ? 'ok' : 'warn', `事件源 · ${s.label}`,
+        ok ? `${names.length} 个文件，样本可解析（${names[names.length - 1]}）`
+          : `${names.length} 个文件，但样本解析不了：${why}`,
+        ok ? '' : '格式变了？这一路的来处会指不出来，而且不报错。看那个文件长什么样。');
+    }
+  }
+
   // ── 3. 配置本身合不合规（和启动时同一套判据）──
   // 没有运行时配置就不查：拿默认值查出来的「全对」是假的，默认值当然合法。
   if (rt) {
