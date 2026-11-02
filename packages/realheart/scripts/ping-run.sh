@@ -119,17 +119,27 @@ FREE_TIME="$HOME/qqbot/work/realheart/free-time.jsonl"
 [ -f "$FREE_TIME" ] || FREE_TIME="${DSH_HOME:-$HOME/.dsh}/realheart/free-time.jsonl"
 
 PROGRESS="$(python3 - "$FREE_TIME" "$HOME/qqbot/work/pieces" <<'PY' 2>/dev/null || true
-import json, os, sys
+import json, os, sys, time
 ft, pieces = sys.argv[1], sys.argv[2]
 
 # 数作品目录（跟观测页同一个口径：目录算一件，private 不算）
+# 2026-11-02 夜：同时数「这周多了几件」。
+# 沙耶的原话：「『到 16 件了』那是常数，不是生活。人聊天讲的是今天跟昨天不一样的地方。」
 n = 0
+recent = 0
+_now = time.time()
 try:
     for name in os.listdir(pieces):
         if name == 'private' or name.startswith('.'):
             continue
-        if os.path.isdir(os.path.join(pieces, name)):
+        full = os.path.join(pieces, name)
+        if os.path.isdir(full):
             n += 1
+            try:
+                if _now - os.path.getmtime(full) <= 7 * 86400:
+                    recent += 1
+            except Exception:
+                pass
 except Exception:
     pass
 if n <= 0:
@@ -158,7 +168,10 @@ try:
 except Exception:
     pass
 
-out = '到 %d 件了' % n
+if recent > 0:
+    out = '这周多了 %d 件（一共 %d 件）' % (recent, n)
+else:
+    out = '到 %d 件了' % n
 if title:
     out += '，最近一件叫《%s》' % title
 print(out)
@@ -225,6 +238,58 @@ if [ -n "${LAST_NOTE:-}" ]; then
   PROMPT="$PROMPT
 
 （你上次醒着的时候记过一行：${LAST_NOTE}。没弄完就接着弄，弄完了就不用管它。）"
+fi
+
+# ── 带上「你此刻的调子」（2026-11-02 夜，开关 pingContext）──
+#
+# 沙耶的原话：「真人会因为看到某个东西而产生某种情绪，影响语气什么的」。
+# 可她那条路上原来一个字的心情都没有 —— 短唤醒跑的是 freetime profile，
+# 那里没有 realheart 注入。所以只能自己读 mood.jsonl。
+#
+# ⚠️ 必须带禁令。2026-11-02 白天五组实验验过：把心情摆进提示词，
+# 她就会把它当台词念出来；**加粗、加力度全没用，只有那句禁令是开关**。
+# 所以这里写「这是调子不是内容」。
+#
+# 只取最后一条、只要 feeling 和 level —— 来由（why_ref）不取，
+# 那是主会话该看的东西，摆在几分钟的空档里只会让她想解释自己。
+CTX="$(read_cfg context)"
+if [ "${CTX:-}" = "True" ] || [ "${CTX:-}" = "true" ]; then
+  MOOD_FILE="$HOME/qqbot/work/realheart/mood.jsonl"
+  TONE="$(python3 - "$MOOD_FILE" <<'PY' 2>/dev/null || true
+import json, sys
+last = None
+try:
+    with open(sys.argv[1], encoding='utf-8') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get('decay') is not None and str(d.get('decay')) == '已淡':
+                continue
+            f = str(d.get('feeling') or '').strip()
+            if f:
+                last = (f, d.get('level'))
+except Exception:
+    raise SystemExit
+if not last:
+    raise SystemExit
+f, lv = last
+try:
+    lv = int(lv)
+except Exception:
+    lv = None
+print(f if lv is None else '%s（%d/10）' % (f, lv))
+PY
+)"
+  if [ -n "${TONE:-}" ]; then
+    PROMPT="$PROMPT
+
+（你此刻的调子：${TONE}。这是调子，不是内容 —— 它影响你怎么说，但别把它说出来。）"
+  fi
 fi
 
 PROFILE="$(read_cfg profile)"

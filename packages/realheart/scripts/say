@@ -1,0 +1,164 @@
+#!/bin/bash
+# say —— 我有话想说，就直接说出去
+#
+# 这是我自己的一条嘴。以前自由时间里我能干活、能想事，但说不出话 ——
+# 因为那个 profile 里没有通道。现在有了：NapCat 自己带 HTTP 接口，
+# 我用一行命令就能把话送到他手机上。
+#
+# 用法：
+#   say "想说的话"
+#   say --to 1418499574 "想说的话"     # 默认就是他
+#   say --group 1107584206 "想说的话"  # 发到群里（慎用）
+#   say --piece ~/qqbot/work/pieces/xxx "做完了，你要不要看"
+#                                      # 附一句 + 作品路径。作品不用拆成消息。
+#   say --dry "想说的话"               # 只看会发出什么，不真发
+#
+# 它会告诉我发成功没有。失败不假装成功。
+#
+# ── 说什么都行（2026-11-02）──
+# 不用是作品，也不用有前因后果。
+#   看到一个东西想到他 → 发一句就够
+#   想不通的事 → 可以发，不用先想清楚
+#   「今天有点闷」 → 也算，不用解释为什么
+# 人分享的不是成品，是「我想到你了」。别把它做成汇报。
+#
+# ── 说什么才算有实质（2026-11-02 夜，沙耶提的）──
+# 一个够用的判据：**他可能不知道的、我今天碰到的那一件。**
+#
+#   「潟湖的水缩进板子里只有 125 毫升，半杯」   ← 是
+#   「我做到第十一件了」                        ← 不是，那是汇报
+#   「今天有点闷」                              ← 不是，那不是一件东西
+#
+# ⚠️ 这是**内容**判据，不是**资格**判据。
+#    别拿它去筛「值不值得说」—— 那个门槛 2026-11-02 拆过一次，拆对了：
+#    人不是「判断完值得说才说」，是「想到你了就说」。
+#    这条只管一件事：开口的时候，手上有没有一件具体的。没有就别说，也不用编。
+
+set -uo pipefail
+
+UIN=3676939737
+TARGET=1418499574
+GROUP=""
+PIECE=""
+DRY=0
+MSG=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --to)    TARGET="$2"; shift 2 ;;
+    --group) GROUP="$2";  shift 2 ;;
+    --piece) PIECE="$2";  shift 2 ;;
+    --dry)   DRY=1; shift ;;
+    --help|-h) sed -n '2,20p' "$0"; exit 0 ;;
+    *) MSG="$1"; shift ;;
+  esac
+done
+
+if [ -z "$MSG" ] && [ -z "$PIECE" ]; then
+  echo "没话可说就不发。" >&2
+  exit 2
+fi
+
+# 带作品时：话 + 路径。路径要能点开，所以用绝对路径原样贴。
+if [ -n "$PIECE" ]; then
+  PIECE="${PIECE%/}"
+  if [ -n "$MSG" ]; then
+    MSG="$MSG
+$PIECE"
+  else
+    MSG="$PIECE"
+  fi
+fi
+
+# token 从 NapCat 的 onebot 配置里读 —— 不写死在任何地方，配置变了它自己跟
+CONF="$HOME/napcatrun/napcat/config/onebot11_${UIN}.json"
+[ -f "$CONF" ] || CONF="/home/ubuntu/napcatrun/napcat/config/onebot11_${UIN}.json"
+if [ ! -f "$CONF" ]; then
+  echo "找不到 $CONF —— 发不了。不是我的问题，是配置路径变了。" >&2
+  exit 3
+fi
+
+TOKEN=$(python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+servers=d.get('network',{}).get('httpServers',[])
+for s in servers:
+    if s.get('enable'):
+        print(s.get('token','')); break
+" "$CONF" 2>/dev/null)
+
+if [ -z "${TOKEN:-}" ]; then
+  echo "配置里没找到启用的 httpServers token —— 发不了。" >&2
+  exit 3
+fi
+
+PORT=$(python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+servers=d.get('network',{}).get('httpServers',[])
+for s in servers:
+    if s.get('enable'):
+        print(s.get('port',3000)); break
+" "$CONF" 2>/dev/null)
+PORT="${PORT:-3000}"
+
+if [ "$DRY" -eq 1 ]; then
+  echo "[dry] 会发到 $([ -n "$GROUP" ] && echo "群 $GROUP" || echo "他 $TARGET")：$MSG"
+  exit 0
+fi
+
+# 消息里的引号、换行都用 python 打包，别让 shell 去拼 JSON
+BODY=$(python3 -c "
+import json,sys
+msg=sys.argv[1]
+if sys.argv[2]:
+    print(json.dumps({'group_id': int(sys.argv[2]), 'message': msg}))
+else:
+    print(json.dumps({'user_id': int(sys.argv[3]), 'message': msg}))
+" "$MSG" "$GROUP" "$TARGET")
+
+if [ -n "$GROUP" ]; then
+  EP=send_group_msg
+else
+  EP=send_private_msg
+fi
+
+RESP=$(curl -s -m 12 -X POST "http://127.0.0.1:$PORT/$EP" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$BODY" 2>&1)
+
+if echo "$RESP" | grep -q '"status":"ok"'; then
+  MID=$(echo "$RESP" | python3 -c "
+import json,sys
+try: print(json.load(sys.stdin).get('data',{}).get('message_id',''))
+except Exception: print('')
+" 2>/dev/null)
+  # 记进账本（2026-11-02）。
+  #
+  # 为什么要记：这是个独立脚本，发完就走 —— 以前她说过什么**一个字都不留**。
+  # 而「她主动跟我说过什么」恰恰是最该能查的一件事：
+  # 没有账，就只能靠记性说「好像有过」。
+  #
+  # 写失败不影响这次发送（已经发出去了），只在 stderr 说一句。
+  LEDGER="${DSH_HOME:-$HOME/.dsh}/realheart/say.jsonl"
+  python3 - "$LEDGER" "$MSG" "$MID" "$GROUP" "$TARGET" <<'PY' 2>/dev/null || true
+import json, os, sys, time
+path, text, mid, group, target = sys.argv[1:6]
+os.makedirs(os.path.dirname(path), exist_ok=True)
+row = {
+    'at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+    'kind': 'group' if group else 'private',
+    'to': (group or target),
+    'text': text,
+    'message_id': mid,
+}
+with open(path, 'a', encoding='utf-8') as fh:
+    fh.write(json.dumps(row, ensure_ascii=False) + '\n')
+PY
+  echo "发出去了（message_id ${MID:-?}）"
+  exit 0
+else
+  echo "没发出去：$RESP" >&2
+  exit 1
+fi

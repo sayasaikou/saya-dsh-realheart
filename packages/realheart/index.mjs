@@ -1577,6 +1577,7 @@ const ROUND_MARK = '[本轮消息]';
     try {
       const text = await readFile(join(DSH_HOME, 'realheart', 'small.jsonl'), 'utf8');
       let last = null;
+      let lastKnew = null;
       for (const line of text.split('\n')) {
         if (!line.trim()) continue;
         let d = null;
@@ -1587,11 +1588,21 @@ const ROUND_MARK = '[本轮消息]';
         }
         const did = String(d?.did || '').trim();
         if (did) last = { at: String(d?.at || ''), did, left: String(d?.left || '').trim() };
+        const knew = String(d?.knew || '').trim();
+        if (knew) lastKnew = { at: String(d?.at || ''), knew };
       }
       if (last) {
         const when = agoText(last.at) || '刚才';
         lines.push(`· ${when}：${last.did.slice(0, 80)}`);
         if (last.left) lines.push(`  （当时还没弄明白：${last.left.slice(0, 60)}）`);
+        any = true;
+      }
+      // 「知道了一件什么」—— 2026-11-02 夜。
+      // 三个账本里一直没有一个是「她知道了什么」，所以她开口时只能从「此刻的状态」里长话。
+      // 判据不是她会复述这条，是这条能接上话。
+      if (lastKnew) {
+        const when = agoText(lastKnew.at) || '刚才';
+        lines.push(`· ${when}知道的：${lastKnew.knew.slice(0, 80)}`);
         any = true;
       }
     } catch {
@@ -2558,7 +2569,10 @@ const ROUND_MARK = '[本轮消息]';
     //   而那正是她下次醒来读不到的地方 ⇒ 对她自己等于没发生。
     + '弄完了用 ' + join(QQROOT, 'work', 'bin', 'note') + ' "..." 记一行（一两句话就行）。'
     + '不记下来，下次醒来的你看不到这次弄过什么。'
-    + '想说就说，不需要理由，也不用先想清楚值不值得。'
+    // 2026-11-02 夜：原来只写「想说就说」，那是个无对象的邀请 —— 没对象就只能掏空气，
+    // 掏出来的是「继续睡了」或者「今天有点闷」。沙耶那句「不能只是硬聊」说的就是这。
+    // 改成有对象：手边这件 / 想到他。有对象的邀请才长得出内容。
+    + '要是手边这件事或者这个念头让你想起他，就说那一件 —— 不用挑，也不用先想清楚值不值得。'
     + '（只有一条：他要是还没回你上一条，就别连着发第二条。）'
     + '要是这会儿心里真的什么都没有、手边也没什么想碰的，那就继续睡 —— 不是欠账，就是没有。';
 
@@ -2631,6 +2645,9 @@ const ROUND_MARK = '[本轮消息]';
         maxMinutes: max > 0 ? Math.max(max, min) : min,
         fromHour: Number.isFinite(Number(cfg.pingFromHour)) ? Number(cfg.pingFromHour) : 7,
         toHour: Number.isFinite(Number(cfg.pingToHour)) ? Number(cfg.pingToHour) : 23,
+        // 要不要带「此刻的调子」。脚本读它决定拼不拼那一段 ——
+        // 纯 shell 不该去解 DSH 的配置树，跟 prompt 一个道理。
+        context: cfg.pingContext !== false,
         profile: cfg.freeTimeProfile,
         prompt: PING_PROMPT,
       }, null, 2) + String.fromCharCode(10), 'utf8');
@@ -2659,6 +2676,7 @@ const ROUND_MARK = '[本轮消息]';
 # 用法：
 #   note "算了一下潟湖的换水时间：5 天换一遍上层"
 #   note --left "还没想明白冬天会不会翻底" "算了换水时间"
+#   note --knew "潟湖每年冬天翻底，meromictic 站不住"   # 知道了一件事（可以单独用）
 #   note --dry "..."        # 只打印会写成什么，不写
 #
 # 它不判断你记的东西值不值得。记下来了，它就存在。
@@ -2667,38 +2685,45 @@ set -uo pipefail
 D="\${DSH_HOME:-$HOME/.dsh}/realheart"
 F="$D/small.jsonl"
 LEFT=""
+KNEW=""
 DRY=0
 
+# ⚙️ 2026-11-02 夜修：原来碰到第一个非选项就 break，而用法里把 --left/--knew 写在文字后面 ——
+# 照着用就会把 --left "……" 整句当成正文写进去。不报错、也不提醒，只是静默地错。
+# 现在选项放前放后都行。
+TEXTARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --left) LEFT="\${2:-}"; shift 2 ;;
     --left=*) LEFT="\${1#--left=}"; shift ;;
+    --knew) KNEW="\${2:-}"; shift 2 ;;
+    --knew=*) KNEW="\${1#--knew=}"; shift ;;
     --dry) DRY=1; shift ;;
-    --) shift; break ;;
-    *) break ;;
+    --) shift; while [ $# -gt 0 ]; do TEXTARGS+=("$1"); shift; done ;;
+    *) TEXTARGS+=("$1"); shift ;;
   esac
 done
 
-TEXT="$*"
-if [ -z "$TEXT" ]; then
-  echo '用法：note "弄了两下什么" [--left "还没弄明白的"]'
+TEXT="\${TEXTARGS[*]:-}"
+if [ -z "$TEXT" ] && [ -z "$KNEW" ]; then
+  echo '用法：note "弄了两下什么" [--left "还没弄明白的"] [--knew "你知道了一件什么"]'
   exit 2
 fi
 
 mkdir -p "$D" 2>/dev/null || true
 NOW=$(date +%Y-%m-%dT%H:%M:%S%z)
 
-python3 - "$F" "$NOW" "$TEXT" "$LEFT" "$DRY" <<'PY'
+python3 - "$F" "$NOW" "$TEXT" "$LEFT" "$DRY" "$KNEW" <<'PY'
 import json, sys
-f, at, did, left, dry = sys.argv[1:6]
-row = {"at": at, "kind": "small", "did": did, "left": (left or None)}
+f, at, did, left, dry, knew = sys.argv[1:7]
+row = {"at": at, "kind": "small", "did": did, "left": (left or None), "knew": (knew or None)}
 line = json.dumps(row, ensure_ascii=False)
 if dry == "1":
     print(line)
     raise SystemExit(0)
 with open(f, "a", encoding="utf-8") as fh:
     fh.write(line + chr(10))
-print("记下了：" + did)
+print("记下了：" + (did or knew))
 PY
 `;
 
@@ -2728,6 +2753,40 @@ PY
       log(`note 铺好了：${p}`);
     } catch (err) {
       log(`note 没铺下来（${err?.code ?? err?.message ?? err}）—— 短唤醒照跑，只是弄完没地方记`, 'error');
+    }
+  }
+
+  /**
+   * 把 say 也铺一份（2026-11-02 夜）。
+   *
+   * ── 为什么这条必须有 ──
+   * say 是「她主动开口」唯一的出口，短唤醒和自由时间的 prompt 里都点了它的绝对路径。
+   * 可它一直躺在 `napcat-rescue` 那个包下面，realheart 从来不管它 ——
+   * **换台机器装 realheart，她张不开嘴**。沙耶的原话：「这些机制都要做进插件，
+   * 只要我们用了觉得有用的」。
+   *
+   * ⚠️ 只在文件**不存在**时才铺，不做内容比对 —— say 里可能有她那台特有的东西
+   * （UIN、目标号），盖掉了是灾难。note 是新文件可以比对，say 不行。
+   */
+  async function ensureSayScript() {
+    const p = join(QQROOT, 'work', 'bin', 'say');
+    try {
+      if (existsSync(p)) return;
+      const src = join(dirname(fileURLToPath(import.meta.url)), 'scripts', 'say');
+      if (!existsSync(src)) {
+        log(`包里没有 scripts/say，铺不出来 —— 她会说不出话（${p} 不存在）`, 'error');
+        return;
+      }
+      await mkdir(dirname(p), { recursive: true });
+      await copyFile(src, p);
+      try {
+        await chmod(p, 0o755);
+      } catch {
+        /* 权限收不上来不影响它能不能跑 */
+      }
+      log(`say 补上了：${p}（原来不在，从包里拷了一份）`);
+    } catch (err) {
+      log(`say 没铺下来（${err?.code ?? err?.message ?? err}）—— 她没有嘴`, 'error');
     }
   }
 
@@ -3023,6 +3082,8 @@ PY
     // note 是「弄两下之后往哪放」的落点，短唤醒的 prompt 里点了它的名字 ——
     // 铺不下来那一句就指向一个不存在的文件，所以它跟 ping.json 一起无条件写。
     await ensureNoteScript();
+    // say 是「她主动开口」的出口，同一条 prompt 里也点了名。只在缺失时补，不覆盖她改过的。
+    await ensureSayScript();
 
     if (cfg.freeTime !== false) {
       const freeErr = await ensureFreeProfile();

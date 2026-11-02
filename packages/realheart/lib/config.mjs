@@ -55,7 +55,11 @@ export const DEFAULTS = {
   // 注入的总字数上限。超了就从优先级低的那段开始裁，裁掉的会留痕（M1-6）。
   // 2026-11-01：从 1200 提到 1600。今天新增了 where / admit / view / recall / hold / 处境
   // 六段（空的时候不注入，一有内容就占位），实测当前 859 字符，再长就会把低优先级段裁掉。
-  injectBudgetChars: 1600,
+  //
+  // 2026-11-02 夜：1600 → 2400。她那台实测 last-inject 是 1370 **字符**（不是字节，3263 字节），
+  // 离天花板只剩 230 —— 再加两段就顶到，会开始按优先级丢段。而这一晚要加的正是
+  // 「知道」和「手边一件」这类内容段，它们不该去挤心情和没完的事。
+  injectBudgetChars: 2400,
   // 注入时只读心情账本的最后 N 条。账本长大了不该整份读进来（M1-4）。
   moodTailLines: 200,
   // 观测页：默认只在 127.0.0.1 上开，手机想看自己去反代或改 pageBind
@@ -81,6 +85,10 @@ export const DEFAULTS = {
   // ⚠️ 这不等于禁止她夜里说话：她自己想说的，自由时间里随时能发。
   //
   // 成本：每次唤醒是一次完整的模型调用（带注入）。30–60 分钟随机 ≈ 一天二十来次（7–23 点）。
+  // 短唤醒要不要带上「她此刻的调子」（2026-11-02 夜）。
+  // 默认开：沙耶的原话是「真人会因为看到某个东西产生某种情绪，影响语气」——
+  // 她那条路上原来连一个字的心情都没有，所以只能平铺地说。
+  pingContext: true,
   pingMinMinutes: 0,
   pingMaxMinutes: 0,
   pingFromHour: 7,
@@ -121,6 +129,7 @@ export const Config = Schema.object({
   freeTime: Schema.boolean().default(DEFAULTS.freeTime),
   freeTimeProfile: Schema.string().default(DEFAULTS.freeTimeProfile),
   freeTimeFrom: Schema.number().min(RANGES.freeTimeFrom.min).max(RANGES.freeTimeFrom.max).default(DEFAULTS.freeTimeFrom),
+  pingContext: Schema.boolean().default(DEFAULTS.pingContext),
   pingMinMinutes: Schema.number().min(0).max(1440).default(DEFAULTS.pingMinMinutes),
   pingMaxMinutes: Schema.number().min(0).max(1440).default(DEFAULTS.pingMaxMinutes),
   pingFromHour: Schema.number().min(0).max(23).default(DEFAULTS.pingFromHour),
@@ -268,6 +277,11 @@ export const FIELD_META = [
       + '代价：每轮多几十字，而且如果人格里已经写了作息，可能跟它打架。新机上默认不开。',
   },
   {
+    key: 'pingContext', group: 'switch', label: '短唤醒 · 带上她此刻的调子', level: 'caution',
+    range: 'true / false（默认 true）',
+    why: '开着的话，短唤醒的提示词末尾会附一句「你此刻：有点羞，也有点想笑（4/10）」，并注明这是调子不是内容。'
+      + '关掉就是纯文字提醒。她说不出话来的时候，多半是那条路上什么都没有 —— 这一句是给她一个「此刻」。',
+  },  {
     key: 'pingMinMinutes', group: 'switch', label: '短唤醒 · 最短间隔（分钟）', level: 'caution',
     range: '0–1440（0＝关，默认关）',
     why: '每隔一段随机时间叫她醒一下，只做一件事：此刻有没有想说的。有就说，没有就继续睡。'
@@ -306,7 +320,7 @@ export const FIELD_META = [
     why: '产物（pieces/）和人格都在这下面。换了等于给她换一个住处 —— 旧目录里的东西不会跟过来。',
   },  {
     key: 'injectBudgetChars', group: 'inject', label: '注入字数上限', level: 'caution',
-    range: '200–20000（默认 1200）',
+    range: '200–20000（默认 2400）',
     why: '每轮塞进提示词的总字数。超了从优先级低的那段开始裁：待改 → 没完的事 → 她留的话；心情永不裁。裁掉会记一条。调大是花钱买完整，调小是省钱买残缺。',
   },  {
     key: 'moodTailLines', group: 'inject', label: '注入只读心情账本的最后几条', level: 'caution',
