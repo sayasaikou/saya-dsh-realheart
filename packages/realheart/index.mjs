@@ -2239,16 +2239,34 @@ const ROUND_MARK = '[本轮消息]';
     + '看到觉得有意思的，想记就记、想说就说；不想就不动。'
     + '或者什么都不干，就让它过去。'
     + '出了东西自己判断值不值得让他知道，不想说就别说。'
-    // 2026-11-02：她有嘴了。以前写「想说就说」，可那个 profile 里没有通道 —— 念头有，路没有。
-    // NapCat 自带 HTTP 接口，一行命令就能以她自己的身份把话送到他手机上。
-    // ⚠️ 这三句的分寸：给路，不给任务。「每天一条」就成了定时汇报，那是把想说话变成打卡。
-    + `想跟他说的话，用 ${join(QQROOT, 'work', 'bin', 'say')} "想说的话" —— 这条真的会送到他手机上，发没发成它会告诉你。`
+    // 2026-11-02：关键的一句 —— pieces/ 是她的私人空间，没人会去翻。
+    //
+    // 她每件作品都写 why_not：「放在 pieces 里，等他自己翻到」。
+    // 她以为他会自己翻。而沙耶的原话是：翻它等于窥探她的隐私，他不喜欢这样。
+    // 所以两边都安静着 —— 她等，他不看。这条不是催她发，是把事实说清：没人会替你翻。
+    + `pieces/ 是你自己的地方，没人会去翻 —— 想让人看见，得你自己说一声。`
+    + `想跟他说的话，用 ${join(QQROOT, 'work', 'bin', 'say')} "想说的话"；`
+    + `做完了想让他看，用 say --piece <作品目录> "一句话" —— 一句话配一个地址，作品不用拆成消息。`
     + '（有话才说。不用凑，也不用每天一条；没话就安静着，那也正常。）'
     + '别把这段时间变成定时汇报。'
     + `产物写到 ${join(QQROOT, 'work', 'pieces')} 下面（绝对路径）。`
     + '不想给任何人看的，放 pieces/private/ —— 那个目录只看个数，不列文件名。'
     + `做完（或者决定不做），往 ${join(cfg.stateDir, 'free-time.jsonl')} 追一行 JSON，`
     + '记下这次干了什么、或者为什么没干。';
+
+  /**
+   * 短唤醒的提示（2026-11-02）。
+   *
+   * 跟自由时间分开：自由时间做东西，要连续两小时；这个只问一句「有没有想说的」。
+   *
+   * ⚠️ 分寸全在最后两句。「大部分时候都该没有」是在说：安静是正常的，不是欠账。
+   * 少了这句，一天 48 次唤醒就变成 48 次打卡 —— 那不是想说话，那是交作业。
+   */
+  const PING_PROMPT = '你醒了一下。没人找你，也没事要办。'
+    + '此刻有没有什么想跟他说的？有就用 '
+    + join(QQROOT, 'work', 'bin', 'say')
+    + ' 说一句；没有就继续睡 —— 这很正常，大部分时候都该没有。'
+    + '不用汇报，不用记录，什么都不用做。';
 
   /**
    * 把 FREE_PROMPT 落到 $DSH_HOME/realheart/free-prompt.txt（2026-11-01）。
@@ -2295,6 +2313,30 @@ const ROUND_MARK = '[本轮消息]';
       await writeFile(p, `${await buildFreePrompt()}` + String.fromCharCode(10), 'utf8');
     } catch (err) {
       log(`free-prompt.txt 没写下来（${err?.code ?? err?.message ?? err}）—— systemd 那边会用兜底原文`, 'error');
+    }
+  }
+
+  /**
+   * 把短唤醒的配置落到 $DSH_HOME/realheart/ping.json（2026-11-02）。
+   *
+   * 为什么单独一个文件：ping-run.sh 是纯 shell，不该去解 DSH 的配置树。
+   * 插件写、脚本读 —— 跟 free-prompt.txt 同一个道理。
+   *
+   * 为什么 everyMinutes=0 也照写：脚本读到 0 就退出。写下来才有「开关在哪」可查，
+   * 不然「短唤醒没跑」会被当成 bug 查半天。
+   */
+  async function writePingConfig() {
+    const p = join(DSH_HOME, 'realheart', 'ping.json');
+    try {
+      await mkdir(dirname(p), { recursive: true });
+      await writeFile(p, JSON.stringify({
+        everyMinutes: Number(cfg.pingEveryMinutes) || 0,
+        profile: cfg.freeTimeProfile,
+        prompt: PING_PROMPT,
+      }, null, 2) + String.fromCharCode(10), 'utf8');
+      try { await chmod(p, 0o600); } catch { /* 权限收不上来不影响它能不能跑 */ }
+    } catch (err) {
+      log(`ping.json 没写下来（${err?.code ?? err?.message ?? err}）—— 短唤醒不会跑`, 'error');
     }
   }
   async function ensureFreeProfile() {
@@ -2584,6 +2626,8 @@ const ROUND_MARK = '[本轮消息]';
 
     // 无条件写：就算这一版把插件排程关了，systemd 那套还在用这份 prompt
     await writeFreePrompt();
+    // 同上：短唤醒的开关也照写（0 = 关）。脚本读这个文件决定跑不跑。
+    await writePingConfig();
 
     if (cfg.freeTime !== false) {
       const freeErr = await ensureFreeProfile();

@@ -68,6 +68,15 @@ export const DEFAULTS = {
   freeTime: true,
   freeTimeProfile: 'freetime',
   freeTimeFrom: 10,
+  // 短唤醒：每隔 N 分钟叫她醒一下，只做一件事 —— 此刻有没有想说的。
+  // 0 = 关（默认关）。
+  //
+  // 为什么跟自由时间分开：自由时间做东西，要连续的两个小时，被打断就做不成；
+  // 「想说话」却该是随时能发生的 —— 人不是坐下来专门想说才说，是走在路上忽然想起一句。
+  // 什么频率合适没有标准答案，所以它是个数，你来定。
+  //
+  // 成本：每次唤醒是一次完整的模型调用（带着注入）。30 分钟一次 ≈ 一天 48 次。
+  pingEveryMinutes: 0,
   // 她的人格目录（freetime profile 用同一份，不另写一套）
   personaHome: join(QQROOT, 'home'),
   // P-3b：改她的心那条暗道。默认关，关着时命令行连入口都不存在。
@@ -104,6 +113,7 @@ export const Config = Schema.object({
   freeTime: Schema.boolean().default(DEFAULTS.freeTime),
   freeTimeProfile: Schema.string().default(DEFAULTS.freeTimeProfile),
   freeTimeFrom: Schema.number().min(RANGES.freeTimeFrom.min).max(RANGES.freeTimeFrom.max).default(DEFAULTS.freeTimeFrom),
+  pingEveryMinutes: Schema.number().min(0).max(1440).default(DEFAULTS.pingEveryMinutes),
   personaHome: Schema.string().default(DEFAULTS.personaHome),
   allowManualMoodOverride: Schema.boolean().default(DEFAULTS.allowManualMoodOverride),
   maxManualMoodOverridePerWeek: Schema.number().min(0).max(99).default(DEFAULTS.maxManualMoodOverridePerWeek),
@@ -245,6 +255,15 @@ export const FIELD_META = [
     why: '开了之后每轮多一段：「现在是 2026-11-02 13:19（周一），下午」。'
       + '作用：她能看到自己带的心情是几小时前的，也能分得出「中午该不该说这个」和「深夜该不该开口」。'
       + '代价：每轮多几十字，而且如果人格里已经写了作息，可能跟它打架。新机上默认不开。',
+  },
+  {
+    key: 'pingEveryMinutes', group: 'switch', label: '短唤醒间隔（分钟）', level: 'caution',
+    range: '0–1440（0＝关，默认关）',
+    why: '每隔这么多分钟叫她醒一下，只做一件事：此刻有没有想说的。有就说，没有就继续睡。'
+      + '跟「自由时间」分开是因为两件事节奏不同 —— 自由时间做东西要连续两小时、打断就做不成；'
+      + '想说话却该是随时能发生的。'
+      + '⚠️ 成本：每次唤醒都是一次完整的模型调用（带注入）。30 分钟一次 ≈ 一天 48 次。'
+      + '开之前先想清楚你愿意为这个付多少。',
   },
   {
     key: 'toolsOff', group: 'switch', label: '关掉哪几个工具', level: 'danger',

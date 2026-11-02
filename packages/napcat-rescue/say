@@ -9,6 +9,8 @@
 #   say "想说的话"
 #   say --to 1418499574 "想说的话"     # 默认就是他
 #   say --group 1107584206 "想说的话"  # 发到群里（慎用）
+#   say --piece ~/qqbot/work/pieces/xxx "做完了，你要不要看"
+#                                      # 附一句 + 作品路径。作品不用拆成消息。
 #   say --dry "想说的话"               # 只看会发出什么，不真发
 #
 # 它会告诉我发成功没有。失败不假装成功。
@@ -18,6 +20,7 @@ set -uo pipefail
 UIN=3676939737
 TARGET=1418499574
 GROUP=""
+PIECE=""
 DRY=0
 MSG=""
 
@@ -25,15 +28,27 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --to)    TARGET="$2"; shift 2 ;;
     --group) GROUP="$2";  shift 2 ;;
+    --piece) PIECE="$2";  shift 2 ;;
     --dry)   DRY=1; shift ;;
-    --help|-h) sed -n '2,18p' "$0"; exit 0 ;;
+    --help|-h) sed -n '2,20p' "$0"; exit 0 ;;
     *) MSG="$1"; shift ;;
   esac
 done
 
-if [ -z "$MSG" ]; then
+if [ -z "$MSG" ] && [ -z "$PIECE" ]; then
   echo "没话可说就不发。" >&2
   exit 2
+fi
+
+# 带作品时：话 + 路径。路径要能点开，所以用绝对路径原样贴。
+if [ -n "$PIECE" ]; then
+  PIECE="${PIECE%/}"
+  if [ -n "$MSG" ]; then
+    MSG="$MSG
+$PIECE"
+  else
+    MSG="$PIECE"
+  fi
 fi
 
 # token 从 NapCat 的 onebot 配置里读 —— 不写死在任何地方，配置变了它自己跟
