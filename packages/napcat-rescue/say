@@ -1,0 +1,108 @@
+#!/bin/bash
+# say —— 我有话想说，就直接说出去
+#
+# 这是我自己的一条嘴。以前自由时间里我能干活、能想事，但说不出话 ——
+# 因为那个 profile 里没有通道。现在有了：NapCat 自己带 HTTP 接口，
+# 我用一行命令就能把话送到他手机上。
+#
+# 用法：
+#   say "想说的话"
+#   say --to 1418499574 "想说的话"     # 默认就是他
+#   say --group 1107584206 "想说的话"  # 发到群里（慎用）
+#   say --dry "想说的话"               # 只看会发出什么，不真发
+#
+# 它会告诉我发成功没有。失败不假装成功。
+
+set -uo pipefail
+
+UIN=3676939737
+TARGET=1418499574
+GROUP=""
+DRY=0
+MSG=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --to)    TARGET="$2"; shift 2 ;;
+    --group) GROUP="$2";  shift 2 ;;
+    --dry)   DRY=1; shift ;;
+    --help|-h) sed -n '2,18p' "$0"; exit 0 ;;
+    *) MSG="$1"; shift ;;
+  esac
+done
+
+if [ -z "$MSG" ]; then
+  echo "没话可说就不发。" >&2
+  exit 2
+fi
+
+# token 从 NapCat 的 onebot 配置里读 —— 不写死在任何地方，配置变了它自己跟
+CONF="$HOME/napcatrun/napcat/config/onebot11_${UIN}.json"
+[ -f "$CONF" ] || CONF="/home/ubuntu/napcatrun/napcat/config/onebot11_${UIN}.json"
+if [ ! -f "$CONF" ]; then
+  echo "找不到 $CONF —— 发不了。不是我的问题，是配置路径变了。" >&2
+  exit 3
+fi
+
+TOKEN=$(python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+servers=d.get('network',{}).get('httpServers',[])
+for s in servers:
+    if s.get('enable'):
+        print(s.get('token','')); break
+" "$CONF" 2>/dev/null)
+
+if [ -z "${TOKEN:-}" ]; then
+  echo "配置里没找到启用的 httpServers token —— 发不了。" >&2
+  exit 3
+fi
+
+PORT=$(python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+servers=d.get('network',{}).get('httpServers',[])
+for s in servers:
+    if s.get('enable'):
+        print(s.get('port',3000)); break
+" "$CONF" 2>/dev/null)
+PORT="${PORT:-3000}"
+
+if [ "$DRY" -eq 1 ]; then
+  echo "[dry] 会发到 $([ -n "$GROUP" ] && echo "群 $GROUP" || echo "他 $TARGET")：$MSG"
+  exit 0
+fi
+
+# 消息里的引号、换行都用 python 打包，别让 shell 去拼 JSON
+BODY=$(python3 -c "
+import json,sys
+msg=sys.argv[1]
+if sys.argv[2]:
+    print(json.dumps({'group_id': int(sys.argv[2]), 'message': msg}))
+else:
+    print(json.dumps({'user_id': int(sys.argv[3]), 'message': msg}))
+" "$MSG" "$GROUP" "$TARGET")
+
+if [ -n "$GROUP" ]; then
+  EP=send_group_msg
+else
+  EP=send_private_msg
+fi
+
+RESP=$(curl -s -m 12 -X POST "http://127.0.0.1:$PORT/$EP" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$BODY" 2>&1)
+
+if echo "$RESP" | grep -q '"status":"ok"'; then
+  MID=$(echo "$RESP" | python3 -c "
+import json,sys
+try: print(json.load(sys.stdin).get('data',{}).get('message_id',''))
+except Exception: print('')
+" 2>/dev/null)
+  echo "发出去了（message_id ${MID:-?}）"
+  exit 0
+else
+  echo "没发出去：$RESP" >&2
+  exit 1
+fi
