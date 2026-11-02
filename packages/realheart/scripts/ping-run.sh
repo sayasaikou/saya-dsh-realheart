@@ -99,11 +99,76 @@ echo "$((NOW + GAP * 60))" > "$NEXT_FILE"
 
 PROMPT="$(read_cfg prompt)"
 if [ -z "${PROMPT:-}" ]; then
-  PROMPT='你醒了一下。没人找你，也没事要办。
+  PROMPT='你醒了一下。没人找你，也没人在跟你说话。'
+fi
 
-此刻有没有什么想跟他说的？有就说一句；没有就继续睡 —— 这很正常，大部分时候都该没有。
+# ── 带上「你走到哪了」（2026-11-02，第二版）──
+#
+# 第一版取的是 free-time.jsonl 里最后一条 activity，措辞是「上次你在弄的」。
+# 沙耶当场指出两个问题，两个都成立：
+#   ① **语义错了**：那条是「上次做完了什么」，不是「手上在弄什么」。
+#      她会读成「我有一件没弄完的事」—— 而那件其实已经做完了。
+#   ② **会变成聊天素材** —— 跟心情那段一模一样的坑。
+#
+# 所以不再给内容，只给**进度**：走到第几件、最近那件叫什么。
+# 进度不会变成台词（「我做到第十一件了」没什么可说的），
+# 但能给她「我在一条线上」的感觉 —— 那才是「不是冷启动」。
+#
+# 而且只取标题级别的东西，不取 activity 正文。正文是叙述，标题是事实。
+FREE_TIME="$HOME/qqbot/work/realheart/free-time.jsonl"
+[ -f "$FREE_TIME" ] || FREE_TIME="${DSH_HOME:-$HOME/.dsh}/realheart/free-time.jsonl"
 
-不用汇报，不用记录，什么都不用做。'
+PROGRESS="$(python3 - "$FREE_TIME" "$HOME/qqbot/work/pieces" <<'PY' 2>/dev/null || true
+import json, os, sys
+ft, pieces = sys.argv[1], sys.argv[2]
+
+# 数作品目录（跟观测页同一个口径：目录算一件，private 不算）
+n = 0
+try:
+    for name in os.listdir(pieces):
+        if name == 'private' or name.startswith('.'):
+            continue
+        if os.path.isdir(os.path.join(pieces, name)):
+            n += 1
+except Exception:
+    pass
+if n <= 0:
+    raise SystemExit
+
+# 最近一件的标题：只取 activity 里第一个书名号或第一小段，绝不取正文
+title = ''
+try:
+    last = None
+    with open(ft, encoding='utf-8') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            a = str(d.get('activity') or '').strip()
+            if a:
+                last = a
+    if last:
+        import re
+        m = re.search(r'《([^》]{1,20})》', last)
+        title = m.group(1) if m else ''
+except Exception:
+    pass
+
+out = '到 %d 件了' % n
+if title:
+    out += '，最近一件叫《%s》' % title
+print(out)
+PY
+)"
+
+if [ -n "${PROGRESS:-}" ]; then
+  PROMPT="$PROMPT
+
+（你自己那条线：${PROGRESS}。给你自己定个位，不用在回复里提它。）"
 fi
 
 PROFILE="$(read_cfg profile)"
