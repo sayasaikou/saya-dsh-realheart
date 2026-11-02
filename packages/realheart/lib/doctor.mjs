@@ -134,17 +134,19 @@ export async function runDoctor({ dshHome = DSH_HOME } = {}) {
   // 这里只读一条样本：后缀是不是 .jsonl、第一行能不能 JSON.parse。两样都过就算通。
   // ⚠️ 只读，不写、不建目录（拿不到路径就不猜，跟下面几条一个规矩）。
   if (rt) {
+    // ⚠️ 2026-11-02 部署当天就踩了：第一版用 `rt.auditDir` 去拿路径，
+    // 但 runtime/config.json 里只有 stateDir / port / bind / secret ——
+    // 那三个目录根本不在里面，于是三路全报「没写这个路径」。
+    // 而启动日志里索引明明写着 22060 条（audit 4117 / history 4528 / msgs 2242 / native 11173）。
+    // **假警报比不查更糟** —— 它会训练人忽略 warn。
+    //
+    // 改法：拿不到就用 DEFAULTS（它们是从 HOME 推导的固定位置，不是猜），并在 detail 里标明。
     const srcs = [
-      { name: 'audit', label: '审计日志', dir: rt.auditDir },
-      { name: 'history', label: '对话历史', dir: rt.historyDir },
-      { name: 'msgs', label: '落盘消息', dir: rt.msgsDir },
+      { name: 'audit', label: '审计日志', dir: rt.auditDir || DEFAULTS.auditDir },
+      { name: 'history', label: '对话历史', dir: rt.historyDir || DEFAULTS.historyDir },
+      { name: 'msgs', label: '落盘消息', dir: rt.msgsDir || DEFAULTS.msgsDir },
     ];
     for (const s of srcs) {
-      if (!s.dir) {
-        add('warn', `事件源 · ${s.label}`, '运行时配置里没写这个路径',
-          '它会在「心情的来处」里少一整路。检查 runtime/config.json 的 ' + s.name + 'Dir');
-        continue;
-      }
       let names = [];
       try {
         names = (await readdir(s.dir)).filter((n) => n.endsWith('.jsonl') && !n.startsWith('_'));
