@@ -36,7 +36,22 @@
 npx realheart install --profile <profile>
 ```
 
-就这一条。它做两件：装包（`dsh plugin add`），把包名写进这个 profile 的 `dsh.profile.bundles`。
+就这一条。
+
+**profile 不存在会自动建一份最小的**（`dsh-base` + `dsh-web-app`），但会当面说出来 ——
+如果你本来想装进某个已有的 profile，那时候 Ctrl-C 还来得及。
+悄悄建一个新的会让人以为装上了、其实装在了别处。
+
+它做五件：
+
+1. **装包** —— `dsh plugin add`
+2. **写 `dsh.profile.bundles`** —— 这一步没有「失败就算了」这一说
+3. **自检 `@deepseek-ai/schemastery`** —— 它写在 `peerDependencies` 里，pnpm 不装 peer。
+   干净 profile 里只装这一个包时，缺了它一启动就 `Cannot find package`。缺就自动补，补不上会明说要敲哪句。
+4. **铺一份用法说明**（`skills/realheart/SKILL.md`）—— 那是写给**你的 agent** 的，不是给你的。
+   里面写着什么时候该记心情、什么时候不该，以及怎么写出它自己那份人格。已存在就不覆盖（你可能改过）。
+5. **铺排程文件**（`~/.dsh/realheart/schedule/`）—— **不装也能用**，只是它不会自己动，只会等你说话。
+   要启用照输出的那三条命令粘（需要 sudo）。
 
 **为什么不能只 `dsh plugin add`**：`dsh plugin` 只是个 pnpm 转发器（它自己的 `--help` 就这么写），
 装完**不会**把包名加进 `dsh.profile.bundles`。不在那个列表里，插件自带的 `cordis.patch.yml`
@@ -50,10 +65,14 @@ node <包目录>/bin/realheart.mjs install --profile <profile>
 dsh plugin --profile <profile> add <包目录> && node node_modules/realheart/setup.mjs
 ```
 
-先看一眼要动什么，不放心就加 `--dry-run` —— 它一个字节都不写，但会把每一步打出来。
+先看一眼要动什么，不放心就加 `--dry-run` —— 它一个字节都不写，但会把每一步打出来
+（包括「这一步 dry-run 下验不了」的那几步，不会在中间撞墙）。
 
 写 `bundles` 之前**一定会备份**（`package.json.bak-<时间戳>`），改一次的代价是多一个文件，
 不是丢一份配置。
+
+**装完先验一条**：重启 dsh，日志里应该出现「已注册」，九个工具都在。
+然后跑 `npx realheart doctor` —— 它会一条条说哪个依赖缺、哪本账坏了、注入有没有被预算裁掉。
 
 试过用 `postinstall` 自动做这一步：pnpm 默认拦 build script（`ERR_PNPM_IGNORED_BUILDS`），
 而且会让 `add` 直接报错 —— 比不做还糟，所以去掉了。
@@ -123,9 +142,18 @@ npx realheart doctor
 # 或者：node node_modules/realheart/bin/realheart.mjs doctor
 ```
 
-它查这些：`python3` / `zstd` / 运行时 `config.json` 在不在 / 口令文件权限 / 配置合不合法 /
-账本目录可不可写 / 端口上是不是自己（带口令打 healthz，不是只看有没有人听）/ 账本有没有坏行 /
-`pending.md` 和流水对不对得上 / 一天内注入过没有。
+它查这些：
+
+- **依赖**：`python3` / `zstd`
+- **运行时**：`config.json` 在不在、口令文件权限、配置合不合法、端口上是不是自己（带口令打 healthz，不是只看有没有人听）
+- **事件源三路**（2026-11-02）：审计 / 对话历史 / 落盘消息 —— 每路只读一条样本，看格式还对不对。
+  哪一路变了，表现只会是「心情的来处指不出来」，而那时候人只会以为她不想记
+- **她在不在线**（2026-11-02）：NapCat 的 3001 通不通。**不通 = QQ 没登录 —— 她静静地不出声，不是不想说话。**
+  这两个现象看起来一模一样，分不清就会浪费一整天
+- **账本**：目录可不可写、有没有坏行、`pending.md` 和流水对不对得上、心情多久没动、删过什么
+- **注入**：一天内注入过没有、有没有少过段（少一段不许静默）
+- **安装收据**：安装器补装过的依赖还有没有人管（卸的时候要不要带走）
+- **后台作业控制器**：dsh 升级之后那个兜底还在不在
 
 三条规矩，写死在实现里：
 
@@ -141,13 +169,14 @@ npx realheart doctor
 | 症状 | 大概率是 | 查法 |
 | --- | --- | --- |
 | 启动**直接失败**，日志里一串「配置有 N 处不对」 | 配置里有非法值：端口越界、目录写成相对路径、绑定的不是 IP、自由时间不在 0–23 | 按日志里每条的「怎么改」改完重启。见下面「配置写错了会怎样」 |
-| 装完重启，**一点反应都没有**，日志里找不到 `rh_mood / rh_pending / rh_control / rh_changes 已注册` | 包名没进 `dsh.profile.bundles`，`cordis.patch.yml` 就没被应用 | `grep -n realheart <profile>/package.json` |
+| 装完重启，**一点反应都没有**，日志里找不到「已注册」，九个工具都不在 | 包名没进 `dsh.profile.bundles`，`cordis.patch.yml` 就没被应用 | `grep -n realheart <profile>/package.json` |
 | 启动**报错**，提到 bundle / 模块找不到 | 包删了，但那行还挂在 `bundles` 里 | 同上。修：`node <profile>/node_modules/realheart/setup.mjs --remove <profile>`，或直接 `sh scripts/uninstall.sh` 再来一次 |
 | 日志打了观测页地址，**打开连不上** | ① `python3` 不在 ② 端口被别人占了 ③ python 起来了但立刻崩 | `cat $DSH_HOME/realheart/rh-status.err.log` 末尾 ／ `ss -lntp \| grep <pagePort>` |
-| 日志说「端口已被别的程序占用（不是 realheart）」 | 真的是端口冲突 | 改配置里的 `pagePort`，重启（不是热改） |
+| **升级了插件，但页面还是老样子**（新加的块、新改的文案都没有） | 观测页是**独立进程**，重启 dsh 不一定带它。旧进程还占着端口，新的一起就撞 | `ps -eo pid,etime,cmd \| grep rh-status` 看它跑了多久。好久没变就是没重启。0.2.73 起会自动收掉旧的；更早的版本要手动 `kill <真 pid>`（**别看 pid 文件，它可能指向已经没的进程**） |
+| 日志说「端口已被别的程序占用（不是 realheart）」 | 真是端口冲突 | 改配置里的 `pagePort`，重启（不是热改） |
 | 页面能开，但**「他说的话」那一路永远空** | 缺 `zstd`。**这个坑是静默的**，不报错 | `zstd --version`，没有就装 |
 | 页面能开，心情也在记，但**注入里没有状态那一段** | `injectMood: false`，或这一轮注入被预算裁掉了 | 翻 `<stateDir>/last-inject.md`（注入原文落盘的） |
-| 工具里**没有 `rh_pending`** | 装的是 0.2.0 之前的包 | `grep version <profile>/node_modules/realheart/package.json` |
+| **她不理人**，分不出是「不想说话」还是「没上线」 | QQ 没登录。NapCat 只有登录成功才开 3001 端口 | `npx realheart doctor \| grep 在线`。`[FAIL]` 就是没上线，去抢救页扫码 |
 | `dsh plugin add` 报 `404 Not Found` + `No authorization header was set for the request` | **不是认证问题**。是这棵依赖树里有本地包，pnpm 重新解析时撞上了 | 照下面「云端部署」第一节换 `cp -a` 那条路 |
 | 她写了心情，回来是「（写不进帐本：…）」 | `stateDir` 不可写，或文件与流水对不上（插件每次写完会回读比对） | `ls -ld <stateDir>`；看插件日志里那条拒绝写入的原文 |
 | 昨天能开的页面地址，**今天 404** | `runtime/config.json` 被删了，重启时重新生成了 secret | 从 `$DSH_HOME/realheart/runtime/config.json` 重新取地址 |
