@@ -662,7 +662,7 @@ const ROUND_MARK = '[本轮消息]';
    * 看不到“谁关的、什么时候关的、为什么”。账本只增不改，这些都在里面。
    */
   async function readControl() {
-    const out = { paused: false, reason: '', voided: new Map() };
+    const out = { paused: false, reason: '', voided: new Map(), faded: new Set() };
     try {
       const text = await readFile(join(cfg.stateDir, 'control.jsonl'), 'utf8');
       for (const line of text.split('\n')) {
@@ -696,12 +696,72 @@ const ROUND_MARK = '[本轮消息]';
             const t = Number(raw);
             if (Number.isInteger(t) && t > 0) out.voided.set(t, reason);
           }
+        } else if (obj.action === 'fade') {
+          // 「这条淡了」（2026-11-02 沙耶）：她自己标，不是系统降温。
+          // 只影响「算不算现在」—— 原文、浓度、来处一字不动。
+          const t = String(obj.target || '').trim();
+          if (t) out.faded.add(t);
         }
       }
     } catch {
       /* 没有控制账本 = 正常状态 */
     }
     return out;
+  }
+
+  // ── 心情检查点（2026-11-02）──
+  //
+  // 沙耶说了三遍同一件事：「只能靠自觉的功能做出来没意义」「这类机制她不去用就没意义」
+  // 「不要求她去检查要不要做的话，她就不会去用和做」。
+  //
+  // 所以这里要有**一道闸**，而不是又一句嘱咐。三条分寸：
+  //   ① 只拦「多记一件事」（`rh_pending add`），不拦读、不拦收拾 —— 挡做事的工具是惩罚做事；
+  //   ② 答一句就解：调 `rh_mood`（**成功或失败都算**，她要的只是“过了一遍”）；
+  //   ③ 心情层被冻着时不拦 —— 冻着还逼她检查，那就成了刁难。
+  const MOOD_CHECK_HOURS = 6;
+  const controlFile = () => join(cfg.stateDir, 'control.jsonl');
+
+  async function lastMoodCheckAt() {
+    let at = 0;
+    try {
+      const text = await readFile(controlFile(), 'utf8');
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        let o = null;
+        try { o = JSON.parse(line); } catch { continue; }
+        if (o?.action !== 'mood_check') continue;
+        const t = Date.parse(String(o.at || ''));
+        if (!Number.isNaN(t) && t > at) at = t;
+      }
+    } catch { /* 没有就是没检查过 */ }
+    const rows = await readMood({ tail: 1 });
+    const t2 = Date.parse(String(rows[rows.length - 1]?.at || ''));
+    if (!Number.isNaN(t2) && t2 > at) at = t2;
+    return at;
+  }
+
+  async function noteMoodCheck() {
+    try {
+      await appendLedger(controlFile(), `${JSON.stringify({ at: localStamp(), action: 'mood_check', by: 'her' })}\n`, 'utf8');
+    } catch { /* 记不上不影响 */ }
+  }
+
+  /** 该不该先过一道心情检查。返回 '' = 不用；否则返回要说的话。 */
+  async function moodCheckGate() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    const at = await lastMoodCheckAt();
+    // 一次都没检查过 = 刚装好，还没开始用。这时候拦等于「装好了但用不了」——
+    // 2026-11-01 那条判据还在（单独装也要能用）。只在「用起来之后、又很久没看」时才拦。
+    if (!at) return '';
+    const hours = (Date.now() - at) / 3600000;
+    if (hours <= MOOD_CHECK_HOURS) return '';
+    const when = Number.isFinite(hours) ? `${Math.round(hours)} 小时` : '好久';
+    return `（先等一下：距上次看心情已经${when}了。\n`
+      + '这不是惩罚，是这段时间没人问、你可能自己也想不起来看一眼。\n'
+      + '先说一句现在什么感觉再往下：调 rh_mood 写一句就行（哪怕写「没什么」），'
+      + '写不进去也算答过 —— 我要的是你看了一眼，不是非要你写。\n'
+      + '不想现在答，就先用手上的东西，等想说的时候再说。）';
   }
 
   const DESCRIPTION = [
@@ -805,6 +865,8 @@ const ROUND_MARK = '[本轮消息]';
       const row = rows[i - 1];
       if (ctl.voided.has(i)) continue;
       if (row?.at && ctl.voided.has(String(row.at))) continue;
+      // 她自己说「这条淡了」的，不再算“现在”（2026-11-02）。原文还在账上。
+      if (row?.at && ctl.faded.has(String(row.at))) continue;
       // 心情分场合（2026-11-01）：不是这个会话记的就跳过。
       // 老数据（没有 session 字段）与拿不到当前会话 id 的两种情况都算「全局可见」—— 退化成之前的行径。
       if (!moodVisibleIn(row, sessionId)) {
@@ -2518,6 +2580,7 @@ const ROUND_MARK = '[本轮消息]';
             description: '因为哪件事。必须含一个事件 id，形如 n:mvq1y5vu#84 / a:2026-10-27#120 / h:mvq1y5vu#12',
           },
           decay: { type: 'string', description: '大概什么时候淡，比如「今晚睡前」「明天下午」。可以不给。' },
+          fade: { type: 'boolean', description: '顺手把上一条标成「淡了」（它就不再算“现在”，原文不动）。不写就是没淡。' },
         },
         required: ['feeling', 'level', 'why_ref'],
         additionalProperties: false,
@@ -2533,6 +2596,9 @@ const ROUND_MARK = '[本轮消息]';
       },
 
       async execute(args, exec) {
+        // 她一调就算「过了一遍检查」—— 不管后面成不成，闸都该解开。
+        // 沙耶要的是“看一眼”，不是“必须写出一条”。（2026-11-02）
+        await noteMoodCheck();
         const feeling = String(args?.feeling ?? '').trim();
         const level = Number(args?.level);
         const whyRef = String(args?.why_ref ?? '').trim();
@@ -2664,12 +2730,28 @@ const ROUND_MARK = '[本轮消息]';
           return { text: `（写不进帐本：${err?.message ?? err}）` };
         }
 
+        // fade：顺手把上一条标成「淡了」（2026-11-02 沙耶）。
+        // 不新增动作 —— 她本就要记新的，顺带一个参数，不算额外负担。
+        let fadedNote = '';
+        if (args?.fade === true) {
+          try {
+            const all = await readMood();
+            const prev = all[all.length - 2];   // 最后一条是刚写的
+            const target = String(prev?.at || '');
+            if (target) {
+              await appendLedger(controlFile(),
+                `${JSON.stringify({ at: localStamp(), action: 'fade', target, by: 'her' })}\n`, 'utf8');
+              fadedNote = `（上一条「${String(prev.feeling || '').trim()}」标成淡了 —— 它不算“现在”了，但还在账上。）`;
+            }
+          } catch { /* 标不上不影响这一笔心情 */ }
+        }
+
         return {
-          text: whyKind === 'none'
+          text: (whyKind === 'none'
             ? `记下了：${feeling}（${level}/10）。来处记作「说不清」（${whyEnum}），不算成因。`
             : whyKind === 'told'
               ? `记下了：${feeling}（${level}/10）。来处是你自己写的：「${told}」（对不上一条记录，账上标着是你说的）。`
-              : `记下了：${feeling}（${level}/10），因为 ${hit}。`,
+              : `记下了：${feeling}（${level}/10），因为 ${hit}。`) + (fadedNote ? '\n' + fadedNote : ''),
         };
       },
     });
@@ -2799,6 +2881,9 @@ const ROUND_MARK = '[本轮消息]';
         }
 
         if (action === 'add') {
+          // 心情检查点（2026-11-02）：只拦「多记一件事」，不拦读、不拦收拾。
+          const gate = await moodCheckGate();
+          if (gate) return { text: gate };
           const text = String(args?.text ?? '').trim();
           if (!text) return { text: '（add 要写 text。）' };
           const fp = pendingFp(text);
