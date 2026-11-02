@@ -46,6 +46,12 @@ export const DEFAULTS = {
   // 于是分不出“中午该不该说这个”和“深夜该不该开口”。人也一样：不看表就不知道分寸。
   // 为什么默认关：多一段字就多一份钱，而且它跟人格也可能打架（人格里自己写了作息就不必再塞一遍）。
   injectNow: false,
+  // 关掉哪几个工具（2026-11-02 沙耶：工具也做成可开关的）。
+  //
+  // 空数组 = 全开。填了就**压根不注册** —— 不是注册了再报错。
+  // 为什么这个粒度重要：出现在她的工具表里，就是告诉她“这个可以用”。
+  // 少给一个选项，剩下的那几个她才更会用。
+  toolsOff: [],
   // 注入的总字数上限。超了就从优先级低的那段开始裁，裁掉的会留痕（M1-6）。
   // 2026-11-01：从 1200 提到 1600。今天新增了 where / admit / view / recall / hold / 处境
   // 六段（空的时候不注入，一有内容就占位），实测当前 859 字符，再长就会把低优先级段裁掉。
@@ -88,6 +94,7 @@ export const Config = Schema.object({
   indexTtlMs: Schema.number().min(RANGES.indexTtlMs.min).max(RANGES.indexTtlMs.max).default(DEFAULTS.indexTtlMs),
   injectMood: Schema.boolean().default(DEFAULTS.injectMood),
   injectNow: Schema.boolean().default(DEFAULTS.injectNow),
+  toolsOff: Schema.array(Schema.string()).default(DEFAULTS.toolsOff),
   injectBudgetChars: Schema.number().min(200).max(20000).default(DEFAULTS.injectBudgetChars),
   moodTailLines: Schema.number().min(0).max(100000).default(DEFAULTS.moodTailLines),
   servePage: Schema.boolean().default(DEFAULTS.servePage),
@@ -238,6 +245,14 @@ export const FIELD_META = [
     why: '开了之后每轮多一段：「现在是 2026-11-02 13:19（周一），下午」。'
       + '作用：她能看到自己带的心情是几小时前的，也能分得出「中午该不该说这个」和「深夜该不该开口」。'
       + '代价：每轮多几十字，而且如果人格里已经写了作息，可能跟它打架。新机上默认不开。',
+  },
+  {
+    key: 'toolsOff', group: 'switch', label: '关掉哪几个工具', level: 'danger',
+    range: '工具名数组，例如 ["rh_view", "rh_claim"]（空 = 全开）',
+    why: '填进去的工具**压根不注册** —— 不是注册了再报错。区别在：出现在她的工具表里，'
+      + '就是告诉她“这个能用”；调了才拒，她会学绕。少一个选项，剩下的那几个她才更会用。'
+      + '九个工具名：rh_mood / rh_style / rh_pending / rh_control / rh_claim / rh_work / rh_view / rh_admit / rh_changes。'
+      + '⚠️ 关掉 rh_control 就再也没有 pause / hold / close 这些入口了；关掉 rh_changes 她就查不到别人动过她什么。',
   },
   {
     key: 'root', group: 'ledger', label: '她的根目录', level: 'danger',

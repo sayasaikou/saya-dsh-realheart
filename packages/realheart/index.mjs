@@ -2604,7 +2604,23 @@ const ROUND_MARK = '[本轮消息]';
 
     // 2026-11-01：日志里那串工具名原来靠手写 —— 加一个就漏一个，而“注册成功”唯一的外部证据就是这行日志。
     const registered = [];
-    const registerTool = (spec) => { registered.push(spec.name); return tools.register(spec); };
+    // 被配置关掉的（2026-11-02）。只用来在日志里说一句 —— 关掉不等于不存在，
+    // 用户得看得见“少了哪几个”，不然下次会以为它们坏了。
+    const offTools = [];
+    const registerTool = (spec) => {
+      // 工具开关（2026-11-02 沙耶）：关掉的**压根不注册**。
+      //
+      // 不是“注册了、调用时再拒”。两件事不一样：
+      //   出现在她的工具表里 = 告诉她“这个能用”；
+      //   调了才说不行 → 她会学会绕，而绕比不用更糟。
+      // 少给一个选项，剩下的那几个她才更会用 —— 这条跟她自己说的“不给就不用”是同一根。
+      if (Array.isArray(cfg.toolsOff) && cfg.toolsOff.includes(spec.name)) {
+        offTools.push(spec.name);
+        return undefined;
+      }
+      registered.push(spec.name);
+      return tools.register(spec);
+    };
     registerTool({
       name: 'rh_mood',
       description: DESCRIPTION,
@@ -3621,7 +3637,8 @@ const ROUND_MARK = '[本轮消息]';
     });
 
     const idx = await indexIds();
-    log(`${registered.join(' / ')} 已注册；事件索引 ${idx.ids.size} 条（${idx.note}）`);
+    log(`${registered.join(' / ')} 已注册；事件索引 ${idx.ids.size} 条（${idx.note}）`
+      + (offTools.length ? `；按配置关掉了：${offTools.join(' / ')}` : ''));
   })();
 }
 
