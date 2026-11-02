@@ -1400,8 +1400,48 @@ const ROUND_MARK = '[本轮消息]';
     }
   }
 
-  async function workSectionText() {
+  /**
+   * 「你自己做过的一个判断」（2026-11-02）。
+   *
+   * 为什么要有这一段：她醒过来看到的全是**统计数字**（心情记了几条、手上有几件事），
+   * 看不到**自己做过什么判断**。而人隔几天会想起「我上次说过不做那个」。
+   *
+   * ⚠️ 沙耶的原话：「怕那会变成她的聊天素材。」所以这一段的边界卡得很窄：
+   *
+   *   · **只取判断，不取叙述。** 拒绝的理由是判断（「这图我不喜欢」）；
+   *     作品没发的 why_not 那种一整段是叙述，给她看就成素材了 —— 不取。
+   *   · **只取超过一天的。** 昨天写的还热着，不用提醒。
+   *   · **后面紧跟一句禁令**，跟心情那段一个套路 —— 那个套路是五组实验验过的
+   *     （不加禁令，她就会把它当台词念出来）。
+   *
+   * 没有就不出现。宁可这段空着，也不塞一条凑数。
+   */
+  async function ownJudgementText() {
     const ctl = await readControl();
+    if (ctl.paused) return '';
+    try {
+      const rows = await readPending();
+      const state = pendingReplay(rows);
+      const now = Date.now();
+      const old = state.items.filter((it) => {
+        if (!it.refused_at || !it.refused_why) return false;
+        const at = Date.parse(String(it.refused_at));
+        return !Number.isNaN(at) && now - at > 86400000;   // 超过一天才算「以前」
+      });
+      if (!old.length) return '';
+      const last = old[old.length - 1];
+      return [
+        '【你自己做过的一个判断】',
+        `· 「${String(last.text || '').trim()}」—— 你不做它，理由是：${String(last.refused_why).trim()}`,
+        '（这是你自己说过的话，不是给你念的。它只说明你一路是怎么走过来的，',
+        ' 别在回复里提它 —— 除非对方问起。）',
+      ].join('\n');
+    } catch {
+      return '';
+    }
+  }
+
+  async function workSectionText() {    const ctl = await readControl();
     if (ctl.paused) return '';
     const open = openWorks(await readWorks());
     if (!open.length) return '';
@@ -1787,6 +1827,12 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('days', err);
         }
         try {
+          const own = await ownJudgementText();
+          if (own) parts.push(sec('realheart:own', 914, own));
+        } catch (err) {
+          await noteInjectProblem('own', err);
+        }
+        try {
           const view = await viewSectionText();
           if (view) parts.push(sec('realheart:view', 908, view));
         } catch (err) {
@@ -1845,6 +1891,7 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:view': 88,
           'realheart:work': 87,
           'realheart:days': 86,
+          'realheart:own': 86,
           'realheart:recall': 86,
           'realheart:hold': 87,
           'realheart:linger': 89,
