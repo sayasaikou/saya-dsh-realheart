@@ -1776,13 +1776,13 @@ const ROUND_MARK = '[本轮消息]';
         }
         try {
           const work = await workSectionText();
-          if (work) parts.push(sec('realheart:work', 9085, work));
+          if (work) parts.push(sec('realheart:work', 908, work));
         } catch (err) {
           await noteInjectProblem('work', err);
         }
         try {
           const days = await recentDaysText();
-          if (days) parts.push(sec('realheart:days', 9086, days));
+          if (days) parts.push(sec('realheart:days', 909, days));
         } catch (err) {
           await noteInjectProblem('days', err);
         }
