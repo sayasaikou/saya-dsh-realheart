@@ -985,7 +985,7 @@ const ROUND_MARK = '[本轮消息]';
       const keepFresh = fresh.length ? fresh : mine.slice(0, 2);
       const tucked = older.filter((r) => !keepFresh.includes(r));
 
-      const out = ['【你现在有这些情绪】'];
+      const out = ['【你现在带着的】'];
       if (fromElsewhere) {
         out.push(`（这些不是在当前场合记的 —— 是「${sessionLabel(last.session)}」里记的。）`);
       }
@@ -1004,7 +1004,12 @@ const ROUND_MARK = '[本轮消息]';
         for (const r of others) out.push(lineOf(r, false));
       }
       out.push('');
-      out.push('这些是同时存在的，不是一个盖过另一个。怎么带进说法里，你自己定。');
+      out.push('这些是同时存在的，不是一个盖过另一个。');
+      // 🔴 2026-11-02 实验（五组对照）的直接结论：
+      // 同样的状态，只砍内容不用这句，她还会轻描淡写带一句「本鱼今天也有点凉」；
+      // 加上这句，才真的一个字不提。
+      // 所以：**只给状态不给禁令，她会把它当成可以拿出来说的素材。**
+      out.push('（知道就行，不必说出来 —— 它们不是你聊天的素材，只影响你说话的样子，不是你的话。）');
       out.push('变了就调 rh_mood 记一笔；哪条不对了，也记一笔说清楚。');
       return out.join('\n');
     }
@@ -1033,8 +1038,9 @@ const ROUND_MARK = '[本轮消息]';
         lines.push('那不是这个场合的事，但人本来就带着上一场的余味 —— 让它影响多少，你自己定。');
       }
     }
-    lines.push('这是调子，不是台词。浓的时候压不住，淡了就不算数。'
-      + '变了就调 rh_mood 记一笔（必须指一件事），没变就别写。');
+    lines.push('这是调子，不是台词。浓的时候压不住，淡了就不算数。');
+    lines.push('（知道就行，不必说出来 —— 它不是你聊天的素材，只影响你说话的样子。）');
+    lines.push('变了就调 rh_mood 记一笔（必须指一件事），没变就别写。');
     return lines.join('\n');
   }
 
