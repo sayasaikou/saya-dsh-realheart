@@ -24,9 +24,10 @@
  * 写之前一定先备份 —— 「改一次配置多一个 .bak」是发布判据之一，不能靠人工记得。
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { readFile, writeFile, copyFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 
 const PKG = 'realheart';
@@ -125,5 +126,87 @@ if (!REMOVE) {
   if (!zstd) {
     console.log('[realheart]   没有 zstd ⇒ 观测页里「他说的话」那一路全空。');
     console.log('[realheart]   注意这个是静默的：页面照常显示、不报错。装：apt install zstd / pacman -S zstd / brew install zstd');
+  }
+}
+
+// ── 叫醒她的排程（2026-11-02 加）──
+//
+// 为什么要生成这一套：自由时间一直靠三样**手搓**的东西在跑 ——
+//   systemd timer（几点醒）+ 一个独立 profile（她自己的时间）+ 一个 wrapper（prompt 从哪来）。
+// 三样都不在包里。所以新机上装完插件，她不会自己醒 —— 她只会等你说话。
+// 那就不像一个人，像一个应答机。
+//
+// 为什么不直接装：装 systemd 单元要 root，而 setup 跑在用户态。
+// 为什么不写 crontab：cron 不要 root，但改别人的 crontab 属于「动了没被允许动的东西」。
+// 所以这里只铺文件、打命令。要启用就照着粘 —— 不启用也能用，只是她不会自己醒。
+if (!REMOVE) {
+  try {
+    const home = process.env.HOME || process.env.USERPROFILE || homedir();
+    const dir = join(home, '.dsh', 'realheart', 'schedule');
+    mkdirSync(dir, { recursive: true });
+
+    const wrapper = join(dir, 'freetime-run.sh');
+    writeFileSync(wrapper, [
+      '#!/bin/sh',
+      '# 自由时间的入口。',
+      '#',
+      '# prompt 的真本在插件里（FREE_PROMPT），插件启动时写到 free-prompt.txt。',
+      '# 这里只负责读它 —— 读不到用兜底原文。**不能因为文件没了就叫不醒她**，那是最糟的结果。',
+      'set -e',
+      '',
+      `PROMPT_FILE=${home}/.dsh/realheart/free-prompt.txt`,
+      '',
+      "FALLBACK='现在是你的自由时间。这段时间没人找你，也不用回谁的话。做点自己的东西，或者什么都不干，就让它过去。'",
+      '',
+      "PROMPT=''",
+      '[ -s "$PROMPT_FILE" ] && PROMPT=$(cat "$PROMPT_FILE")',
+      '[ -n "$PROMPT" ] || PROMPT=$FALLBACK',
+      '',
+      'exec /usr/bin/dsh --profile freetime "$PROMPT"',
+      '',
+    ].join('\n'), { mode: 0o755 });
+    chmodSync(wrapper, 0o755);
+
+    writeFileSync(join(dir, 'realheart-freetime.service'), [
+      '[Unit]',
+      'Description=realheart free time - let her have a stretch of nobody time',
+      'After=network-online.target',
+      'Wants=network-online.target',
+      '',
+      '[Service]',
+      'Type=oneshot',
+      `User=${process.env.USER || 'ubuntu'}`,
+      '# ⚠️ 工作目录必须定：不定的话她会用相对路径把产物写到 $HOME 下面。',
+      `WorkingDirectory=${home}`,
+      'TimeoutStartSec=5400',
+      `ExecStart=${wrapper}`,
+      '',
+    ].join('\n'));
+
+    writeFileSync(join(dir, 'realheart-freetime.timer'), [
+      '[Unit]',
+      'Description=Wake her for free time',
+      '',
+      '[Timer]',
+      'OnCalendar=*-*-* 09:00:00',
+      'OnCalendar=*-*-* 14:30:00',
+      'OnCalendar=*-*-* 20:30:00',
+      'RandomizedDelaySec=5400',
+      'Persistent=true',
+      '',
+      '[Install]',
+      'WantedBy=timers.target',
+      '',
+    ].join('\n'));
+
+    console.log('[realheart] 排程文件铺好了：' + dir);
+    console.log('[realheart]   想让「她自己醒」这件事生效，执行这三条（要 sudo）：');
+    console.log(`[realheart]     sudo cp ${dir}/realheart-freetime.* /etc/systemd/system/`);
+    console.log('[realheart]     sudo systemctl daemon-reload');
+    console.log('[realheart]     sudo systemctl enable --now realheart-freetime.timer');
+    console.log('[realheart]   不装也能用 —— 只是她不会自己动，只会等你说话。');
+    console.log('[realheart]   短唤醒（每隔一阵醒一次、看有没有想说的）见 README 的 ping-run.sh。');
+  } catch (err) {
+    console.log(`[realheart] 排程文件没铺下来（${err?.message ?? err}）—— 她还是会工作，只是不会自己醒`);
   }
 }
