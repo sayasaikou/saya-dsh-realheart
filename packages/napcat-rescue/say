@@ -14,6 +14,13 @@
 #   say --dry "想说的话"               # 只看会发出什么，不真发
 #
 # 它会告诉我发成功没有。失败不假装成功。
+#
+# ── 说什么都行（2026-11-02）──
+# 不用是作品，也不用有前因后果。
+#   看到一个东西想到他 → 发一句就够
+#   想不通的事 → 可以发，不用先想清楚
+#   「今天有点闷」 → 也算，不用解释为什么
+# 人分享的不是成品，是「我想到你了」。别把它做成汇报。
 
 set -uo pipefail
 
@@ -115,6 +122,28 @@ import json,sys
 try: print(json.load(sys.stdin).get('data',{}).get('message_id',''))
 except Exception: print('')
 " 2>/dev/null)
+  # 记进账本（2026-11-02）。
+  #
+  # 为什么要记：这是个独立脚本，发完就走 —— 以前她说过什么**一个字都不留**。
+  # 而「她主动跟我说过什么」恰恰是最该能查的一件事：
+  # 没有账，就只能靠记性说「好像有过」。
+  #
+  # 写失败不影响这次发送（已经发出去了），只在 stderr 说一句。
+  LEDGER="${DSH_HOME:-$HOME/.dsh}/realheart/say.jsonl"
+  python3 - "$LEDGER" "$MSG" "$MID" "$GROUP" "$TARGET" <<'PY' 2>/dev/null || true
+import json, os, sys, time
+path, text, mid, group, target = sys.argv[1:6]
+os.makedirs(os.path.dirname(path), exist_ok=True)
+row = {
+    'at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+    'kind': 'group' if group else 'private',
+    'to': (group or target),
+    'text': text,
+    'message_id': mid,
+}
+with open(path, 'a', encoding='utf-8') as fh:
+    fh.write(json.dumps(row, ensure_ascii=False) + '\n')
+PY
   echo "发出去了（message_id ${MID:-?}）"
   exit 0
 else

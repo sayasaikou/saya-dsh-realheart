@@ -372,6 +372,13 @@ table.cfg .why{color:#8b929c;font-size:12px;line-height:1.6;max-width:34ch}
 .rec-by{color:#8b929c;font-size:11px}
 .rec-by.ours{color:#6ea8d6;border:1px solid #24384a;border-radius:999px;padding:0 6px}
 .rec-inst{color:#8b929c;font-size:11.5px}
+/* 她主动说过的（2026-11-02）：这块的内容是「她的话」，不是数据 ——
+   所以给它呼吸，别挤成表格。 */
+.say-list{margin-top:8px}
+.say-list .kv{margin-top:10px}
+.say-txt{margin:2px 0 0 0;padding:8px 12px;border-left:2px solid #2f3944;
+background:#151a21;border-radius:0 8px 8px 0;font-size:13px;line-height:1.7;color:#dfe4ea;
+white-space:pre-wrap;word-break:break-word}
 table.cfg input,table.cfg select{background:#0e1014;color:#e6e8ec;border:1px solid #2a303c;
 border-radius:7px;padding:5px 8px;font:inherit;font-size:12.5px}
 table.cfg input:focus,table.cfg select:focus{outline:none;border-color:#3f5a78}
@@ -1251,6 +1258,50 @@ def render_recommend():
             + ''.join(blocks) + '</div>')
 
 
+def render_say():
+    """她主动说过的话（2026-11-02）。
+
+    为什么要这块：`say` 是个独立脚本，发完就走 —— 以前她说过什么一个字都不留。
+    「她主动跟我说过什么」恰恰是最该能查的一件事：没有账，就只能靠记性说「好像有过」。
+
+    只读、只列最近 20 条。发失败的不在里面（写账本只在发送成功之后）。
+    """
+    path = os.path.join(RH_STATE, 'say.jsonl') if RH_STATE else None
+    if not path or not os.path.exists(path):
+        return ('<div class="card wide"><h2>她主动说过的</h2>'
+                '<p class="note">还没有。这里会记她说出去的话 —— 不是回谁的话，是她自己想说的时候说的。'
+                '（要是她一直不说，那就一直空着。空着不算坏。）</p></div>')
+    rows = []
+    try:
+        with open(path, encoding='utf-8') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except Exception:
+                    continue
+    except Exception as err:
+        return '<div class="card wide"><h2>她主动说过的</h2><p class="err">读不了：%s</p></div>' % esc(err)
+    if not rows:
+        return ('<div class="card wide"><h2>她主动说过的</h2>'
+                '<p class="muted">账本在，还是空的。</p></div>')
+    out = []
+    for r in rows[-20:][::-1]:
+        kind = '群' if r.get('kind') == 'group' else '私聊'
+        out.append(
+            '<div class="kv"><b>%s</b><span class="mono">%s · %s</span></div>'
+            '<div class="say-txt">%s</div>'
+            % (esc(str(r.get('at') or '')[:16]),
+               esc(kind), esc(str(r.get('to') or '')),
+               esc(str(r.get('text') or ''))))
+    note = ('<p class="note">共 %d 条（列最近 20）。这些不是回谁的话 —— 是她自己想说的时候说的。</p>'
+            % len(rows))
+    return ('<div class="card wide"><h2>她主动说过的</h2>' + note
+            + '<div class="say-list">' + ''.join(out) + '</div></div>')
+
+
 def render_config_edit(flash=''):
     schema = _cfg_schema()
     if not schema:
@@ -1447,6 +1498,7 @@ def build_page(flash=''):
         render_audit(),
         render_shared(),
         render_memes(),
+        render_say(),
         render_recommend(),
         render_config_edit(flash),
         render_machine(),
