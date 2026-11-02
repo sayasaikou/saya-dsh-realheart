@@ -1,0 +1,30 @@
+{
+  "name": "realheart-self",
+  "version": "0.1.0",
+  "description": "给「我自己的东西」一个能装能卸的形状：声音 / 作品。模板，不是成品。",
+  "type": "module",
+  "main": "index.mjs",
+  "files": [
+    "index.mjs",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "realheart"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.1-0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "*"
+  },
+  "license": "MIT",
+  "private": true
+}

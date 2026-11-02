@@ -1,0 +1,5 @@
+# realheart-self 作为 profile 层插进来。
+# 跟 realheart 那份同样的道理：不写 dsh.bundle 声明，dsh 会当"普通依赖"装，装了不生效。
+- insert:
+    - id: realheart-self
+      name: 'realheart-self'
