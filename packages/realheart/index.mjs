@@ -22,7 +22,7 @@
 import { Config, DEFAULTS, DSH_HOME, QQROOT, validateConfig, loadUserConfig, describeConfig } from './lib/config.mjs';
 import { instanceTagFrom, lastInjectPaths } from './lib/instance-tag.mjs';
 import { maskSecret, pageHint, whereSecret } from './lib/secrets.mjs';
-import { sessionIdOfAssembleContext, sessionIdOfExec, moodVisibleIn, moodBleedsIn } from './lib/session.mjs';
+import { sessionIdOfAssembleContext, sessionIdOfExec, moodVisibleIn, moodBleedsIn, sessionLabel } from './lib/session.mjs';
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import net from 'node:net';
@@ -794,16 +794,27 @@ const ROUND_MARK = '[本轮消息]';
     // 从最后一笔往前找，跳过被他作废的。
     // 两种键都要看：行号（老记录）和 at（新记录，不受截断影响）。
     let last = null;
+    let otherLast = null;
     for (let i = rows.length; i >= 1; i -= 1) {
       const row = rows[i - 1];
       if (ctl.voided.has(i)) continue;
       if (row?.at && ctl.voided.has(String(row.at))) continue;
       // 心情分场合（2026-11-01）：不是这个会话记的就跳过。
       // 老数据（没有 session 字段）与拿不到当前会话 id 的两种情况都算「全局可见」—— 退化成之前的行径。
-      if (!moodVisibleIn(row, sessionId)) continue;
+      if (!moodVisibleIn(row, sessionId)) {
+        // 2026-11-02 修：以前这里直接丢，于是出现「群里记过、私聊看不见」——
+        // 同一次注入里第 2 行写「心情：无记录」、第 16 行写「记了 1 条，最后一条是今天」，自相矛盾。
+        // 现在先留下来兜底，用不用由下面决定。
+        if (!otherLast) otherLast = row;
+        continue;
+      }
       last = row;
       break;
     }
+    // 本场合一条都没有，就退到最近一条别处的 —— **但必须说清是哪儿记的**。
+    // 不说清的后果：她会把群里那笔当成这里的感觉，那比分场合更糟。
+    const fromElsewhere = !last && !!otherLast;
+    if (fromElsewhere) last = otherLast;
     if (!last) return await noMoodText();
 
     // 别处记的、够浓够新的，渗一行过来（完全隔开不像人）
@@ -846,6 +857,9 @@ const ROUND_MARK = '[本轮消息]';
 
     const lv = Number.isFinite(level) && level > 0 ? `（浓 ${level}/10）` : '';
     const lines = ['【你现在的状态】'];
+    if (fromElsewhere) {
+      lines.push(`（这条不是在当前场合记的 —— 是「${sessionLabel(last.session)}」里记的。这里还没记过。）`);
+    }
     if (stale) {
       lines.push(`${feeling}${lv}`);
       lines.push(`注意：这是 ${Math.round(hours)} 小时前记的，早该淡了。别硬演，也别拿它当借口。`);
@@ -2472,15 +2486,12 @@ const ROUND_MARK = '[本轮消息]';
         // 但在账本里标 why_auto，以后能分出「她说不清」和「这里还没有记录」。
         const idxProbe = await indexIds();
         const noSource = idxProbe.ids.size === 0;
-        if (found.length === 0 && !noSource) {
-          await noteMoodReject('no event id in why_ref', args);
-          return {
-            text: '（没记。why_ref 里没有事件 id。）\n'
-              + '心情必须有来处。去观测页的时间线上找一个 id（鼠标悬停能看到），'
-              + '或者直接说清是因为哪句话、哪件事——但那个“哪件事”得能指到一个具体记录上。'
-              + '说不清就写 none:unexplained。',
-          };
-        }
+        // ⚠️ 2026-11-02 删掉一处前置拦截。原来这里有：
+        //     if (found.length === 0 && !noSource) { 拒 }
+        // 它的本意是「手上有索引、但你没给 id」。问题是它摆在 none: 判断**前面**，
+        // 于是 `none:unexplained` 在**有条目的机器上**也会被它拦住 ——
+        // 而那正是零门槛的那个口子。她那边 5 条 mood-rejects 里很可能就是这么来的。
+        // 现在没有这条了：found 为空的情况由底下三段接（none: / 自述 / 实在不行才拒）。
 
         // none:<枚举> —— 说得清、但指不出一件事的那类，合法（2026-10-28 加）。
         // 枚举写死：不接受自由文本，免得它退化成一句敷衍。
@@ -2491,6 +2502,8 @@ const ROUND_MARK = '[本轮消息]';
         let whyKind = 'ref';
         let whyEnum = null;
         let hit = null;
+        // 她自己的说法（why_kind = told 时用它）。声明在外面，因为下面写 row 要用。
+        let told = '';
 
         if (noneMatch) {
           const val = noneMatch[1].toLowerCase();
@@ -2504,31 +2517,47 @@ const ROUND_MARK = '[本轮消息]';
           whyKind = 'none';
           whyEnum = val;
         } else {
-          if (found.length === 0) {
-            return {
-              text: '（没记。why_ref 里没有事件 id。）\n'
-                + '心情必须有来处。去观测页的时间线上找一个 id（鼠标悬停能看到），'
-                + '或者直接说清是因为哪句话、哪件事——但那个“哪件事”得能指到一个具体记录上。\n'
-                + '真说不清就写 none:unexplained（还有 body / weather / sleep / unknown）。',
-            };
-          }
+          // 2026-11-02（沙耶）：来源不该只限聊天。
+          //
+          // 她上网看到的、做作品时冒出来的感受，拿不到事件 id ——
+          // 那不是「说不清」，是「来处不在聊天记录里」。以前这两件事被塞进同一个不可写的桶，
+          // 结果就是：她真正自己长出来的东西反而记不进去。
+          //
+          // 门槛：至少 8 个字，且不能是 none: 枚举。防的是「不知道」三个字敷衍过去。
+          told = String(whyRef || '').trim();
+          const canTell = found.length === 0 && !/^none:/i.test(told) && told.length >= 8;
+          if (canTell) {
+            whyKind = 'told';   // 她自己的说法：能说清，但对不上一条记录
+            hit = null;
+          } else {
+            if (found.length === 0) {
+              await noteMoodReject('no event id in why_ref', args);
+              return {
+                text: '（没记。why_ref 里没有事件 id，也不像一段说得清的来处。）\n'
+                  + '三种写法：\n'
+                  + '  ① 带一个事件 id（观测页时间线上悬停能看到）；\n'
+                  + '  ② 直接写清是什么引起的 —— 哪怕不是聊天里的（看到的文章、自己在做的东西都算），写成一句完整的话；\n'
+                  + '  ③ 真说不清就写 none:unexplained（还有 body / weather / sleep / unknown）。',
+              };
+            }
 
-          const idx = await indexIds();
-          hit = found.find((id) => idx.ids.has(id));
-          if (!hit) {
-            await noteMoodReject('event id not in index', args);
-            // 光说「找不到」不够 —— 她手上根本没有 id。给几个真的能用的。
-            const recent = await recentEventIds(3);
-            const hint = recent.length
-              ? '\n\n最近能用的几个（新的在前；id / 时间 / 那件事）：\n'
-                + recent.map((r) => `  ${r.id}  ${r.at}  ${r.kind}：${r.detail}`).join('\n')
-                + '\n挑一条真对得上的；挑不出来就写 none:unexplained，别硬凑。'
-              : '';
-            return {
-              text: `（没记。索引里找不到 ${found[0]}。）\n`
-                + `索引现有 ${idx.ids.size} 条事件（${idx.note}）。\n`
-                + '要么 id 写错了，要么那件事根本没发生过。' + hint,
-            };
+            const idx = await indexIds();
+            hit = found.find((id) => idx.ids.has(id));
+            if (!hit) {
+              await noteMoodReject('event id not in index', args);
+              // 光说「找不到」不够 —— 她手上根本没有 id。给几个真的能用的。
+              const recent = await recentEventIds(3);
+              const hint = recent.length
+                ? '\n\n最近能用的几个（新的在前；id / 时间 / 那件事）：\n'
+                  + recent.map((r) => `  ${r.id}  ${r.at}  ${r.kind}：${r.detail}`).join('\n')
+                  + '\n挑一条真对得上的；挑不出来就写 none:unexplained，别硬凑。'
+                : '';
+              return {
+                text: `（没记。索引里找不到 ${found[0]}。）\n`
+                  + `索引现有 ${idx.ids.size} 条事件（${idx.note}）。\n`
+                  + '要么 id 写错了，要么那件事根本没发生过。' + hint,
+              };
+            }
           }
         }
 
@@ -2536,10 +2565,11 @@ const ROUND_MARK = '[本轮消息]';
           at: localStamp(),
           feeling,
           level,
-          why_ref: hit,
+          // why_kind = told 时存的是她那句话，不是 id。
+          why_ref: whyKind === 'told' ? told : hit,
           why_kind: whyKind,
           why_enum: whyEnum,
-          why_owner: await ownerOfEventId(hit),
+          why_owner: hit ? await ownerOfEventId(hit) : (whyKind === 'told' ? 'her' : null),
           why_auto: found.length === 0 && noSource ? true : null,
           decay: decay || null,
           // 哪个会话记的。拿不到就写 null（= 全局可见），不编一个。
@@ -2555,7 +2585,9 @@ const ROUND_MARK = '[本轮消息]';
         return {
           text: whyKind === 'none'
             ? `记下了：${feeling}（${level}/10）。来处记作「说不清」（${whyEnum}），不算成因。`
-            : `记下了：${feeling}（${level}/10），因为 ${hit}。`,
+            : whyKind === 'told'
+              ? `记下了：${feeling}（${level}/10）。来处是你自己写的：「${told}」（对不上一条记录，账上标着是你说的）。`
+              : `记下了：${feeling}（${level}/10），因为 ${hit}。`,
         };
       },
     });

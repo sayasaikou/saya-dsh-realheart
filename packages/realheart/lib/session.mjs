@@ -67,6 +67,23 @@ export function moodVisibleIn(row, sessionId) {
 }
 
 /**
+ * 把会话 id 说成人话，给注入里用。
+ *
+ * 为什么需要：本场合没有心情时，注入会退回「最近一条别处记的」——
+ * 那时候必须说清「这是在哪记的」，否则她会把群里那笔当成这里的感觉。
+ * 认不出就老实说「另一个会话」，不猜。
+ */
+export function sessionLabel(sessionId) {
+  const s = String(sessionId || '').trim();
+  if (!s) return '另一个会话';
+  const g = /group[-_](\d+)/i.exec(s);
+  if (g) return '群聊 ' + g[1];
+  const p = /private[-_](\d+)/i.exec(s);
+  if (p) return '私聊 ' + p[1];
+  return '另一个会话';
+}
+
+/**
  * 别处记的心情能不能渗一点过来（2026-11-01 沙耶提的：完全隔开不像人）。
  *
  * 他原话是「其实我觉得可以有一些影响，才更像人」。对 —— 人在群里被倚了一句，
