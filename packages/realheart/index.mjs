@@ -1494,6 +1494,60 @@ const ROUND_MARK = '[本轮消息]';
     }
   }
 
+  /**
+   * 「你最近经历过什么」（2026-11-02）。
+   *
+   * ── 为什么要有这一段 ──
+   * 沙耶的原话：
+   *   「她网上看的，得让她在对话的这个会话用起来……她看了某个东西，她自己要知道，
+   *    而不是看了就是看了」
+   *   「她上网、她的创作、她的聊天会话，需要有某种联动，而不是各干各的」
+   *
+   * 实测过：她的 free-time.jsonl 有 15 条 activity，全是「做了什么」。
+   * 她 14:54 说过「V2EX 上还是那些闲话」—— 那句话证明她看过，但它**没落进任何
+   * 主会话能读到的地方**。所以在聊天这一侧，她只有「此刻的状态」，没有「过去的事」。
+   *
+   * 这一段就是从 free-time.jsonl 把过去捞回来。
+   *
+   * ── 分寸 ──
+   * · 只取最近 2 条，每条截到 60 字 —— 全摆出来就是噪音，噪音会被忽略。
+   * · **只取标题级别**（第一句、书名号内的名字），不取整段叙述 —— 叙述给她看就成素材了。
+   * · 紧跟禁令，跟心情那段一个套路。
+   */
+  async function recentExperienceText() {
+    const ctl = await readControl();
+    if (ctl.paused) return '';
+    try {
+      const text = await readFile(join(cfg.stateDir, 'free-time.jsonl'), 'utf8');
+      const acts = [];
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        let d = null;
+        try {
+          d = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        const a = String(d?.activity || '').trim();
+        if (a) acts.push({ at: String(d?.ts || ''), a });
+      }
+      if (!acts.length) return '';
+      const last = acts.slice(-2);
+      const lines = ['【你最近经历过的事】'];
+      for (const { at, a } of last) {
+        const day = at.slice(5, 10).replace('-', '/');
+        // 第一句 + 标题名。不取整段：叙述是素材，事实不是。
+        const first = a.split('。')[0].slice(0, 60);
+        const t = (a.match(/《([^》]{1,16})》/) || [])[1];
+        lines.push(`· ${day}：${first}${t ? `（《${t}》）` : ''}`);
+      }
+      lines.push('（你自己经历过的事，给你自己定位用。不用在回复里提它 —— 除非对方问起。）');
+      return lines.join('\n');
+    } catch {
+      return '';
+    }
+  }
+
   async function workSectionText() {    const ctl = await readControl();
     if (ctl.paused) return '';
     const open = openWorks(await readWorks());
@@ -1886,6 +1940,12 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('own', err);
         }
         try {
+          const exp = await recentExperienceText();
+          if (exp) parts.push(sec('realheart:exp', 916, exp));
+        } catch (err) {
+          await noteInjectProblem('exp', err);
+        }
+        try {
           const claim = await claimSectionText();
           if (claim) parts.push(sec('realheart:claim', 915, claim));
         } catch (err) {
@@ -1952,6 +2012,7 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:days': 86,
           'realheart:own': 86,
           'realheart:claim': 85,
+          'realheart:exp': 84,
           'realheart:recall': 86,
           'realheart:hold': 87,
           'realheart:linger': 89,
@@ -2399,34 +2460,46 @@ const ROUND_MARK = '[本轮消息]';
     + `产物写到 ${join(QQROOT, 'work', 'pieces')} 下面（绝对路径）。`
     + '不想给任何人看的，放 pieces/private/ —— 那个目录只看个数，不列文件名。'
     + `做完（或者决定不做），往 ${join(cfg.stateDir, 'free-time.jsonl')} 追一行 JSON，`
-    + '记下这次干了什么、或者为什么没干。';
+    + '记下这次干了什么、或者为什么没干。'
+    // 2026-11-02 沙耶点的：她上网看了什么，主会话一个字都不知道 ——「看了等于没看」。
+    // 实测：free-time.jsonl 里 15 条 activity 全是「做了什么」，一条「看了什么」都没有。
+    // 所以明确要求她记这条 —— 不是靠自觉，是给她一件要做的事。
+    + '**上网看了什么也记进去**（在 activity 里带上「看了/读到」）：'
+    + '哪个平台、大概什么内容、你当时怎么想的。一句话就够，不用写摘要。'
+    + '（为什么要记：你自己看过的东西，别的会话里的你不知道。'
+    + ' 不记下来，那些看法就没有来处，下次再想起来也接不上。）';
 
   /**
-   * 短唤醒的提示（2026-11-02）。
+   * 短唤醒的提示（2026-11-02，第三版：加了「动手」这一个口）。
    *
-   * ── 这一版为什么把门槛拆了 ──
-   * 上一版最后一句是「大部分时候都该是后者」。沙耶的原话：
-   *   「就算问她要不要主动发消息，她的绝大多数情况下都是不发」
-   *   「现在她基本上是能不动就不动」
+   * ── 沙耶的原话，这一版是被这句逼出来的 ──
+   *   「你不去让她偏向于做事，那她就不会去做」
+   *   「我不知道是模型底层的问题还是我们的问题，总之这方面必须要有某种措施」
    *
-   * 那句话是我为了防「打卡」写的，结果把门槛设成了悬崖：
-   * 她每冒一个念头，先得过一遍「这值不值得说」—— 而那个标准是我给的，不是她的。
+   * 他说对了：前两版我改的都是**说话**，而他要的是**做事**。
+   * 「九项工具她用了四项」，不是她不说，是她不动。
    *
-   * 人不是「判断完值得说才说」，是「想到你了就说」。所以改成：
-   *   · 不给她「说之前先自评」的活
-   *   · 换成一条**礼貌**上的约束（他还没回，就别连着发）—— 管刷屏，不管资格
+   * 光在 prompt 里写「你可以做」没有用 —— 这件事已经验证过五六次。
+   * 所以钩子落在**它本来就会醒的那个时刻**：
+   * 前两版的短唤醒只问「有没有想说的」，那它就是个说话触发器，永远不是做事触发器。
    *
-   * ⚠️ 这个偏置**只给「主动说话」**，别的工具不能有：
-   * 记心情有客观触发（状态变了才记），给了偏置就会乱记；
-   * 主动说话没有客观触发，只有「想」—— 而「想」在没门槛的时候，需要一点点偏向才发生。
+   * ⚠️ 分寸：「弄两下」必须是**小的**。
+   * 短唤醒是几分钟的空档，自由时间是两小时 —— 不能让每次醒来都想开一件新作品。
+   *
+   * ── 前两版为什么拆门槛 ──
+   * 第二版最后一句是「大部分时候都该是后者」，那是我为了防「打卡」写的，
+   * 结果把门槛设成了悬崖：她每冒一个念头，先得过一遍「这值不值得说」——
+   * 而那个标准是我给的，不是她的。
    */
   const PING_PROMPT = '你醒了一下。没人找你，也没人在跟你说话。'
     + '这不是在问你什么，是给你一点空着的时间。'
-    + '此刻有没有想对他说的？一个念头、一句吐槽、看到的东西、或者就是想找他说句话 —— '
+    + '这会儿要是有想对他说的 —— 一个念头、一句吐槽、看到的东西、或者就是想找他说句话 —— '
     + '用 ' + join(QQROOT, 'work', 'bin', 'say') + ' "..." 发过去，他手机上会真收到。'
+    + '要是手边有个能顺手弄两下的东西（算个式子、看一眼上次没弄明白的地方），也可以弄。'
+    + '（「弄两下」就是弄两下 —— 这是个几分钟的空档，不是让你开一件新的作品。）'
     + '想说就说，不需要理由，也不用先想清楚值不值得。'
     + '（只有一条：他要是还没回你上一条，就别连着发第二条。）'
-    + '要是这会儿心里真的什么都没有，那就继续睡 —— 不是欠账，就是没有。';
+    + '要是这会儿心里真的什么都没有、手边也没什么想碰的，那就继续睡 —— 不是欠账，就是没有。';
 
   /**
    * 把 FREE_PROMPT 落到 $DSH_HOME/realheart/free-prompt.txt（2026-11-01）。
