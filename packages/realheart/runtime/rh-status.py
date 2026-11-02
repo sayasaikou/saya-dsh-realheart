@@ -217,6 +217,39 @@ def _peek_args(args):
     return ''
 
 
+def count_works(path):
+    """数作品。**目录也算一件**（2026-11-02 修）。
+
+    ── 这个函数为什么跟 count_files 分开 ──
+    count_files 只数 `entry.is_file()`。而她的每件作品是一个**目录**：
+      pieces/detuning-2026-11-02/{plate.png, model.py, README.md, ...}
+    于是页面上一直写着「作品 0 件」—— 她做了十件，数字说她一件没做。
+
+    这不是显示问题，是**一个会让人得出错误结论的数**。
+    （发现了它，是因为那页上同一块里写着「最近一次 15:10 做了第十件」。）
+
+    顶层散着的文件也算一件 —— 老格式（单文件作品）不能因此消失。
+    """
+    try:
+        with os.scandir(path) as it:
+            n = 0
+            newest = 0.0
+            for entry in it:
+                if entry.name.startswith('.'):
+                    continue
+                if entry.is_dir() or entry.is_file():
+                    n += 1
+                    try:
+                        newest = max(newest, entry.stat().st_mtime)
+                    except OSError:
+                        pass
+            return n, newest
+    except FileNotFoundError:
+        return None, 0.0
+    except OSError:
+        return None, 0.0
+
+
 def count_files(path):
     try:
         with os.scandir(path) as it:
@@ -847,7 +880,12 @@ def render_memes():
             n, (' · 最近 ' + age_of(newest)) if newest else '')
 
     pieces = os.path.join(ROOT, 'work', 'pieces')
-    pn, pnew = count_files(pieces)
+    # ⚠️ 用 count_works 不是 count_files：作品是目录，count_files 只数文件，
+    # 曾经让页面一直写着「作品 0 件」而她做了十件。
+    pn, pnew = count_works(pieces)
+    # private/ 不算一件作品 —— 它是「私下收着」那一栏的容器
+    if pn:
+        pn = max(0, pn - (1 if os.path.isdir(os.path.join(pieces, 'private')) else 0))
     body += '<div class="row"><span>作品</span><span>%s</span></div>' % (
         ('%d 件%s' % (pn, (' · 最近 ' + age_of(pnew)) if pnew else '')) if pn is not None
         else '目录还没建')
@@ -1264,6 +1302,68 @@ def render_recommend():
             + ''.join(blocks) + '</div>')
 
 
+def render_ping():
+    """短唤醒：她醒过几次、最近一次什么时候、下一次什么时候（2026-11-02）。
+
+    ── 为什么这块必须有 ──
+    沙耶原话：「我现在都 20 分钟了，她也没主动给我发消息啊。」
+    而实际上她 20:05 醒过一次、看了、决定不说，下一次在 20:39 ——
+    **这些数只在 ping.last / ping.next 两个文件里躺着，页面上一个字都没有。**
+    看不到「她醒过」，就只能靠等；等不到就以为她死了。
+
+    ── 说没说不在这一块 ──
+    「醒」不等于「说」。醒过来看一眼然后什么都不说，那是最常见的一种。
+    她真说了什么，去「她主动说过的」那块看 —— 这里不重复。
+    """
+    if not RH_STATE:
+        return ''
+    # ⚠️ ping.json / ping.last / ping.next 在 $DSH_HOME/realheart/ 下，
+    # 不在 stateDir（那是 ~/qqbot/work/realheart/）。两个不同的目录 ——
+    # 用 RH_STATE 拼过一次，结果这个函数永远找不到文件、永远返回空，
+    # 而且不报错。HERE 是 runtime 目录，往上一层就是 $DSH_HOME/realheart。
+    PING_DIR = os.path.dirname(HERE)
+    cfg_p = os.path.join(PING_DIR, 'ping.json')
+    if not os.path.exists(cfg_p):
+        return ''
+    try:
+        with open(cfg_p, encoding='utf-8') as fh:
+            cfg = json.load(fh)
+    except Exception:
+        return ''
+    every = int(cfg.get('minMinutes') or 0)
+    if every <= 0:
+        return ('<div class="card wide"><h2>她多久醒一次</h2>'
+                '<p class="note">短唤醒是关的（<span class="mono">pingMinMinutes = 0</span>）—— '
+                '她想说话只能等有人先开口。要开就在下面配置里把「短唤醒·最短间隔」调大。</p></div>')
+
+    def read_ts(name):
+        p = os.path.join(PING_DIR, name)
+        try:
+            with open(p, encoding='utf-8') as fh:
+                v = int((fh.read() or '0').strip() or 0)
+            return v if v > 0 else None
+        except Exception:
+            return None
+
+    def hhmm(ts):
+        return time.strftime('%H:%M', time.localtime(ts)) if ts else '—'
+
+    last = read_ts('ping.last')
+    nxt = read_ts('ping.next')
+    now = time.time()
+    rows = [
+        ('最近一次醒', hhmm(last) + (('（%d 分钟前）' % int((now - last) / 60)) if last else '')),
+        ('下一次', hhmm(nxt) + (('（还有 %d 分钟）' % max(0, int((nxt - now) / 60))) if nxt else '')),
+        ('间隔', '每 %d–%d 分钟，只在 %d–%d 点之间'
+         % (every, int(cfg.get('maxMinutes') or every),
+            int(cfg.get('fromHour') or 7), int(cfg.get('toHour') or 23))),
+    ]
+    body = ''.join('<div class="kv"><b>%s</b><span>%s</span></div>' % (esc(a), esc(b)) for a, b in rows)
+    return ('<div class="card wide"><h2>她多久醒一次</h2>' + body
+            + '<p class="note">「醒」不等于「说」—— 醒过来看一眼然后什么都不说，那是最常见的一种。'
+            '她真说了什么，去下面「她主动说过的」那块看。</p></div>')
+
+
 def render_firstrun():
     """第一次用？先做这三件（2026-11-02）。
 
@@ -1595,6 +1695,7 @@ def build_page(flash=''):
     info = sysinfo()
     cards = ''.join([
         render_firstrun(),
+        render_ping(),
         render_mood_ledger(),
         render_style(),
         render_free_time(),
