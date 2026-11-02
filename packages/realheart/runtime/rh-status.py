@@ -354,6 +354,24 @@ table.cfg .why{color:#8b929c;font-size:12px;line-height:1.6;max-width:34ch}
 .starter-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .starter-h b{color:#e6e9ee}
 .starter-hint{color:#8b929c;font-size:12px}
+/* 配套工具（2026-11-02）：没装的那条要“还看得见但不抢眼”——
+   完全藏起来，人不会知道有这么个东西；跟装了一样显眼，又像在推销。 */
+.rec{padding:12px 0;border-top:1px solid #232a33}
+.rec:first-of-type{border-top:0}
+.rec-off{opacity:.62}
+.rec-h{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.rec-h b{color:#e6e9ee;font-size:13.5px}
+.rec-kind{color:#8b929c;font-size:11.5px}
+.rec-ok{color:#7cc46a;font-size:11.5px;border:1px solid #2f4a2a;border-radius:999px;padding:1px 7px}
+.rec-no{color:#8b929c;font-size:11.5px;border:1px solid #2a3038;border-radius:999px;padding:1px 7px}
+.rec p{margin:4px 0;font-size:12.5px;line-height:1.65;color:#c6ccd6}
+.rec-used{color:#9aa3af !important}
+.rec-comp{margin:10px 0 0 12px;padding:10px 12px;border-left:2px solid #2f3944;background:#151a21;border-radius:0 8px 8px 0}
+.rec-comp-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:3px}
+.rec-comp-h b{color:#dfe4ea;font-size:12.5px}
+.rec-by{color:#8b929c;font-size:11px}
+.rec-by.ours{color:#6ea8d6;border:1px solid #24384a;border-radius:999px;padding:0 6px}
+.rec-inst{color:#8b929c;font-size:11.5px}
 table.cfg input,table.cfg select{background:#0e1014;color:#e6e8ec;border:1px solid #2a303c;
 border-radius:7px;padding:5px 8px;font:inherit;font-size:12.5px}
 table.cfg input:focus,table.cfg select:focus{outline:none;border-color:#3f5a78}
@@ -1128,6 +1146,111 @@ GROUP_META = [
 ]
 
 
+# ---------------------------------------------------------------- 推荐（2026-11-02）
+#
+# 为什么单独一块：好东西常常不是缺，是**没人知道它在**。
+# 人不会去找一个自己不知道存在的东西 —— 所以这块不是“广告位”，是**发现渠道**。
+#
+# 三条纪律，写在这里免得以后长歪：
+#   ① 每一条必须写「我们拿它做了什么」。没有实测的不列 —— 列了就跟广告没区别。
+#   ② 谁写的要分清（ours / theirs）。混在一起，出事时没人知道该找谁。
+#   ③ 配套小工具挂在**父插件下面**：没装那个插件的人根本看不到它。
+#      这样既不塞包，也不浪费。
+#
+# 一个例子长什么样：
+#   dsh-napcat（别人的）
+#     · 她收发 QQ 消息全靠它。踩过两个坑：同账号两处登会互踢、掉线时 3001 不通就是没登录。
+#     配套：napcat-rescue（我们写的）—— 掉线时的扫码页，不用 SSH 上去翻日志里的二维码链接
+#           say（我们写的）—— 一条命令让她以自己身份发消息
+
+RECOMMEND = [
+    {
+        'id': 'dsh-napcat',
+        'name': 'dsh-napcat',
+        'kind': '通道（别人的）',
+        'what': 'QQ 通道。她收发消息全靠它 —— 没有它，她就是一个不会说话的账本。',
+        'used': '用到现在的两个坑：同账号在两处登会互踢（看着像风控，其实不是）；'
+                '掉线时 NapCat 的 3001 端口不通 —— 那是「没登录」，不是「服务坏了」。',
+        'companions': [
+            {
+                'name': 'napcat-rescue',
+                'what': '掉线时的扫码抢救页。不用 SSH 上去，在几万行日志里翻那个两分钟就过期的二维码链接。',
+                'install': '在仓库的 packages/napcat-rescue/，跑 ./install.sh',
+                'by': 'ours',
+            },
+            {
+                'name': 'say',
+                'what': '一条命令让她用自己的身份发消息。自由时间里想说什么，不用等谁先开口。',
+                'install': '随 napcat-rescue 一起装（同一个包里的 say）',
+                'by': 'ours',
+            },
+        ],
+    },
+]
+
+
+def _installed_bundles():
+    """这台机器上装了哪些 bundle —— 只看 profiles，不猜别的地方。"""
+    out = set()
+    prof_dir = os.path.join(os.path.expanduser('~'), '.dsh', 'profiles')
+    try:
+        for name in os.listdir(prof_dir):
+            p = os.path.join(prof_dir, name, 'package.json')
+            try:
+                with open(p, encoding='utf-8') as fh:
+                    d = json.load(fh)
+            except Exception:
+                continue
+            prof = (d.get('dsh') or {}).get('profile') or {}
+            for b in (prof.get('bundles') or []):
+                out.add(str(b))
+    except Exception:
+        pass
+    return out
+
+
+def render_recommend():
+    have = _installed_bundles()
+    # 只列“这台机器上有关系”的：装了父插件的才列它的配套。
+    # 一个都没装就整块不出现 —— 空着比列一堆你永远用不上的东西好。
+    blocks = []
+    for it in RECOMMEND:
+        installed = it['id'] in have
+        comps = []
+        if installed:
+            for c in it.get('companions') or []:
+                tag = ('<span class="rec-by ours">我们写的</span>' if c.get('by') == 'ours'
+                       else '<span class="rec-by">别人的</span>')
+                comps.append(
+                    '<div class="rec-comp"><div class="rec-comp-h"><b>%s</b>%s</div>'
+                    '<p>%s</p><p class="mono rec-inst">%s</p></div>'
+                    % (esc(c['name']), tag, esc(c.get('what') or ''), esc(c.get('install') or '')))
+        blocks.append(
+            '<div class="rec%s">'
+            '<div class="rec-h"><b>%s</b><span class="rec-kind">%s</span>%s</div>'
+            '<p>%s</p>'
+            '%s'
+            '%s'
+            '</div>'
+            % ('' if installed else ' rec-off',
+               esc(it['name']), esc(it.get('kind') or ''),
+               '<span class="rec-ok">已装</span>' if installed else '<span class="rec-no">没装</span>',
+               esc(it.get('what') or ''),
+               ('<p class="rec-used">我们用它做过什么：%s</p>' % esc(it['used'])) if it.get('used') and installed else '',
+               (''.join(comps)) if comps else ''))
+
+    if not any(it['id'] in have for it in RECOMMEND):
+        # 一个都没装：只留一句“这里放过什么”，不列清单（列了也用不上）
+        return ('<div class="card wide"><h2>配套工具</h2>'
+                '<p class="note">这里放我们用过、也踩过坑的插件，以及给它们配的小工具。'
+                '装的插件不同，这里出现的东西也不同 —— 现在没有匹配的，所以是空的。</p></div>')
+
+    return ('<div class="card wide"><h2>配套工具</h2>'
+            '<p class="note">每条都写着我们拿它做过什么。没有实测过的不往这里放 —— '
+            '不然这页就跟广告没区别了。</p>'
+            + ''.join(blocks) + '</div>')
+
+
 def render_config_edit(flash=''):
     schema = _cfg_schema()
     if not schema:
@@ -1324,6 +1447,7 @@ def build_page(flash=''):
         render_audit(),
         render_shared(),
         render_memes(),
+        render_recommend(),
         render_config_edit(flash),
         render_machine(),
     ])
