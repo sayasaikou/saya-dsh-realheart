@@ -2987,12 +2987,17 @@ const ROUND_MARK = '[本轮消息]';
     registerTool({
       name: 'rh_pending',
       description: [
-        '没完的事：加一条、勾掉、或者删掉。',
+        '没完的事：加一条、勾掉、拒绝、或者删掉。',
         '',
         '`add`：记一件还没做完的事。同一句话不会重复进队。',
         '`check`：勾掉。**最好带 evidence** —— 一个事件 id（n:/a:/h: 那种），',
         '         或者说明凭什么算做完了。不带也能勾，但会记成「只有自述」，',
         '         以后算续接率时不计入。',
+        '`refuse`：**这件事你不做，而且要说为什么**（`why` 必填）。',
+        '         条目留着、理由留着，但它不再出现在「没完的事」里催你。',
+        '         跟 `drop` 不一样：drop 是「不算数了」，refuse 是「我不做」。',
+        '         这个动作存在的理由只有一个：让「说不」变成一个能被记下来的动作，',
+        '         而不是无声地忽略。',
         '`drop`：不作数了，直接删。',
         '`list`：看现在有什么。',
         '',
@@ -3001,10 +3006,11 @@ const ROUND_MARK = '[本轮消息]';
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', description: 'add / check / drop / list' },
+          action: { type: 'string', description: 'add / check / refuse / drop / list' },
           text: { type: 'string', description: 'add 时要写的事，一句话' },
-          ref: { type: 'string', description: 'check / drop 时指哪一条：指纹前几位，或行号' },
+          ref: { type: 'string', description: 'check / refuse / drop 时指哪一条：指纹前几位，或行号' },
           evidence: { type: 'string', description: '凭什么算做完了：事件 id，或一句能被核的说明' },
+          why: { type: 'string', description: 'refuse 时用：为什么不做。必填 —— 没理由的拒绝等于忽略' },
           at_unknown: { type: 'boolean', description: 'add 时用：这是存量条目，起点不明' },
           turn: { type: 'integer', description: '第几轮。只在算续接率时用，可以不给' },
           session: { type: 'string', description: '哪个会话。可以不给' },
@@ -3064,12 +3070,17 @@ const ROUND_MARK = '[本轮消息]';
           return { text: `记下了：${text}  （${fp}）` };
         }
 
-        if (action === 'check' || action === 'drop') {
+        if (action === 'check' || action === 'drop' || action === 'refuse') {
           const ref = String(args?.ref ?? '').trim();
           if (!ref) return { text: `（${action} 要用 ref 指一条。）` };
           const target = state.items.find((it) => it.fp === ref || it.fp.startsWith(ref));
           if (!target) return { text: `（找不到 ${ref}。先 list 看一眼。）` };
           const evidence = String(args?.evidence ?? '').trim();
+          const why = String(args?.why ?? '').trim();
+          // 拒绝必须带理由 —— 没理由的拒绝等于忽略，那这个动作就没有意义了。
+          if (action === 'refuse' && !why) {
+            return { text: '（refuse 要写 why：为什么不做。没理由的拒绝等于忽略，那不算说不。）' };
+          }
           const ev = {
             action,
             fp: target.fp,
@@ -3078,10 +3089,14 @@ const ROUND_MARK = '[本轮消息]';
             turn: Number.isInteger(args?.turn) ? args.turn : null,
             session: args?.session ? String(args.session) : null,
             ...(evidence ? { evidence } : {}),
+            ...(why ? { why } : {}),
           };
           const r = await commitPendingEvent(ev);
           if (!r.ok) return { text: `（没改成：${r.error}）` };
           if (action === 'drop') return { text: `删了：${target.text}` };
+          if (action === 'refuse') {
+            return { text: `记下了：这件事你不做 —— ${target.text}\n你写的理由：${why}\n（它不会再出现在「没完的事」里催你。想改主意，重新 add 一条就行。）` };
+          }
           return {
             text: evidence
               ? `勾掉了：${target.text}（凭 ${evidence}）`
@@ -3089,7 +3104,7 @@ const ROUND_MARK = '[本轮消息]';
           };
         }
 
-        return { text: '（action 只有 add / check / drop / list。）' };
+        return { text: '（action 只有 add / check / refuse / drop / list。）' };
       },
     });
 

@@ -138,3 +138,49 @@ test('续接率：兑现过再删掉，分母不许改小（drop 不能事后改
   assert.equal(r.added, 1);
 });
 
+
+// ── 拒绝（2026-11-02）──
+//
+// 这个动作存在的理由只有一个：让「说不」变成一个能被记下来的动作，
+// 而不是无声地忽略。所以这三条钉的都是同一件事 —— 拒绝要诚。
+
+test('refuse：不写理由就不算拒绝（那只是忽略）', () => {
+  const base = [add('把那张图收个尾', '2026-11-02T10:00:00+08:00')];
+  const fp = fingerprint('把那张图收个尾');
+  const st = replay(base);
+  assert.equal(applyEvent(st, { action: 'refuse', fp, ref: fp, at: '2026-11-02T11:00:00+08:00' }), null);
+  assert.equal(applyEvent(st, { action: 'refuse', fp, ref: fp, why: '   ', at: '2026-11-02T11:00:00+08:00' }), null);
+});
+
+test('refuse：条目留着、理由留着、但不再算未完成', () => {
+  const base = [add('把那张图收个尾', '2026-11-02T10:00:00+08:00'), add('另一件事', '2026-11-02T10:01:00+08:00')];
+  const fp = fingerprint('把那张图收个尾');
+  const rows = [...base, { action: 'refuse', fp, ref: fp, why: '这图我不喜欢，不想再改', at: '2026-11-02T11:00:00+08:00' }];
+  const st = replay(rows);
+  assert.equal(st.items.length, 2, '拒绝不是删除，条目要留着');
+  assert.equal(unfinishedCount(st), 1, '拒绝过的不该再算进未完成');
+  const md = render(st);
+  assert.ok(md.includes('她决定不做的'), '渲染里要单独列出来');
+  assert.ok(md.includes('这图我不喜欢'), '理由要留着');
+  assert.ok(matchesFile(rows, md), '渲染与回放要一致');
+});
+
+test('refuse：注入里看得到，但不再催', () => {
+  const base = [add('把那张图收个尾', '2026-11-02T10:00:00+08:00')];
+  const fp = fingerprint('把那张图收个尾');
+  const rows = [...base, { action: 'refuse', fp, ref: fp, why: '不想弄了', at: '2026-11-02T11:00:00+08:00' }];
+  const txt = summaryText(replay(rows), rows);
+  assert.ok(txt.includes('你自己决定不做的'), '要摆出来，不然那件事等于没发生：' + txt);
+  assert.ok(txt.includes('不想弄了'), txt);
+  assert.ok(txt.includes('不用再管它'), '要明说不再催：' + txt);
+});
+
+test('refuse：做过的不许再拒绝；拒绝超过一次没意义', () => {
+  const base = [add('做完了的事', '2026-11-02T10:00:00+08:00')];
+  const fp = fingerprint('做完了的事');
+  const done = replay([...base, { action: 'check', fp, ref: fp, at: '2026-11-02T10:30:00+08:00', evidence: 'a:x#1' }]);
+  assert.equal(applyEvent(done, { action: 'refuse', fp, ref: fp, why: '不想做', at: '2026-11-02T11:00:00+08:00' }), null);
+
+  const refused = replay([...base, { action: 'refuse', fp, ref: fp, why: '不想做', at: '2026-11-02T11:00:00+08:00' }]);
+  assert.equal(applyEvent(refused, { action: 'refuse', fp, ref: fp, why: '又不想做了', at: '2026-11-02T12:00:00+08:00' }), null);
+});

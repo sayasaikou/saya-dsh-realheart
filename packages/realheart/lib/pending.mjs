@@ -89,6 +89,24 @@ export function applyEvent(state, ev) {
     return next;
   }
 
+  // 拒绝（2026-11-02）：不删、但不再催。
+  //
+  // 为什么要跟 drop 分开：drop 是「这件事不算数了」（记错了、重复了），
+  // refuse 是「这件事我不做，因为……」—— 条目留着，理由留着，但它不再出现在
+  // 「没完的事」里催她。两种动作在行为上完全不同，混成一个就等于没有拒绝这个行为。
+  //
+  // 为什么必须写理由：没有理由的拒绝等于忽略。这里不接受空理由。
+  if (action === 'refuse') {
+    const why = String(ev?.why ?? '').trim();
+    if (!why) return null;
+    const it = next.items[i];
+    if (it.checked_at) return null;      // 已经做过的不许再拒绝
+    if (it.refused_at) return null;      // 拒绝过一次就够了
+    it.refused_at = String(ev.at ?? '');
+    it.refused_why = why;
+    return next;
+  }
+
   return null;
 }
 
@@ -107,7 +125,16 @@ export function render(state) {
   if (!state.items.length) return '# 没完的事\n\n（空着。）\n';
   const lines = ['# 没完的事', ''];
   for (const it of state.items) {
+    // 拒绝过的留在账上，但跟没完的分开列 —— 它还在，只是不再催她。
+    if (it.refused_at) continue;
     lines.push(`- [${it.checked_at ? 'x' : ' '}] ${it.text}`);
+  }
+  const refused = state.items.filter((it) => it.refused_at);
+  if (refused.length) {
+    lines.push('', '## 她决定不做的', '');
+    for (const it of refused) {
+      lines.push(`- ${it.text}`, `  - 为什么：${it.refused_why}`);
+    }
   }
   return lines.join('\n') + '\n';
 }
@@ -119,9 +146,9 @@ export function matchesFile(events, fileText) {
 
 // ── 三个量 ──────────────────────────────────────────────────────────────
 
-/** 未完成条数。只报数，不评价。 */
+/** 未完成条数。只报数，不评价。拒绝过的不算 —— 她说过不做了。 */
 export function unfinishedCount(state) {
-  return state.items.filter((it) => !it.checked_at).length;
+  return state.items.filter((it) => !it.checked_at && !it.refused_at).length;
 }
 
 /** 兑现耗时中位数（小时）。样本不足只报样本量。 */
@@ -215,11 +242,20 @@ export function continuationRate(events, { k = K_ROUNDS, session = null } = {}) 
 export function summaryText(state, events, { k = K_ROUNDS } = {}) {
   const lines = ['【没完的事】'];
   lines.push(`未完成 ${unfinishedCount(state)} 条。`);
-  const open = state.items.filter((it) => !it.checked_at).slice(-3);
+  const open = state.items.filter((it) => !it.checked_at && !it.refused_at).slice(-3);
   for (const it of open) {
     const t = Date.parse(it.added_at);
     const ago = Number.isNaN(t) ? '' : `（${Math.max(0, Math.round((Date.now() - t) / 3600000))} 小时前记的）`;
     lines.push(`· ${it.text}${it.at_unknown ? '（起点不明）' : ago}`);
+  }
+  // 她拒绝过的：摆出来，但不催。
+  // 为什么值得占这几行：这是她自己做过的判断里最硬的一种 ——
+  // 「这件事我不做，因为……」。她该看得见自己拒绝过什么，不然那件事等于没发生。
+  const refused = state.items.filter((it) => it.refused_at).slice(-2);
+  if (refused.length) {
+    lines.push('你自己决定不做的：');
+    for (const it of refused) lines.push(`· ${it.text} —— 你写的理由：${it.refused_why}`);
+    lines.push('（说都说了不做了，就不用再管它。除非你又想做。）');
   }
   const med = fulfillMedian(state);
   lines.push(med.insufficient
