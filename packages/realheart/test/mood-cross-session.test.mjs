@@ -163,7 +163,7 @@ test('同一个场合记了两条不同的情绪 → 两条都在注入里', asy
   const text = await inject(h, PRIVATE);
   assert.ok(text.includes('有点怕'), '前一条掉了：' + text);
   assert.ok(text.includes('还想笑'), '后一条掉了：' + text);
-  assert.ok(text.includes('【你现在有这些情绪】'), '没走多条那个分支：' + text);
+  assert.ok(text.includes('【你现在带着的】'), '没走多条那个分支：' + text);
   assert.ok(text.includes('同时存在'), '没说「同时存在」—— 那就又成一条盖一条了：' + text);
 });
 
