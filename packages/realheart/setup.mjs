@@ -24,7 +24,7 @@
  * 写之前一定先备份 —— 「改一次配置多一个 .bak」是发布判据之一，不能靠人工记得。
  */
 
-import { existsSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, chmodSync, copyFileSync } from 'node:fs';
 import { readFile, writeFile, copyFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -126,6 +126,35 @@ if (!REMOVE) {
   if (!zstd) {
     console.log('[realheart]   没有 zstd ⇒ 观测页里「他说的话」那一路全空。');
     console.log('[realheart]   注意这个是静默的：页面照常显示、不报错。装：apt install zstd / pacman -S zstd / brew install zstd');
+  }
+}
+
+// ── 给她（他的 agent）一份说明书（2026-11-02 加）──
+//
+// 工具 schema 只说「怎么调」，不说「什么时候该调、什么时候不该」。
+// 这份 skill 是写给**那个 agent** 的 —— 怎么用这些工具、心情要不要每轮记、
+// 为什么状态不该被说出来、以及怎么写出自己那份人格。
+//
+// 装到 profile 的 skills/ 下面，它会自己找到（dsh 的 skill 目录约定）。
+// 已经存在就不覆盖 —— 用户可能照着它改过，改过的那份才是他的。
+if (!REMOVE) {
+  try {
+    const here = new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+    const src = join(decodeURIComponent(here), 'skills', 'realheart', 'SKILL.md');
+    if (existsSync(src)) {
+      const dstDir = join(dir, 'skills', 'realheart');
+      const dst = join(dstDir, 'SKILL.md');
+      if (existsSync(dst)) {
+        console.log('[realheart] skill 已存在（可能是你自己改过的），没动它：' + dst);
+      } else {
+        mkdirSync(dstDir, { recursive: true });
+        copyFileSync(src, dst);
+        console.log('[realheart] 给她写了份用法说明：' + dst);
+        console.log('[realheart]   那是写给「那个 agent」的，不是给你的 —— 里面写着什么时候该记、什么时候不该。');
+      }
+    }
+  } catch (err) {
+    console.log(`[realheart] skill 没铺下来（${err?.message ?? err}）—— 不影响工具本身能不能用`);
   }
 }
 
