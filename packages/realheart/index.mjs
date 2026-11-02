@@ -699,8 +699,13 @@ const ROUND_MARK = '[本轮消息]';
         } else if (obj.action === 'fade') {
           // 「这条淡了」（2026-11-02 沙耶）：她自己标，不是系统降温。
           // 只影响「算不算现在」—— 原文、浓度、来处一字不动。
+          //
+          // ⚠️ 2026-11-02 实验抓到的真 bug：`at` 只精确到秒，同一秒记的两条会共用一个 at，
+          // 于是一笔 fade 把两条一起标淡（实测：三条全消失，注入里连心情段都没了）。
+          // 所以新记录带上那句原话，**时间 + 内容两个都对上**才算淡。
           const t = String(obj.target || '').trim();
-          if (t) out.faded.add(t);
+          const f = String(obj.target_feeling || '').trim();
+          if (t) out.faded.add(f ? `${t}\u0000${f}` : t);
         }
       }
     } catch {
@@ -866,7 +871,11 @@ const ROUND_MARK = '[本轮消息]';
       if (ctl.voided.has(i)) continue;
       if (row?.at && ctl.voided.has(String(row.at))) continue;
       // 她自己说「这条淡了」的，不再算“现在”（2026-11-02）。原文还在账上。
-      if (row?.at && ctl.faded.has(String(row.at))) continue;
+      // 匹配要「时间 + 内容」一起对 —— 只看时间的话，同一秒记的几条会被一笔 fade 全带走。
+      if (row?.at) {
+        const fk = `${row.at}\u0000${String(row.feeling || '').trim()}`;
+        if (ctl.faded.has(String(row.at)) || ctl.faded.has(fk)) continue;
+      }
       // 心情分场合（2026-11-01）：不是这个会话记的就跳过。
       // 老数据（没有 session 字段）与拿不到当前会话 id 的两种情况都算「全局可见」—— 退化成之前的行径。
       if (!moodVisibleIn(row, sessionId)) {
@@ -2740,7 +2749,7 @@ const ROUND_MARK = '[本轮消息]';
             const target = String(prev?.at || '');
             if (target) {
               await appendLedger(controlFile(),
-                `${JSON.stringify({ at: localStamp(), action: 'fade', target, by: 'her' })}\n`, 'utf8');
+                `${JSON.stringify({ at: localStamp(), action: 'fade', target, target_feeling: String(prev.feeling || '').trim(), by: 'her' })}\n`, 'utf8');
               fadedNote = `（上一条「${String(prev.feeling || '').trim()}」标成淡了 —— 它不算“现在”了，但还在账上。）`;
             }
           } catch { /* 标不上不影响这一笔心情 */ }
