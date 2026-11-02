@@ -344,6 +344,16 @@ table.cfg tr.lv-danger td.lv{color:#ef8a8a}
 table.cfg tr.lv-caution td.lv{color:#e0c060}
 table.cfg tr.lv-normal td.lv{color:#7fb2d9}
 table.cfg .why{color:#8b929c;font-size:12px;line-height:1.6;max-width:34ch}
+/* 页首「先动这四个」（2026-11-02）：深色底上它得比表格显眼一点，
+   但不能显眼到像警告 —— 它只是起点，不是危险区。 */
+.starters{margin:14px 0 18px;padding:14px 16px;border:1px solid #2a3038;border-radius:8px;background:#151a21}
+.starters h3{margin:0 0 6px;font-size:14px;color:#e6e9ee}
+.starters .note{margin:0 0 12px}
+.starter{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-top:1px solid #232a33}
+.starter:first-of-type{border-top:0}
+.starter-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.starter-h b{color:#e6e9ee}
+.starter-hint{color:#8b929c;font-size:12px}
 table.cfg input,table.cfg select{background:#0e1014;color:#e6e8ec;border:1px solid #2a303c;
 border-radius:7px;padding:5px 8px;font:inherit;font-size:12.5px}
 table.cfg input:focus,table.cfg select:focus{outline:none;border-color:#3f5a78}
@@ -1126,6 +1136,20 @@ def render_config_edit(flash=''):
                 '在那之前这一块只能看不能改。</p></div>')
     user = _user_cfg()
 
+    # ── 先说从哪儿下手（2026-11-02）──
+    #
+    # 二十项一页，人看完的第一反应是「算了」。这不是项太多的问题，是**没有起点**的问题。
+    # 这一块只回答一句：绝大多数人只需要动这四个，其余的想调再点 tab。
+    #
+    # 为什么不把其余的藏起来（真正的渐进披露）：藏起来之后，想调的人会以为没有这一项。
+    # 显示全部 + 给一个起点，比藏一半好。
+    STARTERS = [
+        ('injectMood', '要不要在它开口前把它们的状态告诉它'),
+        ('pingMinMinutes', '每隔多久让它醒一次、看有没有想说的（0＝不叫）'),
+        ('freeTime', '要不要给它一段没人找它的时间'),
+        ('servePage', '开不开这个观测页'),
+    ]
+
     def row_html(f):
         lv = f.get('level') or 'normal'
         cur = user.get(f['key'], f.get('current'))
@@ -1136,8 +1160,13 @@ def render_config_edit(flash=''):
                    _field_input(f, cur), esc(f.get('range') or ''), esc(f.get('why') or '')))
 
     head = '<tr><th>级别</th><th>项</th><th>当前值</th><th>合法范围</th><th>改了会怎样</th></tr>'
+    # 页首那四个不在这边重复出现 —— 同一个 name 提交两次，后端只会认一个，
+    # 「改了没生效」会变成查不出来的怪事。
+    starter_keys = {k for k, _ in STARTERS}
     by_group = {}
     for f in schema['fields']:
+        if f['key'] in starter_keys:
+            continue
         by_group.setdefault(f.get('group') or 'other', []).append(f)
 
     tabs = []
@@ -1154,8 +1183,10 @@ def render_config_edit(flash=''):
         panels.append('<div class="cfgpanel%s" data-g="%s"><table class="cfg">%s%s</table></div>'
                       % (' active' if first else '', gid, head, rows))
         first = False
-    # 没归类的也列出来，不能因为写漏就消失
-    leftover = [f for f in schema['fields'] if (f.get('group') or 'other') not in dict((g, 1) for g, _, _ in GROUP_META)]
+    # 没归类的也列出来，不能因为写漏就消失（页首那四个除外，它们已经显示过了）
+    listed = dict((g, 1) for g, _, _ in GROUP_META)
+    leftover = [f for f in schema['fields']
+                if (f.get('group') or 'other') not in listed and f['key'] not in starter_keys]
     if leftover:
         rows = ''.join(row_html(f) for f in leftover)
         tabs.append('<button type="button" class="cfgtab" data-g="__left" onclick="rhTab(this)">'
@@ -1166,10 +1197,30 @@ def render_config_edit(flash=''):
     esc_hint = esc(schema.get('escape', {}).get('note', ''))
     flash_html = ('<p class="ok">%s</p>' % esc(flash)) if flash else ''
 
+    # ── 先说从哪儿下手（定义在函数开头，这里只用）──
+    by_key = {f['key']: f for f in schema['fields']}
+    srows = []
+    for k, hint in STARTERS:
+        f = by_key.get(k)
+        if not f:
+            continue
+        cur = user.get(k, f.get('current'))
+        srows.append(
+            '<div class="starter"><div class="starter-h"><b>%s</b>'
+            '<span class="starter-hint">%s</span></div>%s</div>'
+            % (esc(f.get('label') or k), esc(hint), _field_input(f, cur)))
+    starter_html = ''
+    if srows:
+        starter_html = (
+            '<div class="starters"><h3>先动这四个就够用</h3>'
+            '<p class="note">其余二十来项都有默认值，能用。想调再点下面的 tab —— 每一项都写着改了会怎样。</p>'
+            + ''.join(srows) + '</div>')
+
     return (
         '<div class="card wide"><h2>配置（改了要重启）</h2>'
         + flash_html
         + '<form method="post" action="config" onsubmit="return rhConfirm(this)">'
+        + starter_html
         + '<div class="cfgtabs">' + ''.join(tabs) + '</div>'
         + '<div class="cfgpanels">' + ''.join(panels) + '</div>'
 
