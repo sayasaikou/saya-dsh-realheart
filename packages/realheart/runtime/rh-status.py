@@ -376,6 +376,8 @@ table.cfg .why{color:#8b929c;font-size:12px;line-height:1.6;max-width:34ch}
    所以给它呼吸，别挤成表格。 */
 .say-list{margin-top:8px}
 .say-list .kv{margin-top:10px}
+.tu-yes{color:#7cc46a;font-size:12px}
+.tu-no{color:#8b929c;font-size:12px}
 .say-txt{margin:2px 0 0 0;padding:8px 12px;border-left:2px solid #2f3944;
 background:#151a21;border-radius:0 8px 8px 0;font-size:13px;line-height:1.7;color:#dfe4ea;
 white-space:pre-wrap;word-break:break-word}
@@ -1258,6 +1260,68 @@ def render_recommend():
             + ''.join(blocks) + '</div>')
 
 
+def render_tool_usage():
+    """她用没用这些工具（2026-11-02）。
+
+    ── 为什么加这块 ──
+    九个工具、十九个注入段，她那台实际只跑出四本账有数据（mood / style / pending / kept），
+    其余全是空的 —— 包括 claim（一次都没用过）。
+    这件事在页面上**完全看不出来**：空账本和“这个功能没写好”长得一模一样。
+
+    ── 这块不评判，只摆数 ──
+    空着不等于坏。可能她还没碰到那个场景，也可能那个工具本来就不该有。
+    但只要它在页面上，人就能问出该问的那句话：
+    “删掉它，她的行为会变差吗？不会 —— 那就是装饰。”
+
+    ── 为什么按账本算而不是按工具调用 ──
+    调用日志不留（那是审计的事），账本行数才是一直在的痕迹。
+    一本账一行没有 = 那个动作从没发生过。
+    """
+    if not RH_STATE:
+        return ''
+    SPEC = [
+        ('mood.jsonl', 'rh_mood', '记心情'),
+        ('style.jsonl', 'rh_style', '记「这种状态下怎么说话」'),
+        ('pending.jsonl', 'rh_pending', '记没完的事'),
+        ('control.jsonl', 'rh_control', '自己按开关（暂停 / 先等一会儿 / 收尾）'),
+        ('claims.jsonl', 'rh_claim', '断言一件会过时的事'),
+        ('works.jsonl', 'rh_work', '记手上在做的东西'),
+        ('views.jsonl', 'rh_view', '记看法'),
+        ('admits.jsonl', 'rh_admit', '认错'),
+        ('say.jsonl', 'say', '主动说出去的话'),
+    ]
+    rows = []
+    used = 0
+    empty = []
+    for fname, tool, what in SPEC:
+        p = os.path.join(RH_STATE, fname)
+        n = 0
+        if os.path.exists(p):
+            try:
+                with open(p, encoding='utf-8') as fh:
+                    n = sum(1 for line in fh if line.strip())
+            except Exception:
+                n = -1
+        if n > 0:
+            used += 1
+        else:
+            empty.append(tool)
+        mark = ('<span class="tu-yes">%d 条</span>' % n) if n > 0 else '<span class="tu-no">没有</span>'
+        rows.append('<tr><td class="mono">%s</td><td>%s</td><td>%s</td><td>%s</td></tr>'
+                    % (esc(tool), esc(what), esc(fname), mark))
+    note = ('<p class="note">九个工具里，有 %d 个留下过东西。'
+            % used)
+    if empty:
+        note += ('空着的是：%s —— <b>空着不等于坏</b>（可能还没碰到那个场景），'
+                 '但也值得问一句：删掉它，她的行为会变差吗？不会就是装饰。'
+                 % esc(' / '.join(empty)))
+    note += '</p>'
+    head = '<tr><th>工具</th><th>干什么</th><th>账本</th><th>有没有东西</th></tr>'
+    return ('<div class="card wide"><h2>她用没用这些</h2>' + note
+            + '<table class="cfg">' + head + ''.join(rows) + '</table>'
+            + '<p class="note">按账本行数算，不按调用记录 —— 调用日志不留，账本才是一直在的痕迹。</p></div>')
+
+
 def render_say():
     """她主动说过的话（2026-11-02）。
 
@@ -1499,6 +1563,7 @@ def build_page(flash=''):
         render_shared(),
         render_memes(),
         render_say(),
+        render_tool_usage(),
         render_recommend(),
         render_config_edit(flash),
         render_machine(),
