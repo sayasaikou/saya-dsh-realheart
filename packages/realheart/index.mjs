@@ -793,7 +793,10 @@ const ROUND_MARK = '[本轮消息]';
 
     // 从最后一笔往前找，跳过被他作废的。
     // 两种键都要看：行号（老记录）和 at（新记录，不受截断影响）。
-    let last = null;
+    // 本场合记的心情：最近几条都摆出来（2026-11-02 沙耶：「极度悲痛的时候可以和人谈笑风生」——
+    // 一条的模型连「同时存在两个情绪」都表示不了）。
+    const MOOD_SHOW_MAX = 5;
+    const mine = [];
     let otherLast = null;
     for (let i = rows.length; i >= 1; i -= 1) {
       const row = rows[i - 1];
@@ -808,14 +811,16 @@ const ROUND_MARK = '[本轮消息]';
         if (!otherLast) otherLast = row;
         continue;
       }
-      last = row;
-      break;
+      if (!String(row?.feeling || '').trim()) continue;
+      mine.push(row);
+      if (mine.length >= MOOD_SHOW_MAX) break;
     }
     // 本场合一条都没有，就退到最近一条别处的 —— **但必须说清是哪儿记的**。
     // 不说清的后果：她会把群里那笔当成这里的感觉，那比分场合更糟。
-    const fromElsewhere = !last && !!otherLast;
-    if (fromElsewhere) last = otherLast;
-    if (!last) return await noMoodText();
+    const fromElsewhere = mine.length === 0 && !!otherLast;
+    if (fromElsewhere) mine.push(otherLast);
+    if (!mine.length) return await noMoodText();
+    const last = mine[0];
 
     // 别处记的、够浓够新的，渗一行过来（完全隔开不像人）
     let bleed = null;
@@ -855,7 +860,50 @@ const ROUND_MARK = '[本轮消息]';
     if (!Number.isNaN(t)) hours = (Date.now() - t) / 3600000;
     const stale = hours !== null && hours > 24;
 
-    const lv = Number.isFinite(level) && level > 0 ? `（浓 ${level}/10）` : '';
+    const lvOf = (n) => {
+      const v = Number(n);
+      return Number.isFinite(v) && v > 0 ? `（浓 ${v}/10）` : '';
+    };
+    const lv = lvOf(level);
+
+    // 多条时：一条一行，各自带来处和「多久前」。**不给总评、不给合成分数。**
+    // 2026-11-02 沙耶：「极度悲痛的时候可以和人谈笑风生」—— 同时存在本来就是常态，
+    // 一条的模型只能说「你现在是什么」，说不了「你同时是什么又是什么」。
+    if (mine.length > 1) {
+      const ago = (at) => {
+        const t = Date.parse(String(at || ''));
+        if (Number.isNaN(t)) return '';
+        const min = (Date.now() - t) / 60000;
+        if (min < 1) return '刚刚';
+        if (min < 60) return `${Math.round(min)} 分钟前`;
+        const h = min / 60;
+        if (h < 24) return `${Math.round(h)} 小时前`;
+        return `${Math.round(h / 24)} 天前`;
+      };
+      const out = ['【你现在有这些情绪】'];
+      if (fromElsewhere) {
+        out.push(`（这些不是在当前场合记的 —— 是「${sessionLabel(last.session)}」里记的。）`);
+      }
+      for (const r of mine) {
+        const f = String(r.feeling || '').trim();
+        if (!f) continue;
+        const bits = [];
+        const when = ago(r.at);
+        if (when) bits.push(when);
+        const w = String(r.why_ref || '').trim();
+        const wk = String(r.why_kind || 'ref');
+        if (w && wk !== 'none') bits.push(`因为「${w}」`);
+        if (wk === 'told') bits.push('（这条来处是你自己说的，没记录可核）');
+        const dc = String(r.decay || '').trim();
+        if (dc) bits.push(`你说它会淡：${dc}`);
+        out.push(`· ${f}${lvOf(r.level)}${bits.length ? ' —— ' + bits.join('，') : ''}`);
+      }
+      out.push('');
+      out.push('这些是同时存在的，不是一个盖过另一个。怎么带进说法里，你自己定。');
+      out.push('变了就调 rh_mood 记一笔；哪条不对了，也记一笔说清楚。');
+      return out.join('\n');
+    }
+
     const lines = ['【你现在的状态】'];
     if (fromElsewhere) {
       lines.push(`（这条不是在当前场合记的 —— 是「${sessionLabel(last.session)}」里记的。这里还没记过。）`);

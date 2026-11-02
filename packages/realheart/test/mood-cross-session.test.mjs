@@ -149,6 +149,24 @@ test('太短的自述还是拒 —— 「不知道」三个字不算来处', asy
   assert.ok(String(r.text).includes('没记'), '这么短的自述不该过：' + r.text);
 });
 
+// ── 行为：多条并存，不是只留最后一条 ──
+
+test('同一个场合记了两条不同的情绪 → 两条都在注入里', async () => {
+  const h = makeCtx();
+  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  await settle();
+
+  const exec = { agent: { session: { id: PRIVATE } } };
+  await h.tools.get('rh_mood').execute({ feeling: '有点怕', level: 5, why_ref: 'none:unexplained' }, exec);
+  await h.tools.get('rh_mood').execute({ feeling: '还想笑', level: 4, why_ref: 'none:unexplained' }, exec);
+
+  const text = await inject(h, PRIVATE);
+  assert.ok(text.includes('有点怕'), '前一条掉了：' + text);
+  assert.ok(text.includes('还想笑'), '后一条掉了：' + text);
+  assert.ok(text.includes('【你现在有这些情绪】'), '没走多条那个分支：' + text);
+  assert.ok(text.includes('同时存在'), '没说「同时存在」—— 那就又成一条盖一条了：' + text);
+});
+
 test('收尾：清掉临时目录', async () => {
   await rm(FAKE_HOME, { recursive: true, force: true });
   await rm(DSH, { recursive: true, force: true });
