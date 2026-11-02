@@ -211,12 +211,14 @@ test('③预算压到 1 字、段全被裁光（心情除外），那一轮仍�
     await fillRealistic(h);
     const out = await assembleOnce(h);
 
-    // 1 字连一段都装不下，所以除心情以外一段都不该剩。
-    // 心情那块这里**故意不判死**：④ 要求「心情永不裁」，这两条撞在一起时（1 字 < 心情）
-    // 心情留着是对的 —— 修完 ④ 之后这一条也不该跟着挂。这里只钉住「别的段都走了」。
+    // 1 字连一段都装不下。
+    // ⚠️ 2026-11-02 改：保底从「只保心情」扩到「她自己那三样」（mood / pending / pending-change），
+    // 所以这里不能再要求「除心情以外一段不剩」—— 待办段现在也有保底，它留下来是对的。
+    // 真正要钉的还是原来那两件：保底的那几段一定在；以及「全裁光」那一轮也必须留痕。
     const left = sectionNames(out).filter((n) => String(n).startsWith('realheart:'));
-    const others = left.filter((n) => n !== 'realheart:mood');
-    assert.deepEqual(others, [], `预算 1 字居然还剩了段：${others.join(' / ')}`);
+    const FLOORED = ['realheart:mood', 'realheart:pending', 'realheart:pending-change'];
+    const others = left.filter((n) => !FLOORED.includes(n));
+    assert.deepEqual(others, [], `预算 1 字居然还剩了不保底的段：${others.join(' / ')}`);
 
     // 关键：这一轮最该被看见，所以不能是静默的
     const problems = await readProblems(h.stateDir);

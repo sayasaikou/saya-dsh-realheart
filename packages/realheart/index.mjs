@@ -1855,7 +1855,13 @@ const ROUND_MARK = '[本轮消息]';
             // 之前 PRIORITY 里 mood=100 只保证它「最后被丢」，不保证「不丢」——
             // 一条写得长的心情就能把预算孬光，结果整轮注入变空。
             // 而 FIELD_META 与 CHANGELOG 两边都写着「心情永不裁」，代码没兑现。
-            if (p.name === 'realheart:mood') continue;
+            //
+            // 2026-11-02 扩到三样：心情 / 没完的事 / 待改注入。
+            // 理由：这三段是「她是谁」的一部分，省钱的代价不该由它们付。
+            // 其余（处境 / 时间感 / 观测页状态）可以丢：少了少一句背景，不影响她这个人。
+            if (p.name === 'realheart:mood'
+              || p.name === 'realheart:pending'
+              || p.name === 'realheart:pending-change') continue;
             parts.splice(parts.indexOf(p), 1);
             total -= p.text.length;
             dropped.push(p.name.replace('realheart:', ''));
