@@ -1733,7 +1733,7 @@ const ROUND_MARK = '[本轮消息]';
           const h = now.getHours();
           const slot = h < 5 ? '深夜' : h < 8 ? '清早' : h < 11 ? '上午' : h < 13 ? '中午'
             : h < 17 ? '下午' : h < 19 ? '傍晚' : h < 23 ? '晚上' : '深夜';
-          parts.push(sec('realheart:clock', 895,
+          parts.push(sec('realheart:clock', 890,
             `现在是 ${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())} ${p2(h)}:${p2(now.getMinutes())}（${wd}），${slot}。`));
         }
         const mood = await moodSectionText({ sessionId: sessionIdOfAssembleContext(_context) });
@@ -1798,8 +1798,10 @@ const ROUND_MARK = '[本轮消息]';
         } catch (err) {
           await noteInjectProblem('where', err);
         }
+        // 顺序（2026-11-02 沙耶）：先「怎么说」（style），再「因为什么」（mood）。
+        // 以前是反的 —— 状态先出现，风格变成补充，读起来像“顺便提一句”。
         const style = await styleSectionText();
-        if (style) parts.push(sec('realheart:style', 905, style));
+        if (style) parts.push(sec('realheart:style', 895, style));
         const pending = await pendingChangeText();
         if (pending) parts.push(sec('realheart:pending-change', 901, pending));
         try {
@@ -2782,12 +2784,31 @@ const ROUND_MARK = '[本轮消息]';
           } catch { /* 标不上不影响这一笔心情 */ }
         }
 
+        // 写完心情顺手问一句表现层（2026-11-02）。
+        //
+        // 为什么问：五组离线实验证明，只给状态不给说法，她要么照念、要么不动。
+        // 心情是「我是什么」，style 是「这样的我怎么说话」—— 后者才是能改输出的那一层。
+        // 为什么不是每次都问：每次都问等于噪音，噪音会被忽略。
+        // 所以只在「空了 / 过了一天」时问一次 —— 这个位置比注入更近，她刚记完，正在想自己。
+        let styleHint = '';
+        try {
+          const styles = await readStyle();
+          const lastStyle = styles[styles.length - 1];
+          const how = String(lastStyle?.how || '').trim();
+          const sAt = Date.parse(String(lastStyle?.at || ''));
+          const stale = Number.isNaN(sAt) || (Date.now() - sAt) > 24 * 3600 * 1000;
+          if (!how || stale) {
+            styleHint = '\n\n（顺带：这种状态下的你，说话会跟平时不一样吗？'
+              + '不一样就调 rh_style 写一句 —— 心情是「你现在是什么」，它管的是「这样的你怎么说话」。不写也行。）';
+          }
+        } catch { /* 读不到 style 就不问 */ }
+
         return {
           text: (whyKind === 'none'
             ? `记下了：${feeling}（${level}/10）。来处记作「说不清」（${whyEnum}），不算成因。`
             : whyKind === 'told'
               ? `记下了：${feeling}（${level}/10）。来处是你自己写的：「${told}」（对不上一条记录，账上标着是你说的）。`
-              : `记下了：${feeling}（${level}/10），因为 ${hit}。`) + (fadedNote ? '\n' + fadedNote : ''),
+              : `记下了：${feeling}（${level}/10），因为 ${hit}。`) + (fadedNote ? '\n' + fadedNote : '') + styleHint,
         };
       },
     });
