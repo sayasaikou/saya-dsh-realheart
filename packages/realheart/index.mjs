@@ -2087,12 +2087,32 @@ const ROUND_MARK = '[本轮消息]';
     }
 
     if (!alive) {
+      // 2026-11-02 修：动手之前先把自己上次起的那个收掉。
+      //
+      // 以前没有这一步，于是：插件重启 → 旧观测页还活着、还占着 8098 →
+      // portBusy 看到占用，报「被别的程序占用，换个端口」—— 它把**自己上次起的那个**当成了别人。
+      // 后果不是报错，是**静默地跑旧代码**：
+      //   · 页面还能打开（200），但里面全是上一版的东西
+      //   · rh-status.pid 指着另一个早就没了的进程（实测 1301201 vs 实际 1482015）
+      //   · 人照着 pid 文件 kill，杀不掉任何东西，只会以为「改了没生效」
+      // 这条坑花了一整轮才认出来，所以宁可写长一点。
+      if (process.platform !== 'win32') {
+        try {
+          // 用全路径匹配，不用裸名字 —— 裸名 "rh-status.py" 有可能撞上别人同名的脚本
+          await execFileAsync('pkill', ['-f', 'realheart/runtime/rh-status.py']);
+          await sleep(800);   // 等它真的退出，不然端口还在
+        } catch {
+          /* pkill 没匹配到会返回 1：这就是「上次没有在跑的」，正常 */
+        }
+      }
+
       // 端口上已经有别的东西在听 —— 那是冲突，不是“我们的服务没起”
       if (await portBusy(cfg.pagePort)) {
         return `端口 ${cfg.pagePort} 已被别的程序占用（不是 realheart），换个端口：改配置里的 pagePort`;
       }
       // stderr 落到文件 —— 用 ignore 的话，页面起不来就完全没有任何线索
       const errLog = join(DSH_HOME, 'realheart', 'rh-status.err.log');
+      const pidPath = join(DSH_HOME, 'realheart', 'rh-status.pid');
       let fh;
       try {
         fh = await open(errLog, 'a');
@@ -2110,7 +2130,6 @@ const ROUND_MARK = '[本轮消息]';
         return `起观测页失败：${r.error?.message ?? r.error}`;
       }
       r.child.unref();
-      await writeFile(join(DSH_HOME, 'realheart', 'rh-status.pid'), String(r.child.pid), 'utf8');
 
       // 起来了不等于在听 —— 进程可能刚创建就崩（缺依赖、端口又被抢、config 不对）。
       // 她指出过这个取舍：不等它回话就报地址，“起来了但立刻崩”看不见。
@@ -2129,9 +2148,14 @@ const ROUND_MARK = '[本轮消息]';
           /* 还没起来，继续等 */
         }
       }
+      // pid 文件只在**确认活着**之后才写（2026-11-02）。
+      // 以前是无条件写，于是崩掉的那次也会留下一个 pid —— 指向早就没的进程。
+      // 人照着它 kill，什么也杀不掉，只会以为「重启了但没生效」。
       if (!healthy) {
+        try { await unlink(pidPath); } catch { /* 没有也无所谓 */ }
         return `观测页进程起来了（PID ${r.child.pid}），但 5 秒内没响应 —— 看 ${errLog} 末尾`;
       }
+      await writeFile(pidPath, String(r.child.pid), 'utf8');
     }
 
     return `http://127.0.0.1:${cfg.pagePort}/${secret}/`;
