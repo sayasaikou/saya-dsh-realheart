@@ -167,6 +167,21 @@ test('同一个场合记了两条不同的情绪 → 两条都在注入里', asy
   assert.ok(text.includes('同时存在'), '没说「同时存在」—— 那就又成一条盖一条了：' + text);
 });
 
+test('别处记的会摆出来，但标明是别处的、带不带由她自己定', async () => {
+  const h = makeCtx();
+  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  await settle();
+
+  await h.tools.get('rh_mood').execute({ feeling: '还算稳', level: 5, why_ref: 'none:unexplained' }, { agent: { session: { id: PRIVATE } } });
+  // 低浓度也放行 —— 判断由她做，不由阈值替她挡（2026-11-02 沙耶）
+  await h.tools.get('rh_mood').execute({ feeling: '有点堵', level: 3, why_ref: 'none:unexplained' }, { agent: { session: { id: GROUP } } });
+
+  const text = await inject(h, PRIVATE);
+  assert.ok(text.includes('还算稳'), '本场合那条没了：' + text);
+  assert.ok(text.includes('有点堵'), '别处那条没摆出来：' + text);
+  assert.ok(text.includes('带不带过来') || text.includes('不是这里的事'), '没说明那是别处的：' + text);
+});
+
 test('收尾：清掉临时目录', async () => {
   await rm(FAKE_HOME, { recursive: true, force: true });
   await rm(DSH, { recursive: true, force: true });

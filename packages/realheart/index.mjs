@@ -797,6 +797,9 @@ const ROUND_MARK = '[本轮消息]';
     // 一条的模型连「同时存在两个情绪」都表示不了）。
     const MOOD_SHOW_MAX = 5;
     const mine = [];
+    // 别处的（最多 2 条）—— 2026-11-02 沙耶：情绪可以传染到不同场合，
+    // 但会有削弱和取舍。所以不替她筛掉，也不替她带过来：摆出来、标明，她自己定。
+    const others = [];
     let otherLast = null;
     for (let i = rows.length; i >= 1; i -= 1) {
       const row = rows[i - 1];
@@ -809,6 +812,7 @@ const ROUND_MARK = '[本轮消息]';
         // 同一次注入里第 2 行写「心情：无记录」、第 16 行写「记了 1 条，最后一条是今天」，自相矛盾。
         // 现在先留下来兜底，用不用由下面决定。
         if (!otherLast) otherLast = row;
+        if (others.length < 2 && String(row?.feeling || '').trim()) others.push(row);
         continue;
       }
       if (!String(row?.feeling || '').trim()) continue;
@@ -869,6 +873,10 @@ const ROUND_MARK = '[本轮消息]';
     // 多条时：一条一行，各自带来处和「多久前」。**不给总评、不给合成分数。**
     // 2026-11-02 沙耶：「极度悲痛的时候可以和人谈笑风生」—— 同时存在本来就是常态，
     // 一条的模型只能说「你现在是什么」，说不了「你同时是什么又是什么」。
+    //
+    // 衰减（2026-11-02 沙耶二次定）：「自动衰减可以做，但判断由她自己做」。
+    // 所以这里做的是**呈现层的衰减**：过了一天的那几条不再占正文，收成一行点名 ——
+    // 值不改、她的描述一字不改。淡不淡由她再写一条说（写了就重新回到正文）。
     if (mine.length > 1) {
       const ago = (at) => {
         const t = Date.parse(String(at || ''));
@@ -880,23 +888,49 @@ const ROUND_MARK = '[本轮消息]';
         if (h < 24) return `${Math.round(h)} 小时前`;
         return `${Math.round(h / 24)} 天前`;
       };
+      const lineOf = (r, withWhy = true) => {
+        const f = String(r.feeling || '').trim();
+        const bits = [];
+        const when = ago(r.at);
+        if (when) bits.push(when);
+        if (withWhy) {
+          const w = String(r.why_ref || '').trim();
+          const wk = String(r.why_kind || 'ref');
+          if (w && wk !== 'none') bits.push(`因为「${w}」`);
+          if (wk === 'told') bits.push('（来处是你自己说的，没记录可核）');
+          const dc = String(r.decay || '').trim();
+          if (dc) bits.push(`你说它会淡：${dc}`);
+        }
+        return `· ${f}${lvOf(r.level)}${bits.length ? ' —— ' + bits.join('，') : ''}`;
+      };
+      const dayMs = 24 * 3600 * 1000;
+      const stamp = (r) => {
+        const t = Date.parse(String(r.at || ''));
+        return Number.isNaN(t) ? 0 : t;
+      };
+      const fresh = mine.filter((r) => Date.now() - stamp(r) <= dayMs);
+      const older = mine.filter((r) => Date.now() - stamp(r) > dayMs);
+      // 全过了一天就至少留最近两条在正文，不然连「现在」都看不见了
+      const keepFresh = fresh.length ? fresh : mine.slice(0, 2);
+      const tucked = older.filter((r) => !keepFresh.includes(r));
+
       const out = ['【你现在有这些情绪】'];
       if (fromElsewhere) {
         out.push(`（这些不是在当前场合记的 —— 是「${sessionLabel(last.session)}」里记的。）`);
       }
-      for (const r of mine) {
-        const f = String(r.feeling || '').trim();
-        if (!f) continue;
-        const bits = [];
-        const when = ago(r.at);
-        if (when) bits.push(when);
-        const w = String(r.why_ref || '').trim();
-        const wk = String(r.why_kind || 'ref');
-        if (w && wk !== 'none') bits.push(`因为「${w}」`);
-        if (wk === 'told') bits.push('（这条来处是你自己说的，没记录可核）');
-        const dc = String(r.decay || '').trim();
-        if (dc) bits.push(`你说它会淡：${dc}`);
-        out.push(`· ${f}${lvOf(r.level)}${bits.length ? ' —— ' + bits.join('，') : ''}`);
+      for (const r of keepFresh) out.push(lineOf(r));
+      if (tucked.length) {
+        out.push(`（另外还有 ${tucked.length} 条是一天前记的：`
+          + `${tucked.map((r) => String(r.feeling || '').trim()).join('、')}。`
+          + '已经不占正文了 —— 还在不在，你自己说。）');
+      }
+      // 别处的情绪：可以传染，但会削弱、需要取舍（2026-11-02 沙耶）。
+      // 所以：**不替她筛、不替她扔**，摆出来、标明是别处的、让她自己决定带不带。
+      if (!fromElsewhere && others.length) {
+        out.push('');
+        out.push(`另外，你在「${sessionLabel(others[0].session)}」也记着这些 —— 不是这里的事，`
+          + '带不带过来、带多少，你自己定：');
+        for (const r of others) out.push(lineOf(r, false));
       }
       out.push('');
       out.push('这些是同时存在的，不是一个盖过另一个。怎么带进说法里，你自己定。');
