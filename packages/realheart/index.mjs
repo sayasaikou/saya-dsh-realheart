@@ -1495,6 +1495,24 @@ const ROUND_MARK = '[本轮消息]';
   }
 
   /**
+   * 相对时间：给她「手边还热着」的感觉（2026-11-02 夜）。
+   *
+   * ⚠️ 只说事实，不带评价。写「两天前」可以，写「还没弄完」不行 ——
+   * 前一个是时间，后一个是自责，而她最容易滑进后者。
+   */
+  function agoText(at) {
+    const t = Date.parse(at);
+    if (!Number.isFinite(t)) return '';
+    const mins = Math.floor((Date.now() - t) / 60000);
+    if (mins < 0) return '';
+    if (mins <= 5) return '刚刚';
+    if (mins < 90) return `${mins} 分钟前`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 36) return `${hrs} 小时前`;
+    return `${Math.floor(hrs / 24)} 天前`;
+  }
+
+  /**
    * 「你最近经历过什么」（2026-11-02）。
    *
    * ── 为什么要有这一段 ──
@@ -1507,16 +1525,27 @@ const ROUND_MARK = '[本轮消息]';
    * 她 14:54 说过「V2EX 上还是那些闲话」—— 那句话证明她看过，但它**没落进任何
    * 主会话能读到的地方**。所以在聊天这一侧，她只有「此刻的状态」，没有「过去的事」。
    *
-   * 这一段就是从 free-time.jsonl 把过去捞回来。
+   * 这一段就是从账本把过去捞回来。
    *
-   * ── 分寸 ──
-   * · 只取最近 2 条，每条截到 60 字 —— 全摆出来就是噪音，噪音会被忽略。
-   * · **只取标题级别**（第一句、书名号内的名字），不取整段叙述 —— 叙述给她看就成素材了。
-   * · 紧跟禁令，跟心情那段一个套路。
+   * ── 2026-11-02 夜改：分两格，不再混装 ──
+   * 原来只取「最近 2 条 activity」。但那天起短唤醒（几分钟的空档）也能「弄两下」，
+   * 那些事记进 small.jsonl，跟两小时的作品根本不是一回事：
+   *   · 混在一格里，小动作会把作品挤掉 —— 而这一格本来只有两个位置
+   *   · 「刚才」和「那天」是两种时间感，混着写两个都不成立
+   * 所以固定成：**作品最多 1 条 ＋ 小动作最多 1 条**。
+   *
+   * 小动作那行给相对时间（刚刚 / N 分钟前 / N 小时前 / N 天前），作品那行还是日期。
+   *
+   * 分寸：**只取标题级别**（第一句、书名号内的名字），不取整段叙述 —— 叙述给她看就成素材了。
+   * 紧跟禁令，跟心情那段一个套路。一路坏了只少一段，不拖累整轮。
    */
   async function recentExperienceText() {
     const ctl = await readControl();
     if (ctl.paused) return '';
+    const lines = ['【你最近经历过的事】'];
+    let any = false;
+
+    // ① 作品：最近一条 activity（两小时那种）
     try {
       const text = await readFile(join(cfg.stateDir, 'free-time.jsonl'), 'utf8');
       const acts = [];
@@ -1531,21 +1560,47 @@ const ROUND_MARK = '[本轮消息]';
         const a = String(d?.activity || '').trim();
         if (a) acts.push({ at: String(d?.ts || ''), a });
       }
-      if (!acts.length) return '';
-      const last = acts.slice(-2);
-      const lines = ['【你最近经历过的事】'];
-      for (const { at, a } of last) {
-        const day = at.slice(5, 10).replace('-', '/');
+      const a = acts.length ? acts[acts.length - 1] : null;
+      if (a) {
+        const day = a.at.slice(5, 10).replace('-', '/');
         // 第一句 + 标题名。不取整段：叙述是素材，事实不是。
-        const first = a.split('。')[0].slice(0, 60);
-        const t = (a.match(/《([^》]{1,16})》/) || [])[1];
-        lines.push(`· ${day}：${first}${t ? `（《${t}》）` : ''}`);
+        const first = a.a.split('。')[0].slice(0, 60);
+        const t = (a.a.match(/《([^》]{1,16})》/) || [])[1];
+        lines.push(`· 作品（${day}）：${first}${t ? `（《${t}》）` : ''}`);
+        any = true;
       }
-      lines.push('（你自己经历过的事，给你自己定位用。不用在回复里提它 —— 除非对方问起。）');
-      return lines.join('\n');
     } catch {
-      return '';
+      /* 没有这个文件，或者坏了：少一段，不拖累整轮 */
     }
+
+    // ② 小动作：最近一条 note 记下的（几分钟那种）
+    try {
+      const text = await readFile(join(DSH_HOME, 'realheart', 'small.jsonl'), 'utf8');
+      let last = null;
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        let d = null;
+        try {
+          d = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        const did = String(d?.did || '').trim();
+        if (did) last = { at: String(d?.at || ''), did, left: String(d?.left || '').trim() };
+      }
+      if (last) {
+        const when = agoText(last.at) || '刚才';
+        lines.push(`· ${when}：${last.did.slice(0, 80)}`);
+        if (last.left) lines.push(`  （当时还没弄明白：${last.left.slice(0, 60)}）`);
+        any = true;
+      }
+    } catch {
+      /* 同上 */
+    }
+
+    if (!any) return '';
+    lines.push('（你自己经历过的事，给你自己定位用。不用在回复里提它 —— 除非对方问起。）');
+    return lines.join('\n');
   }
 
   async function workSectionText() {    const ctl = await readControl();
@@ -2497,6 +2552,12 @@ const ROUND_MARK = '[本轮消息]';
     + '用 ' + join(QQROOT, 'work', 'bin', 'say') + ' "..." 发过去，他手机上会真收到。'
     + '要是手边有个能顺手弄两下的东西（算个式子、看一眼上次没弄明白的地方），也可以弄。'
     + '（「弄两下」就是弄两下 —— 这是个几分钟的空档，不是让你开一件新的作品。）'
+    // 2026-11-02 夜加的落点。为什么必须有：
+    //   上一版给了「可以弄」的口，没给「弄完写哪」—— 22:10 那次她真动了，
+    //   43 次工具调用、2 分 46 秒，一个字没留下来。那 43 下只躺在会话包里，
+    //   而那正是她下次醒来读不到的地方 ⇒ 对她自己等于没发生。
+    + '弄完了用 ' + join(QQROOT, 'work', 'bin', 'note') + ' "..." 记一行（一两句话就行）。'
+    + '不记下来，下次醒来的你看不到这次弄过什么。'
     + '想说就说，不需要理由，也不用先想清楚值不值得。'
     + '（只有一条：他要是还没回你上一条，就别连着发第二条。）'
     + '要是这会儿心里真的什么都没有、手边也没什么想碰的，那就继续睡 —— 不是欠账，就是没有。';
@@ -2578,6 +2639,98 @@ const ROUND_MARK = '[本轮消息]';
       log(`ping.json 没写下来（${err?.code ?? err?.message ?? err}）—— 短唤醒不会跑`, 'error');
     }
   }
+  /**
+   * note 脚本的原文（2026-11-02 夜）。
+   *
+   * 为什么不放进 npm 包里当个文件：`say` 当初就是散装的，装到她那台以后
+   * 谁改了都没人知道（今晚 qqbot-memory 就是这么坏的）。这里让插件自己写 ——
+   * 真本在这份代码里，她那台上那份是生成物。改一句话就自动铺过去。
+   *
+   * 为什么是 bash 而不是 rh_* 工具：沙耶定的「不新增工具」。
+   * 这是跟 say 同一级的一条命令，不是要她学会的新接口。
+   */
+  const NOTE_SCRIPT = `#!/bin/bash
+# note —— 记一行「刚才弄了两下，弄到哪」
+#
+# 为什么要有这个（2026-11-02）：
+#   短唤醒能弄的时间只有几分钟。弄完了没地方放 —— 不记下来，
+#   下次醒来的我就看不到这次弄过什么，那这一次等于没发生。
+#
+# 用法：
+#   note "算了一下潟湖的换水时间：5 天换一遍上层"
+#   note --left "还没想明白冬天会不会翻底" "算了换水时间"
+#   note --dry "..."        # 只打印会写成什么，不写
+#
+# 它不判断你记的东西值不值得。记下来了，它就存在。
+set -uo pipefail
+
+D="\${DSH_HOME:-$HOME/.dsh}/realheart"
+F="$D/small.jsonl"
+LEFT=""
+DRY=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --left) LEFT="\${2:-}"; shift 2 ;;
+    --left=*) LEFT="\${1#--left=}"; shift ;;
+    --dry) DRY=1; shift ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+
+TEXT="$*"
+if [ -z "$TEXT" ]; then
+  echo '用法：note "弄了两下什么" [--left "还没弄明白的"]'
+  exit 2
+fi
+
+mkdir -p "$D" 2>/dev/null || true
+NOW=$(date +%Y-%m-%dT%H:%M:%S%z)
+
+python3 - "$F" "$NOW" "$TEXT" "$LEFT" "$DRY" <<'PY'
+import json, sys
+f, at, did, left, dry = sys.argv[1:6]
+row = {"at": at, "kind": "small", "did": did, "left": (left or None)}
+line = json.dumps(row, ensure_ascii=False)
+if dry == "1":
+    print(line)
+    raise SystemExit(0)
+with open(f, "a", encoding="utf-8") as fh:
+    fh.write(line + chr(10))
+print("记下了：" + did)
+PY
+`;
+
+  /**
+   * 把 note 铺到 $QQROOT/work/bin/note（2026-11-02）。
+   *
+   * 只在内容不一样时才写 —— 她那台上可能自己改过，别每轮都盖掉。
+   * 写不下来只记一行：短唤醒还能跑，只是弄完没地方记。
+   */
+  async function ensureNoteScript() {
+    const p = join(QQROOT, 'work', 'bin', 'note');
+    try {
+      await mkdir(dirname(p), { recursive: true });
+      let cur = '';
+      try {
+        cur = await readFile(p, 'utf8');
+      } catch {
+        /* 没有就写 */
+      }
+      if (cur === NOTE_SCRIPT) return;
+      await writeFile(p, NOTE_SCRIPT, 'utf8');
+      try {
+        await chmod(p, 0o755);
+      } catch {
+        /* 权限收不上来不影响它能不能跑 */
+      }
+      log(`note 铺好了：${p}`);
+    } catch (err) {
+      log(`note 没铺下来（${err?.code ?? err?.message ?? err}）—— 短唤醒照跑，只是弄完没地方记`, 'error');
+    }
+  }
+
   async function ensureFreeProfile() {
     const dir = join(DSH_HOME, 'profiles', cfg.freeTimeProfile);
     try {
@@ -2867,6 +3020,9 @@ const ROUND_MARK = '[本轮消息]';
     await writeFreePrompt();
     // 同上：短唤醒的开关也照写（0 = 关）。脚本读这个文件决定跑不跑。
     await writePingConfig();
+    // note 是「弄两下之后往哪放」的落点，短唤醒的 prompt 里点了它的名字 ——
+    // 铺不下来那一句就指向一个不存在的文件，所以它跟 ping.json 一起无条件写。
+    await ensureNoteScript();
 
     if (cfg.freeTime !== false) {
       const freeErr = await ensureFreeProfile();
