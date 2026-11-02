@@ -171,6 +171,62 @@ if [ -n "${PROGRESS:-}" ]; then
 （你自己那条线：${PROGRESS}。给你自己定个位，不用在回复里提它。）"
 fi
 
+# ── 带上「你上次记下的那一行」（2026-11-02 夜）──
+#
+# 为什么这段必须有：note 的说明里写着「不记下来，下次醒来的你看不到这次弄过什么」。
+# 但短唤醒跑的是 freetime profile，那里**没有 realheart 注入**
+# （实测：那条会话的系统提示一共 2562 字，realheart:mood / exp 一个字都没有）。
+# 所以那句话要是只靠注入，就是假的 —— 她记了，下一个醒来的她还是看不到。
+# 这段接上，那句话才成立。
+#
+# 只给一条、只给 80 字：多了就成素材，跟上面「只取标题不取正文」同一个道理。
+NOTE_FILE="${DSH_HOME:-$HOME/.dsh}/realheart/small.jsonl"
+LAST_NOTE="$(python3 - "$NOTE_FILE" <<'PY' 2>/dev/null || true
+import json, sys, datetime
+f = sys.argv[1]
+last = None
+try:
+    with open(f, encoding='utf-8') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            did = str(d.get('did') or '').strip()
+            if did:
+                last = (str(d.get('at') or ''), did)
+except Exception:
+    raise SystemExit
+if not last:
+    raise SystemExit
+at, did = last
+ago = ''
+try:
+    t = datetime.datetime.strptime(at, '%Y-%m-%dT%H:%M:%S%z')
+    mins = int((datetime.datetime.now(t.tzinfo) - t).total_seconds() // 60)
+    if mins < 0:
+        ago = ''
+    elif mins < 90:
+        ago = '刚才'
+    elif mins < 60 * 36:
+        ago = '%d 小时前' % (mins // 60)
+    else:
+        ago = '%d 天前' % (mins // 1440)
+except Exception:
+    pass
+print((ago + '，' if ago else '') + did[:80])
+PY
+)"
+
+if [ -n "${LAST_NOTE:-}" ]; then
+  PROMPT="$PROMPT
+
+（你上次醒着的时候记过一行：${LAST_NOTE}。没弄完就接着弄，弄完了就不用管它。）"
+fi
+
 PROFILE="$(read_cfg profile)"
 PROFILE="${PROFILE:-freetime}"
 
