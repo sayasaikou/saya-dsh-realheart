@@ -40,6 +40,12 @@ export const DEFAULTS = {
   indexTtlMs: 3600000,
   // 每轮开口前把当前心情注入提示词
   injectMood: true,
+  // 每轮注入里带上“现在几点”。默认关（2026-11-02 沙耶：新机上默认不开）。
+  //
+  // 为什么要这个：心情里写着“这条是 26 小时前记的”，但她不知道“现在”是哪一刻 ——
+  // 于是分不出“中午该不该说这个”和“深夜该不该开口”。人也一样：不看表就不知道分寸。
+  // 为什么默认关：多一段字就多一份钱，而且它跟人格也可能打架（人格里自己写了作息就不必再塞一遍）。
+  injectNow: false,
   // 注入的总字数上限。超了就从优先级低的那段开始裁，裁掉的会留痕（M1-6）。
   // 2026-11-01：从 1200 提到 1600。今天新增了 where / admit / view / recall / hold / 处境
   // 六段（空的时候不注入，一有内容就占位），实测当前 859 字符，再长就会把低优先级段裁掉。
@@ -81,6 +87,7 @@ export const Config = Schema.object({
   ownerId: Schema.string().default(DEFAULTS.ownerId),
   indexTtlMs: Schema.number().min(RANGES.indexTtlMs.min).max(RANGES.indexTtlMs.max).default(DEFAULTS.indexTtlMs),
   injectMood: Schema.boolean().default(DEFAULTS.injectMood),
+  injectNow: Schema.boolean().default(DEFAULTS.injectNow),
   injectBudgetChars: Schema.number().min(200).max(20000).default(DEFAULTS.injectBudgetChars),
   moodTailLines: Schema.number().min(0).max(100000).default(DEFAULTS.moodTailLines),
   servePage: Schema.boolean().default(DEFAULTS.servePage),
@@ -127,7 +134,7 @@ export function validateConfig(cfg = {}) {
   // ── 布尔项 ──
   // 不查这个的话，`"injectMood": "yes"` 会被一路带到运行里 —— 而 `"yes"` 是真值，
   // 看起来在工作，其实是「以为关了其实没关」。这种错查起来最费时间。
-  for (const key of ['enabled', 'injectMood', 'servePage', 'announceOnInstall', 'freeTime', 'allowManualMoodOverride']) {
+  for (const key of ['enabled', 'injectMood', 'injectNow', 'servePage', 'announceOnInstall', 'freeTime', 'allowManualMoodOverride']) {
     if (typeof c[key] !== 'boolean') {
       out.push({
         key, value: c[key],
@@ -224,6 +231,13 @@ export const FIELD_META = [
     key: 'injectMood', group: 'switch', label: '每轮注入状态', level: 'danger',
     range: 'true / false',
     why: '关掉之后她看不到自己的心情和没完的事 —— 她还是能记账，但不会再被影响。行为会明显不同。',
+  },
+  {
+    key: 'injectNow', group: 'inject', label: '注入里带上「现在几点」', level: 'caution',
+    range: 'true / false（默认 false）',
+    why: '开了之后每轮多一段：「现在是 2026-11-02 13:19（周一），下午」。'
+      + '作用：她能看到自己带的心情是几小时前的，也能分得出「中午该不该说这个」和「深夜该不该开口」。'
+      + '代价：每轮多几十字，而且如果人格里已经写了作息，可能跟它打架。新机上默认不开。',
   },
   {
     key: 'root', group: 'ledger', label: '她的根目录', level: 'danger',

@@ -182,6 +182,26 @@ test('别处记的会摆出来，但标明是别处的、带不带由她自己�
   assert.ok(text.includes('带不带过来') || text.includes('不是这里的事'), '没说明那是别处的：' + text);
 });
 
+test('injectNow 开了才有钟，关着一个字不塞', async () => {
+  const off = makeCtx();
+  apply(off.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  await settle();
+  const inj0 = off.handlers.find((x) => x.name === 'system-prompt/assemble');
+  const a0 = { sections: [] };
+  const o0 = await inj0.fn(a0, { agent: { session: { id: PRIVATE } } }, async () => a0);
+  assert.ok(!(o0.sections ?? []).some((s) => s.name === 'realheart:clock'), 'injectNow 默认关，但钟出现了');
+
+  const on = makeCtx();
+  apply(on.ctx, { servePage: false, freeTime: false, announceOnInstall: false, injectNow: true });
+  await settle();
+  const inj1 = on.handlers.find((x) => x.name === 'system-prompt:assemble') ?? on.handlers.find((x) => x.name === 'system-prompt/assemble');
+  const a1 = { sections: [] };
+  const o1 = await inj1.fn(a1, { agent: { session: { id: PRIVATE } } }, async () => a1);
+  const clock = (o1.sections ?? []).find((s) => s.name === 'realheart:clock');
+  assert.ok(clock, 'injectNow 开了，钟没出现：' + (o1.sections ?? []).map((s) => s.name).join(' / '));
+  assert.match(String(clock.text), /现在是 \d{4}-\d{2}-\d{2} \d{2}:\d{2}（周.）/, '钟的格式不对：' + clock.text);
+});
+
 test('收尾：清掉临时目录', async () => {
   await rm(FAKE_HOME, { recursive: true, force: true });
   await rm(DSH, { recursive: true, force: true });
