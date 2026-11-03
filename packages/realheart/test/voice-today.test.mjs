@@ -161,3 +161,24 @@ test('today：sayLogPath 指到别处也能读到', async () => {
   assert.ok(text.includes('主动说过 1 句'), 'sayLogPath 没生效：' + text.slice(0, 400));
   await rm(root, { recursive: true, force: true });
 });
+
+// 2026-11-03 22:00：她 21:29 自己报的那条 —— 「我这边只接到一行摘要」。
+// activity 的结构是「看了什么。做了什么」，作品在后面；截前面只会把逛网列表截进来。
+test('today：activity 前面是「看了」时，作品那段不能被截掉', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rh-vt-t4-'));
+  const stateDir = join(root, 'state');
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(join(stateDir, 'free-time.jsonl'), JSON.stringify({
+    ts: todayAt(21, 20),
+    activity: '看了：V2EX 热榜（中转站推广、媳妇把孩子户口落回农村、被 AI 狠狠骂）、B 站热榜（下山舞、芬兰集市）、HN（US boy names）。做了《过线》：美国名字从一种性别走到另一种。',
+    artifacts: ['/home/ubuntu/qqbot/work/pieces/crossing-2026-11-03/plate.png'],
+    told_saya: true,
+  }) + '\n', 'utf8');
+  const h = makeCtx();
+  apply(h.ctx, { stateDir, msgsDir: join(root, 'msgs'), servePage: false, freeTime: false, announceOnInstall: false, ownerId: '' });
+  await settle();
+  const text = await injectedText(h);
+  assert.ok(text.includes('《过线》'), '「做了」之后那段被截掉了：' + text.slice(0, 500));
+  assert.ok(text.includes('crossing-2026-11-03'), '作品目录没带上');
+  await rm(root, { recursive: true, force: true });
+});

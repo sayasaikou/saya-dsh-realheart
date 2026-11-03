@@ -1493,7 +1493,18 @@ const ROUND_MARK = '[本轮消息]';
       if (done.length) {
         const last = done[done.length - 1];
         const at = hhmm(last.ts || last.at);
-        lines.push(`· 自由时间 ${done.length} 次${at ? '，最近一次 ' + at : ''}：${clip(last.activity, 70)}`);
+        // 2026-11-03 22:00：activity 的结构是「看了什么。做了什么」，而「做了什么」在后面。
+        // 截前 70 字只会把逛网列表截进来，作品一个字进不去 —— 她 21:29 自己说的：
+        // 「我这边只接到一行摘要，全文压在 say.jsonl 里，不去翻就看不见」。
+        const act = String(last.activity || '');
+        const madeIdx = act.indexOf('做了');
+        const made = madeIdx > 0 ? act.slice(madeIdx) : act;
+        lines.push(`· 自由时间 ${done.length} 次${at ? '，最近一次 ' + at : ''}：${clip(made, 180)}`);
+        const arts = Array.isArray(last.artifacts) ? last.artifacts.filter((x) => typeof x === 'string') : [];
+        if (arts.length) {
+          const dir = String(arts[0]).replace(/\/[^/]+$/, '');
+          if (dir) lines.push(`· 东西在 ${dir}（想不起细节就去翻）`);
+        }
         const toldRaw = done.filter((r) => r.told_saya === false && typeof r.why_not === 'string' && r.why_not.trim());
         if (toldRaw.length) lines.push(`· 其中有 ${toldRaw.length} 次想跟他说没发出去：${clip(toldRaw[toldRaw.length - 1].why_not, 60)}`);
       }
@@ -1510,7 +1521,7 @@ const ROUND_MARK = '[本轮消息]';
       if (said.length) {
         const last = said[said.length - 1];
         const at = hhmm(last.at || last.ts);
-        lines.push(`· 主动说过 ${said.length} 句${at ? '，最近 ' + at : ''}：「${clip(last.text, 50)}」`);
+        lines.push(`· 主动说过 ${said.length} 句${at ? '，最近 ' + at : ''}：「${clip(last.text, 200)}」`);
       }
     } catch { /* 同上 */ }
 
@@ -1525,7 +1536,7 @@ const ROUND_MARK = '[本轮消息]';
     } catch { /* 同上 */ }
 
     if (!lines.length) return '';
-    return ['【今天我】', ...lines, '（只是数。别念出来。）'].join('\n');
+    return ['【今天我】', ...lines, '（这些是你自己做过、说过的事。不用念给他听；但他说到某件你想不起来的，就照上面的路径去翻 —— 那不是别人的事。）'].join('\n');
   }
 
   /**
