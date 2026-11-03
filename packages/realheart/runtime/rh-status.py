@@ -422,6 +422,8 @@ table.cfg input,table.cfg select{background:#0e1014;color:#e6e8ec;border:1px sol
 border-radius:7px;padding:5px 8px;font:inherit;font-size:12.5px}
 table.cfg input:focus,table.cfg select:focus{outline:none;border-color:#3f5a78}
 .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#a9b2c0}
+.pend{display:inline-block;margin-top:3px;color:#d8a13a;font-size:11px;line-height:1.5}
+.cfgsearch{margin:10px 0 8px;display:flex;gap:10px;align-items:center}
 .cfgbar{margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .cfgbar button{background:#1d2530;color:#dbe3ee;border:1px solid #2f3a48;border-radius:8px;
 padding:7px 16px;font:inherit;font-size:13px;cursor:pointer}
@@ -1187,13 +1189,12 @@ def _field_input(f, cur):
 # 配置分组（2026-11-01）：二十项一页太长，危险项和普通项还搔在一起。
 # 用 <details> 折叠 —— 不靠 JS，窄屏也不会挤成一团。
 GROUP_META = [
-    ('switch', '开关', True),
-    ('inject', '每轮注入', True),
-    ('freetime', '自由时间', True),
-    ('boundary', '边界：改她的心', True),
-    ('ledger', '账本与目录', False),
-    ('page', '观测页', False),
-    ('other', '其他', False),
+    ('A', 'A · 她是谁', True),
+    ('C', 'C · 她记得什么', True),
+    ('D', 'D · 她什么时候在', True),
+    ('E', 'E · 她能干什么', True),
+    ('F', 'F · 钱与资源', False),
+    ('G', 'G · 出事了怎么办', False),
 ]
 
 
@@ -1532,11 +1533,19 @@ def render_config_edit(flash=''):
 
     def row_html(f):
         lv = f.get('level') or 'normal'
-        cur = user.get(f['key'], f.get('current'))
+        eff = f.get('current')             # 插件实际在用的值
+        own = user.get(f['key'], None)     # 你在 config.user.json 里设的值
+        cur = own if own is not None else eff
+        note = ''
+        # 你设了、但跟生效值不一样 ⇒ 还没重启。这一行就是「改了没生效」的现场，
+        # 不写它的话，用户看到自己设的值会以为已经在用了（2026-11-03）。
+        if own is not None and own != eff:
+            note = ('<br><span class="pend">现在生效的是 <code>%s</code> —— 上面这个要重启才换过去</span>'
+                    % esc(str(eff)))
         return ('<tr class="lv-%s"><td class="lv">%s</td>'
-                '<td><b>%s</b><br><span class="mono">%s</span></td>'
+                '<td><b>%s</b><br><span class="mono">%s</span>%s</td>'
                 '<td>%s</td><td class="mono">%s</td><td class="why">%s</td></tr>'
-                % (lv, LEVEL_TEXT.get(lv, lv), esc(f.get('label') or f['key']), esc(f['key']),
+                % (lv, LEVEL_TEXT.get(lv, lv), esc(f.get('label') or f['key']), esc(f['key']), note,
                    _field_input(f, cur), esc(f.get('range') or ''), esc(f.get('why') or '')))
 
     head = '<tr><th>级别</th><th>项</th><th>当前值</th><th>合法范围</th><th>改了会怎样</th></tr>'
@@ -1547,7 +1556,7 @@ def render_config_edit(flash=''):
     for f in schema['fields']:
         if f['key'] in starter_keys:
             continue
-        by_group.setdefault(f.get('group') or 'other', []).append(f)
+        by_group.setdefault(f.get('topic') or f.get('group') or 'other', []).append(f)
 
     tabs = []
     panels = []
@@ -1566,7 +1575,7 @@ def render_config_edit(flash=''):
     # 没归类的也列出来，不能因为写漏就消失（页首那四个除外，它们已经显示过了）
     listed = dict((g, 1) for g, _, _ in GROUP_META)
     leftover = [f for f in schema['fields']
-                if (f.get('group') or 'other') not in listed and f['key'] not in starter_keys]
+                if (f.get('topic') or f.get('group') or 'other') not in listed and f['key'] not in starter_keys]
     if leftover:
         rows = ''.join(row_html(f) for f in leftover)
         tabs.append('<button type="button" class="cfgtab" data-g="__left" onclick="rhTab(this)">'
@@ -1601,6 +1610,10 @@ def render_config_edit(flash=''):
         + flash_html
         + '<form method="post" action="config" onsubmit="return rhConfirm(this)">'
         + starter_html
+        + '<div class="cfgsearch">'
+        + '<input type="text" id="cfgq" placeholder="搜：心情 / 注入 / 目录 / 短唤醒 …" size="34" oninput="rhSearch(this.value)">'
+        + '<span id="cfgn" class="note"></span>'
+        + '</div>'
         + '<div class="cfgtabs">' + ''.join(tabs) + '</div>'
         + '<div class="cfgpanels">' + ''.join(panels) + '</div>'
 
@@ -1610,6 +1623,19 @@ def render_config_edit(flash=''):
         '<span class="note">%s</span>'
         '</div></form>'
         '<script>'
+        'function rhSearch(v){'
+        'var q=(v||"").trim().toLowerCase();'
+        'var ps=document.querySelectorAll(".cfgpanel"),ts=document.querySelectorAll(".cfgtab"),n=document.getElementById("cfgn");'
+        'if(!q){for(var i=0;i<ts.length;i++)ts[i].className="cfgtab"+(i===0?" active":"");'
+        'for(var j=0;j<ps.length;j++){ps[j].className="cfgpanel"+(j===0?" active":"");'
+        'var rs=ps[j].querySelectorAll("tr");for(var k=1;k<rs.length;k++)rs[k].style.display="";}'
+        'n.textContent="";return;}'
+        'var hit=0;for(var j=0;j<ps.length;j++){var rs=ps[j].querySelectorAll("tr"),any=0;'
+        'for(var k=1;k<rs.length;k++){var ok=(rs[k].textContent||"").toLowerCase().indexOf(q)>=0;'
+        'rs[k].style.display=ok?"":"none";if(ok)any++;}'
+        'ps[j].className="cfgpanel"+(any?" active":"");hit+=any;}'
+        'for(var i=0;i<ts.length;i++)ts[i].className="cfgtab";'
+        'n.textContent=hit?("命中 "+hit+" 项"):"没搜到";}'
         'function rhTab(b){var g=b.getAttribute("data-g");var p=b.parentNode;'
         'for(var i=0;i<p.children.length;i++){p.children[i].className="cfgtab"+(p.children[i]===b?" active":"");}'
         'var ps=document.querySelectorAll(".cfgpanel");'

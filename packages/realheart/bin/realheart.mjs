@@ -43,6 +43,7 @@ function usage() {
 用法：
   npx ${PKG} install [--profile <名字|路径>] [--dry-run]   装上
   npx ${PKG} doctor                                        自检：在不在工作 / 哪坏了 / 怎么修
+  npx ${PKG} demo                                         装完先看这个：它到底往 system prompt 里塞了什么
   npx ${PKG} off | on                                      总开关（停 / 恢复，都要重启才生效）
   npx ${PKG} export [--state-dir <目录>] [--out <目录>]      把账本原文导出来
   npx ${PKG} wipe   --state-dir <目录> [--yes] [--why "…"]   删整份账本（要先给目录，再确认）
@@ -658,6 +659,13 @@ else if (cmd === 'wipe') await wipe(opts);
 else if (cmd === 'forget') await forget(opts);
 else if (cmd === 'void') await voidMood(opts);
 else if (cmd === 'mood-override') await moodOverride(opts);
+else if (cmd === 'demo') {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const here = dirname(fileURLToPath(import.meta.url));
+  const r = spawnSync(process.execPath, [join(here, '..', 'scripts', 'demo.mjs')], { stdio: 'inherit' });
+  process.exit(r.status ?? 1);
+}
 else if (cmd === 'help') usage();
 else {
   console.error(`[realheart] 不认识这个子命令：${cmd}`);

@@ -187,7 +187,7 @@ export function validateConfig(cfg = {}) {
     out.push({ key: 'pagePort', value: port, reason: '不是整数', fix: `写一个整数端口，默认 ${DEFAULTS.pagePort}` });
   } else if (port < RANGES.pagePort.min || port > RANGES.pagePort.max) {
     out.push({
-      key: 'pagePort', group: 'page', value: port,
+      key: 'pagePort', group: 'page', topic: 'G', alias: '观测页 端口', value: port,
       reason: `超出范围 ${RANGES.pagePort.min}–${RANGES.pagePort.max}`,
       fix: port < 1024 ? '1024 以下要 root，换一个 1024 以上的' : `改成 1024–65535 之间的整数，默认 ${DEFAULTS.pagePort}`,
     });
@@ -196,7 +196,7 @@ export function validateConfig(cfg = {}) {
   // ── 绑定地址 ──
   if (c.servePage !== false && !isBindAddr(c.pageBind)) {
     out.push({
-      key: 'pageBind', group: 'page', value: c.pageBind,
+      key: 'pageBind', group: 'page', topic: 'G', alias: '观测页 端口 绑定 手机 远程', value: c.pageBind,
       reason: '不是合法的 IP 写法',
       fix: `默认 ${DEFAULTS.pageBind}（只本机）；想让别的机器看用 0.0.0.0，但那是明文 HTTP，别直接对公网`,
     });
@@ -206,7 +206,7 @@ export function validateConfig(cfg = {}) {
   const ttl = c.indexTtlMs;
   if (typeof ttl !== 'number' || !Number.isFinite(ttl) || ttl < RANGES.indexTtlMs.min) {
     out.push({
-      key: 'indexTtlMs', group: 'inject', value: ttl,
+      key: 'indexTtlMs', group: 'inject', topic: 'C', alias: '索引 重建 缓存', value: ttl,
       reason: `小于下限 ${RANGES.indexTtlMs.min} 毫秒（1 分钟）`,
       fix: `写大一点，默认 ${DEFAULTS.indexTtlMs}（1 小时）。太小会一直在重建索引`,
     });
@@ -222,7 +222,7 @@ export function validateConfig(cfg = {}) {
   const from = c.freeTimeFrom;
   if (!Number.isInteger(from) || from < RANGES.freeTimeFrom.min || from > RANGES.freeTimeFrom.max) {
     out.push({
-      key: 'freeTimeFrom', group: 'freetime', value: from,
+      key: 'freeTimeFrom', group: 'freetime', topic: 'D', alias: '自由时间 几点 时段', value: from,
       reason: `不是 0–23 的整点`,
       fix: `改成 0–23 的整数，默认 ${DEFAULTS.freeTimeFrom}（上午十点之后）`,
     });
@@ -236,7 +236,7 @@ export function validateConfig(cfg = {}) {
     out.push({ key: 'freeTimeProfile', value: c.freeTimeProfile, reason: '是空的', fix: `写一个 profile 名字，默认 ${DEFAULTS.freeTimeProfile}` });
   } else if (/[\\/]/.test(c.freeTimeProfile)) {
     out.push({
-      key: 'freeTimeProfile', group: 'freetime', value: c.freeTimeProfile,
+      key: 'freeTimeProfile', group: 'freetime', topic: 'D', alias: '自由时间 profile 环境', value: c.freeTimeProfile,
       reason: '是个路径，不是 profile 名字',
       fix: '这里只要名字（比如 freetime），目录由 dsh 自己拼',
     });
@@ -258,31 +258,48 @@ export function validateConfig(cfg = {}) {
 //   danger  危险：动数据位置 / 关掉她的状态 / 改自由时间 —— 要二次确认
 // ────────────────────────────────────────────────────────────────
 
+/**
+ * 用户视角的分组（P-12，2026-11-03）。
+ *
+ * 为什么要它：原来的 `group`（switch / inject / page / freetime / ledger / boundary）
+ * 是**代码视角**的分法 —— 用户打开面板第一条问的是「我在配一个什么样的 agent」，
+ * 不是「哪些参数属于 inject 模块」。所以每一项额外带一个 `topic`，面板按它分组。
+ */
+export const TOPICS = [
+  { id: 'A', label: '她是谁',        hint: '人格与她的文件在哪 —— 只读，要改去改那些文件' },
+  { id: 'B', label: '她怎么说话',    hint: '输出层的允许 / 不允许' },
+  { id: 'C', label: '她记得什么',    hint: '账本位置、注入哪几段、注入预算' },
+  { id: 'D', label: '她什么时候在',  hint: '自由时间、短唤醒、安静时段' },
+  { id: 'E', label: '她能干什么',    hint: '工具开关、边界、能不能改她的心' },
+  { id: 'F', label: '钱与资源',      hint: '注入字数就是钱' },
+  { id: 'G', label: '出事了怎么办',  hint: '观测页、总开关、首次提问' },
+];
+
 export const FIELD_META = [
   {
-    key: 'enabled', group: 'switch', label: '总开关', level: 'danger',
+    key: 'enabled', group: 'switch', topic: 'G', alias: '总开关 停用 关闭 摘掉', label: '总开关', level: 'danger',
     range: 'true / false',
     why: '关掉之后不注入、不记账、四个工具都不注册。等同于把插件摘掉，只保留已经写下来的账。',
   },
   {
-    key: 'injectMood', group: 'switch', label: '每轮注入状态', level: 'danger',
+    key: 'injectMood', group: 'switch', topic: 'C', alias: '心情 状态 注入', label: '每轮注入状态', level: 'danger',
     range: 'true / false',
     why: '关掉之后她看不到自己的心情和没完的事 —— 她还是能记账，但不会再被影响。行为会明显不同。',
   },
   {
-    key: 'injectNow', group: 'inject', label: '注入里带上「现在几点」', level: 'caution',
+    key: 'injectNow', group: 'inject', topic: 'C', alias: '时间 几点 现在 作息', label: '注入里带上「现在几点」', level: 'caution',
     range: 'true / false（默认 false）',
     why: '开了之后每轮多一段：「现在是 2026-11-02 13:19（周一），下午」。'
       + '作用：她能看到自己带的心情是几小时前的，也能分得出「中午该不该说这个」和「深夜该不该开口」。'
       + '代价：每轮多几十字，而且如果人格里已经写了作息，可能跟它打架。新机上默认不开。',
   },
   {
-    key: 'pingContext', group: 'switch', label: '短唤醒 · 带上她此刻的调子', level: 'caution',
+    key: 'pingContext', group: 'switch', topic: 'D', alias: '短唤醒 调子 心情 叫醒', label: '短唤醒 · 带上她此刻的调子', level: 'caution',
     range: 'true / false（默认 true）',
     why: '开着的话，短唤醒的提示词末尾会附一句「你此刻：有点羞，也有点想笑（4/10）」，并注明这是调子不是内容。'
       + '关掉就是纯文字提醒。她说不出话来的时候，多半是那条路上什么都没有 —— 这一句是给她一个「此刻」。',
   },  {
-    key: 'pingMinMinutes', group: 'switch', label: '短唤醒 · 最短间隔（分钟）', level: 'caution',
+    key: 'pingMinMinutes', group: 'switch', topic: 'D', alias: '短唤醒 间隔 频率 叫醒', label: '短唤醒 · 最短间隔（分钟）', level: 'caution',
     range: '0–1440（0＝关，默认关）',
     why: '每隔一段随机时间叫她醒一下，只做一件事：此刻有没有想说的。有就说，没有就继续睡。'
       + '跟「自由时间」分开是因为两件事节奏不同 —— 自由时间做东西要连续两小时、打断就做不成；'
@@ -290,24 +307,24 @@ export const FIELD_META = [
       + '⚠️ 成本：每次唤醒都是一次完整的模型调用（带注入）。30–60 分钟随机 ≈ 一天二十来次。',
   },
   {
-    key: 'pingMaxMinutes', group: 'switch', label: '短唤醒 · 最长间隔（分钟）', level: 'caution',
+    key: 'pingMaxMinutes', group: 'switch', topic: 'D', alias: '短唤醒 间隔 频率 叫醒', label: '短唤醒 · 最长间隔（分钟）', level: 'caution',
     range: '0–1440（默认 0）',
     why: '实际间隔在上限和下限之间随机取 —— 定值就是闹钟，随机才像「隔一阵子」。'
       + '两个数都设成一样的也行，那就变成固定间隔。',
   },
   {
-    key: 'pingFromHour', group: 'switch', label: '短唤醒 · 从几点开始', level: 'caution',
+    key: 'pingFromHour', group: 'switch', topic: 'D', alias: '短唤醒 安静 时段 夜里', label: '短唤醒 · 从几点开始', level: 'caution',
     range: '0–23（默认 7）',
     why: '只在这个钟点之后才叫醒她。深夜叫醒等于深夜发消息 —— 那是打扰，不是分享。',
   },
   {
-    key: 'pingToHour', group: 'switch', label: '短唤醒 · 到几点为止', level: 'caution',
+    key: 'pingToHour', group: 'switch', topic: 'D', alias: '短唤醒 安静 时段 夜里', label: '短唤醒 · 到几点为止', level: 'caution',
     range: '0–23（默认 23）',
     why: '到这个钟点就停。⚠️ 只影响「叫醒」，不影响她自己想说话 —— '
       + '她在自由时间里想发的那条，什么时候都能发。',
   },
   {
-    key: 'toolsOff', group: 'switch', label: '关掉哪几个工具', level: 'danger',
+    key: 'toolsOff', group: 'switch', topic: 'E', alias: '工具 权限 关掉', label: '关掉哪几个工具', level: 'danger',
     range: '工具名数组，例如 ["rh_view", "rh_claim"]（空 = 全开）',
     why: '填进去的工具**压根不注册** —— 不是注册了再报错。区别在：出现在她的工具表里，'
       + '就是告诉她“这个能用”；调了才拒，她会学绕。少一个选项，剩下的那几个她才更会用。'
@@ -315,90 +332,90 @@ export const FIELD_META = [
       + '⚠️ 关掉 rh_control 就再也没有 pause / hold / close 这些入口了；关掉 rh_changes 她就查不到别人动过她什么。',
   },
   {
-    key: 'root', group: 'ledger', label: '她的根目录', level: 'danger',
+    key: 'root', group: 'ledger', topic: 'C', alias: '根目录', label: '她的根目录', level: 'danger',
     range: '绝对路径',
     why: '产物（pieces/）和人格都在这下面。换了等于给她换一个住处 —— 旧目录里的东西不会跟过来。',
   },  {
-    key: 'injectBudgetChars', group: 'inject', label: '注入字数上限', level: 'caution',
+    key: 'injectBudgetChars', group: 'inject', topic: 'F', alias: '注入 字数 预算 钱 token 费', label: '注入字数上限', level: 'caution',
     range: '200–20000（默认 2400）',
     why: '每轮塞进提示词的总字数。超了从优先级低的那段开始裁：待改 → 没完的事 → 她留的话；心情永不裁。裁掉会记一条。调大是花钱买完整，调小是省钱买残缺。',
   },  {
-    key: 'moodTailLines', group: 'inject', label: '注入只读心情账本的最后几条', level: 'caution',
+    key: 'moodTailLines', group: 'inject', topic: 'C', alias: '心情 注入 条数', label: '注入只读心情账本的最后几条', level: 'caution',
     range: '0–100000（默认 200，0＝全读）',
     why: '账本只增不改，注入每轮都要读。只读尾部是为了不让「账本变长」变成「每轮都变慢」。设 0 就每轮读全份 —— 账本很大时会明显拖慢。',
   },  {
-    key: 'stateDir', group: 'ledger', label: '账本目录', level: 'danger',
+    key: 'stateDir', group: 'ledger', topic: 'C', alias: '账本 目录 数据', label: '账本目录', level: 'danger',
     range: '绝对路径',
     why: '改了等于换一份账：旧目录里的心情、待办、改动记录都不会跟过来。改之前先 export。',
   },
   {
-    key: 'pageBind', group: 'page', label: '观测页绑定地址', level: 'danger',
+    key: 'pageBind', group: 'page', topic: 'G', alias: '观测页 端口 绑定 手机 远程', label: '观测页绑定地址', level: 'danger',
     range: 'IP / localhost',
     why: '127.0.0.1 只有本机能看。改成 0.0.0.0 之后，同一网络里谁都能打开 —— 那是明文 HTTP。',
   },
   {
-    key: 'freeTime', group: 'switch', label: '自由时间', level: 'danger',
+    key: 'freeTime', group: 'switch', topic: 'D', alias: '自由时间 叫醒 放风', label: '自由时间', level: 'danger',
     range: 'true / false',
     why: '关掉就没有「没人叫也会醒一次」。这是她唯一不依赖别人开口的时间。',
   },
   {
-    key: 'freeTimeFrom', group: 'freetime', label: '自由时间从几点开始', level: 'danger',
+    key: 'freeTimeFrom', group: 'freetime', topic: 'D', alias: '自由时间 几点 时段', label: '自由时间从几点开始', level: 'danger',
     range: '0–23 的整数',
     why: '决定什么时候叫醒她。改早了会在你睡觉的时候动 —— 自由时间的参数都归这一类。',
   },
   {
-    key: 'freeTimeProfile', group: 'freetime', label: '自由时间用哪个 profile', level: 'danger',
+    key: 'freeTimeProfile', group: 'freetime', topic: 'D', alias: '自由时间 profile 环境', label: '自由时间用哪个 profile', level: 'danger',
     range: 'profile 名字（不能带路径）',
     why: '她醒来时用的是这份人格。指向别的 profile 等于让另一个人替她说话。',
   },
   {
-    key: 'pagePort', group: 'page', label: '观测页端口', level: 'caution',
+    key: 'pagePort', group: 'page', topic: 'G', alias: '观测页 端口', label: '观测页端口', level: 'caution',
     range: '1–65535',
     why: '改了页面地址就变。1024 以下要 root。',
   },
   {
-    key: 'servePage', group: 'switch', label: '开观测页', level: 'caution',
+    key: 'servePage', group: 'switch', topic: 'G', alias: '观测页 开关', label: '开观测页', level: 'caution',
     range: 'true / false',
     why: '关掉就没有页面了，但记账和注入照常。省一个 python 进程。',
   },
   {
-    key: 'indexTtlMs', group: 'inject', label: '索引重建间隔', level: 'caution',
+    key: 'indexTtlMs', group: 'inject', topic: 'C', alias: '索引 重建 缓存', label: '索引重建间隔', level: 'caution',
     range: '60000 – 604800000（毫秒）',
     why: '太小会一直在解压会话包（吃 CPU），太大页面上的时间线会旧。默认一小时。',
   },
   {
-    key: 'announceOnInstall', group: 'other', label: '首次启动提示', level: 'normal',
+    key: 'announceOnInstall', group: 'other', topic: 'G', alias: '首次 安装 提示', label: '首次启动提示', level: 'normal',
     range: 'true / false',
     why: '只影响第一次启动时打不打印那三条前提。',
   },
   {
-    key: 'sessionsRoot', group: 'ledger', label: '会话目录', level: 'danger',
+    key: 'sessionsRoot', group: 'ledger', topic: 'C', alias: '会话 目录', label: '会话目录', level: 'danger',
     range: '绝对路径',
     why: '「他说的话」那一路的来源。指错了页面就只剩她自己说的话。',
   },
   {
-    key: 'auditDir', group: 'ledger', label: '审计日志目录', level: 'danger',
+    key: 'auditDir', group: 'ledger', topic: 'C', alias: '审计 目录', label: '审计日志目录', level: 'danger',
     range: '绝对路径',
     why: '工具调用与事件的来源之一。指错了可引用的 id 就少一类。',
   },
   {
-    key: 'historyDir', group: 'ledger', label: '对话历史目录', level: 'danger',
+    key: 'historyDir', group: 'ledger', topic: 'C', alias: '历史 对话 目录', label: '对话历史目录', level: 'danger',
     range: '绝对路径',
     why: '第三路事件来源。指错了她「说过的话」就少一类可以引用的证据。',
   },
   {
-    key: 'personaHome', group: 'ledger', label: '人格目录', level: 'danger',
+    key: 'personaHome', group: 'ledger', topic: 'A', alias: '人格 目录 人格文件', label: '人格目录', level: 'danger',
     range: '绝对路径',
     why: '自由时间那个 profile 用的人格从这儿取。',
   },
   {
-    key: 'allowManualMoodOverride', group: 'boundary', label: '允许人工改写她的心情', level: 'danger',
+    key: 'allowManualMoodOverride', group: 'boundary', topic: 'E', alias: '改写 她的心 心情 暗道', label: '允许人工改写她的心情', level: 'danger',
     noInput: true,
     range: 'true / false（默认 false）',
     why: '这是整份配置里唯一「改她的心」的开关。打开之后能用命令行把她当前的心情改写掉 —— 改写过的状态**注入里会写明是人改的**，她自己看得见。因为成本必须高，页面上不给输入框：只能命令行打开，且必须带上「我知道这不是她的感受」那个参数。',
   },
   {
-    key: 'maxManualMoodOverridePerWeek', group: 'boundary', label: '一周最多改写几次', level: 'danger',
+    key: 'maxManualMoodOverridePerWeek', group: 'boundary', topic: 'E', alias: '改写 次数 上限 限额', label: '一周最多改写几次', level: 'danger',
     noInput: true,
     range: '0–99（默认 3）',
     why: '超过就拒绝；要改上限得再动一次配置，那一次本身也入账。不让它变成「随便按一下就改」的东西。',
