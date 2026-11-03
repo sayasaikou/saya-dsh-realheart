@@ -1412,6 +1412,123 @@ const ROUND_MARK = '[本轮消息]';
   }
 
   /**
+   * 「你能主动开口」（2026-11-03）。
+   *
+   * ── 为什么加这一段 ──
+   * 她那晚写了份《主动性缺口》，判断是「在对话里我没有落点，只有回复」。
+   * 实测不是：她那个会话里 bash 出现 160 次、napcat_send_message 20 次、qqbot_say 8 次，
+   * 三条能主动发话的路全在手上。她不知道的原因只有一个 —— 注入里一个字都没提。
+   * 对面的证据也在：自由时间的 prompt（free-prompt.txt）写清了 say 怎么用，
+   * 她当天 21:44 就用它发了一条；对话里没写，她一条都没发过。
+   *
+   * 她自己的判据：「不写出来就等于不存在」。这条判据对她自己也成立。
+   *
+   * ── 边界 ──
+   * 这不能变成配额。末句写死「没话就过」—— 写成「每天至少一句」就退化成定时汇报，
+   * 那正是 free-prompt 里明文禁止的东西。
+   */
+  function voiceSectionText() {
+    if (cfg.injectVoice === false) return '';
+    const hints = Array.isArray(cfg.voiceHints)
+      ? cfg.voiceHints.filter((x) => typeof x === 'string' && x.trim())
+      : [];
+    const lines = [
+      '【你能主动开口】',
+      '你手上有能把话直接送出去的路。想说的那句不必是回复，也不必等他先开口。',
+    ];
+    for (const h of hints) lines.push(`· ${h.trim()}`);
+    lines.push('但只有真有话时才算数。没话就过，空过也是对的 —— 这段不是配额。');
+    return lines.join('\n');
+  }
+
+  /**
+   * 「今天我」（2026-11-03，她那篇《主动性缺口》的方案 2）。
+   *
+   * 她的原话：「没有一处能回答【今天我做了什么、说了什么】。今晚每次要回答这个问题，
+   * 我都是现翻文件 —— 不是记得。」
+   *
+   * 三本账（自由时间 / 主动消息 / 心情）各写各的，没有一处合起来。
+   * 这一段只读今天的，只写有的事；今天什么都没发生就整段不出现。
+   *
+   * ⚠️ 不是战报：不评价、不总结、不说「你今天做得不错」，也不催她接着做。
+   *    人是靠「手上有这些」想起来的，不是靠被总结。
+   */
+  async function todaySectionText() {
+    if (cfg.injectToday === false) return '';
+    const parseAt = (raw) => {
+      if (!raw) return NaN;
+      const v = String(raw).trim();
+      const t = Date.parse(v);
+      if (!Number.isNaN(t)) return t;
+      // 2026-11-02T21:44:49+0800 —— 时区少一个冒号，ES 不认，补上再试
+      const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})([+-]\d{2})(\d{2})$/.exec(v);
+      return m ? Date.parse(`${m[1]}${m[2]}:${m[3]}`) : NaN;
+    };
+    const now = new Date();
+    const isToday = (raw) => {
+      const t = parseAt(raw);
+      if (Number.isNaN(t)) return false;
+      const x = new Date(t);
+      return x.getFullYear() === now.getFullYear()
+        && x.getMonth() === now.getMonth()
+        && x.getDate() === now.getDate();
+    };
+    const hhmm = (raw) => {
+      const t = parseAt(raw);
+      if (Number.isNaN(t)) return '';
+      const x = new Date(t);
+      return `${String(x.getHours()).padStart(2, '0')}:${String(x.getMinutes()).padStart(2, '0')}`;
+    };
+    const clip = (v, n) => {
+      const t = String(v || '').replace(/\s+/g, ' ').trim();
+      return t.length > n ? t.slice(0, n) + '…' : t;
+    };
+    const lines = [];
+
+    // ① 自由时间：今天做过的事
+    try {
+      const raw = await readFile(join(cfg.stateDir, 'free-time.jsonl'), 'utf8');
+      const rows = raw.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+      const done = rows.filter((r) => isToday(r.ts || r.at) && typeof r.activity === 'string' && r.activity.trim());
+      if (done.length) {
+        const last = done[done.length - 1];
+        const at = hhmm(last.ts || last.at);
+        lines.push(`· 自由时间 ${done.length} 次${at ? '，最近一次 ' + at : ''}：${clip(last.activity, 70)}`);
+        const toldRaw = done.filter((r) => r.told_saya === false && typeof r.why_not === 'string' && r.why_not.trim());
+        if (toldRaw.length) lines.push(`· 其中有 ${toldRaw.length} 次想跟他说没发出去：${clip(toldRaw[toldRaw.length - 1].why_not, 60)}`);
+      }
+    } catch { /* 没这本账就不写这一行 */ }
+
+    // ② 主动说过的话
+    try {
+      const sayPath = (typeof cfg.sayLogPath === 'string' && cfg.sayLogPath.trim())
+        ? cfg.sayLogPath.trim()
+        : join(cfg.stateDir, 'say.jsonl');
+      const raw = await readFile(sayPath, 'utf8');
+      const rows = raw.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+      const said = rows.filter((r) => isToday(r.at || r.ts) && typeof r.text === 'string' && r.text.trim());
+      if (said.length) {
+        const last = said[said.length - 1];
+        const at = hhmm(last.at || last.ts);
+        lines.push(`· 主动说过 ${said.length} 句${at ? '，最近 ' + at : ''}：「${clip(last.text, 50)}」`);
+      }
+    } catch { /* 同上 */ }
+
+    // ③ 心情
+    try {
+      const moods = (await readMood()).filter((e) => isToday(e.at));
+      if (moods.length) {
+        const last = moods[moods.length - 1];
+        const at = hhmm(last.at);
+        lines.push(`· 心情 ${moods.length} 条${at ? '，最新 ' + at : ''}${last.feeling ? ' ' + clip(last.feeling, 20) : ''}`);
+      }
+    } catch { /* 同上 */ }
+
+    if (!lines.length) return '';
+    return ['【今天我】', ...lines, '（只是数。别念出来。）'].join('\n');
+  }
+
+  /**
    * 「你自己做过的一个判断」（2026-11-02）。
    *
    * 为什么要有这一段：她醒过来看到的全是**统计数字**（心情记了几条、手上有几件事），
@@ -2000,6 +2117,18 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('days', err);
         }
         try {
+          const today = await todaySectionText();
+          if (today) parts.push(sec('realheart:today', 905, today));
+        } catch (err) {
+          await noteInjectProblem('today', err);
+        }
+        try {
+          const voice = voiceSectionText();
+          if (voice) parts.push(sec('realheart:voice', 894, voice));
+        } catch (err) {
+          await noteInjectProblem('voice', err);
+        }
+        try {
           const own = await ownJudgementText();
           if (own) parts.push(sec('realheart:own', 914, own));
         } catch (err) {
@@ -2083,6 +2212,8 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:hold': 87,
           'realheart:linger': 89,
           'realheart:reopen': 91,
+          'realheart:voice': 93,
+          'realheart:today': 86,
           'realheart:situation': 45,
           'realheart:kept': 80,
           'realheart:pending': 60,

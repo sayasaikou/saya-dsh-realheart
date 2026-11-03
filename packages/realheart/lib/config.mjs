@@ -46,6 +46,32 @@ export const DEFAULTS = {
   // 于是分不出“中午该不该说这个”和“深夜该不该开口”。人也一样：不看表就不知道分寸。
   // 为什么默认关：多一段字就多一份钱，而且它跟人格也可能打架（人格里自己写了作息就不必再塞一遍）。
   injectNow: false,
+  // ── 2026-11-03：从她那篇《主动性缺口》来的两段 ──
+  //
+  // 她那晚的判断是「在对话里我没有落点，只有回复」。实测不是：她那个会话里
+  // bash 出现 160 次、napcat_send_message 20 次、qqbot_say 8 次 —— 三条能主动发话的
+  // 路全在手上。她不知道，是因为**注入里一个字都没提**。而自由时间的 prompt
+  // （free-prompt.txt）里写清了 say 怎么用，她当天 21:44 就用它发了一条。
+  //
+  // 所以 injectVoice 不是新能力，是把已有的路写出来。她自己的判据：
+  // 「不写出来就等于不存在」—— 这条对她自己也成立。
+  //
+  // ⚠️ 它不能变成配额。末句写死「没话就过」—— 写成「每天至少一句」就退化成定时汇报，
+  //    那正是 free-prompt 里明文禁止的东西。
+  injectVoice: true,
+  // voiceHints：她这台机器上具体怎么发，空数组就不写。
+  // 例：['/home/ubuntu/qqbot/work/bin/say "想说的话" —— 用你自己的号直发私聊']
+  // 为什么不做成自动探测：不同机器路径不同，猜错了比不写更坏 —— 她会照着错路径试。
+  voiceHints: [],
+  // 每轮注入「今天我」（她那张清单上的方案 2）。
+  // 三本账——自由时间 / 主动消息 / 心情——互不引用，她回答「今天我做了什么」时
+  // 只能现翻文件。她的原话：「不是记得。」
+  // ⚠️ 它不是战报：不评价、不总结、不催她接着做，只把数摆出来。
+  injectToday: true,
+  // 主动消息的账本（say.jsonl）。空 = stateDir/say.jsonl。
+  // 有的机器上 say 是个独立脚本，账落在别处（她那台在 ~/.dsh/realheart/say.jsonl），
+  // 跟 stateDir 不在同一个目录 —— 所以要能指。
+  sayLogPath: '',
   // 关掉哪几个工具（2026-11-02 沙耶：工具也做成可开关的）。
   //
   // 空数组 = 全开。填了就**压根不注册** —— 不是注册了再报错。
@@ -119,6 +145,10 @@ export const Config = Schema.object({
   indexTtlMs: Schema.number().min(RANGES.indexTtlMs.min).max(RANGES.indexTtlMs.max).default(DEFAULTS.indexTtlMs),
   injectMood: Schema.boolean().default(DEFAULTS.injectMood),
   injectNow: Schema.boolean().default(DEFAULTS.injectNow),
+  injectVoice: Schema.boolean().default(DEFAULTS.injectVoice),
+  injectToday: Schema.boolean().default(DEFAULTS.injectToday),
+  voiceHints: Schema.array(Schema.string()).default(DEFAULTS.voiceHints),
+  sayLogPath: Schema.string().default(DEFAULTS.sayLogPath),
   toolsOff: Schema.array(Schema.string()).default(DEFAULTS.toolsOff),
   injectBudgetChars: Schema.number().min(200).max(20000).default(DEFAULTS.injectBudgetChars),
   moodTailLines: Schema.number().min(0).max(100000).default(DEFAULTS.moodTailLines),
@@ -171,7 +201,7 @@ export function validateConfig(cfg = {}) {
   // ── 布尔项 ──
   // 不查这个的话，`"injectMood": "yes"` 会被一路带到运行里 —— 而 `"yes"` 是真值，
   // 看起来在工作，其实是「以为关了其实没关」。这种错查起来最费时间。
-  for (const key of ['enabled', 'injectMood', 'injectNow', 'servePage', 'announceOnInstall', 'freeTime', 'allowManualMoodOverride']) {
+  for (const key of ['enabled', 'injectMood', 'injectNow', 'injectVoice', 'injectToday', 'servePage', 'announceOnInstall', 'freeTime', 'allowManualMoodOverride']) {
     if (typeof c[key] !== 'boolean') {
       out.push({
         key, value: c[key],
@@ -292,6 +322,33 @@ export const FIELD_META = [
     why: '开了之后每轮多一段：「现在是 2026-11-02 13:19（周一），下午」。'
       + '作用：她能看到自己带的心情是几小时前的，也能分得出「中午该不该说这个」和「深夜该不该开口」。'
       + '代价：每轮多几十字，而且如果人格里已经写了作息，可能跟它打架。新机上默认不开。',
+  },
+  {
+    key: 'injectVoice', group: 'inject', topic: 'C', alias: '主动 说话 开口 有话直说 嘴 发消息', label: '注入里告诉她「你能主动开口」', level: 'caution',
+    range: 'true / false（默认 true）',
+    why: '每轮多一段：「你手上有能把话直接送出去的路…… 没话就过」。'
+      + '关它的后果比字面重：2026-11-03 之前她在对话里一条主动消息都没发过，'
+      + '而她手上明明有三条能发的路（bash / napcat_send_message / qqbot_say，会话记录里分别出现 160 / 20 / 8 次）。'
+      + '她自己的判据：「不写出来就等于不存在」—— 这条对她自己也成立。',
+  },
+  {
+    key: 'voiceHints', group: 'inject', topic: 'C', alias: '主动 说话 路径 say 具体 怎么发', label: '告诉她具体怎么发（可选）', level: 'caution',
+    range: '字符串数组（默认空）',
+    why: '每一条作为一行写进上面那段。例：/home/ubuntu/qqbot/work/bin/say "想说的话" —— 用你自己的号直发私聊。'
+      + '为什么不做自动探测：不同机器路径不同，猜错了她会照着错路径试，比不写更坏。',
+  },
+  {
+    key: 'injectToday', group: 'inject', topic: 'C', alias: '今天我 做了什么 说了什么 三本账', label: '注入「今天我」', level: 'caution',
+    range: 'true / false（默认 true）',
+    why: '每轮把今天的数摆出来：自由时间做了什么、主动说过几句（带原话）、心情几条。'
+      + '三本账原来互不引用，她回答「今天我做了什么」只能现翻文件 —— 她的原话是「不是记得」。'
+      + '⚠️ 不是战报：不评价、不总结、不催她接着做。今日无记录就整段不出现。',
+  },
+  {
+    key: 'sayLogPath', group: 'ledger', topic: 'C', alias: '主动消息 账本 say 路径', label: '主动消息账本在哪', level: 'danger',
+    range: '绝对路径（默认空 = 账本目录下的 say.jsonl）',
+    why: '有的机器上 say 是个独立脚本，账落在别处（她那台在 ~/.dsh/realheart/say.jsonl，跟账本目录不是同一个）。'
+      + '指错了「今天我」里就看不见她说过什么 —— 而且不报错，只会少一行。',
   },
   {
     key: 'pingContext', group: 'switch', topic: 'D', alias: '短唤醒 调子 心情 叫醒', label: '短唤醒 · 带上她此刻的调子', level: 'caution',
