@@ -3313,7 +3313,21 @@ PY
     return { nextAt: d.getTime(), key: first.key, minutes: first.minutes };
   }
 
-  async function scheduleNextWake() {
+  /**
+   * 排下一次叫醒。
+   *
+   * 🔴 2026-11-04 18:00 抓到**两次叫醒**（日志里两个 PID：3054042 / 3054043）。
+   *    根因不是「补叫」那条分支写错了，而是**它被自己排的定时器叫醒了**：
+   *      · 定时器到点 → `void wakeHer(cur)` + `void scheduleNextWake()`
+   *      · 第二个 scheduleNextWake 读的还是**旧的** schedule 文件（nextAt 正是刚过去的 18:00）
+   *      · 于是 `st.nextAt <= now` 成立，它把「刚刚跑掉的那一段」当成「到点没人」，又补叫一次
+   *    修法两条，缺一不可：
+   *      ① `fromTimer` —— 定时器触发的这一路不许再走补叫分支（它自己已经叫过了）
+   *      ② 定时器里改成**串行**：先 await wakeHer（它内部第一件事就是 markFreeDone），
+   *         再排下一段。并排的话 scheduleNextWake 可能在 markFreeDone 之前读 done，
+   *         那时 18:00 还没标上，pickNextSlot 会把它当成没跑 → 排出一个已经过去的时刻 → 立刻再叫一次。
+   */
+  async function scheduleNextWake({ fromTimer = false } = {}) {
     const now = Date.now();
     let st = await readScheduledAt();
     if (!st) {
@@ -3322,7 +3336,7 @@ PY
     } else if (st.nextAt <= now) {
       const was = new Date(st.nextAt);
       // 到点那一刻进程不在 -> 同一天就补叫一次（那一段的历史里就是空的）
-      if (was.toDateString() === new Date(now).toDateString()) {
+      if (!fromTimer && was.toDateString() === new Date(now).toDateString()) {
         log(`自由时间：到点那一刻不在（${was.toLocaleString()}），补叫一次`);
         void wakeHer(st);
       }
@@ -3333,8 +3347,10 @@ PY
     // 捕获 st — 不捕获的话闭包拿到的是重算过的那个，记的会是下一段
     const cur = st;
     const timer = setTimeout(() => {
-      void wakeHer(cur);
-      void scheduleNextWake();
+      void (async () => {
+        await wakeHer(cur);
+        await scheduleNextWake({ fromTimer: true });
+      })();
     }, delay);
     if (typeof timer.unref === 'function') timer.unref();
     log(`下一次自由时间：${new Date(cur.nextAt).toLocaleString()}${cur.key ? '（' + cur.key + ' 那段）' : ''}`);
