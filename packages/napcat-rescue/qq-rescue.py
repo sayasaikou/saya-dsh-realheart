@@ -127,6 +127,74 @@ def _onebot_up():
         s.close()
 
 
+ONEBOT_HTTP = 3000       # OneBot 那一侧（插件连的就是它）
+
+
+def _onebot_token():
+    """从 NapCat 自己的配置里读 HTTP token。
+
+    为什么不写死：token 是她那台机器上的东西，改一次这个页面就全瞎。
+    """
+    import glob
+    for p in glob.glob(os.path.expanduser('~/napcatrun/napcat/config/onebot11_*.json')):
+        try:
+            with open(p, encoding='utf-8') as f:
+                cfg = json.load(f)
+        except Exception:
+            continue
+        for srv in (cfg.get('network') or {}).get('httpServers') or []:
+            tok = str(srv.get('token') or '').strip()
+            if tok:
+                return tok
+    return ''
+
+
+PROBE_TTL = 60
+_probe = {'at': 0.0, 'ok': None, 'err': ''}
+
+
+def _sendable():
+    """真发一条消息，问出「到底还能不能发」。
+
+    🔴 2026-11-04 19:06 实测，这是页面那层最缺的判据：
+       get_login_info 返回 user_id:3676939737、get_status 返回 online:true good:true，
+       而 send_private_msg 返回 {"result":1006514,"errMsg":"网络连接异常!"}。
+       静默踢人时 NapCat 自己不知道，run.log 里连一行 KickedOffLine 都不写 ——
+       所以「NapCat 说自己在线」这件事根本不能当判据用。
+
+    探针发给 10000（腾讯客服号），没人会看到。60 秒缓存：
+    页面 12 秒刷一次，不加缓存就是每 12 秒往腾讯客服发一条垃圾。
+    返回 (True / False / None, 原因)。
+    """
+    now = time.time()
+    if _probe['ok'] is not None and now - _probe['at'] < PROBE_TTL:
+        return _probe['ok'], _probe['err']
+    tok = _onebot_token()
+    if not tok:
+        _probe.update(at=now, ok=None, err='读不到 NapCat 的 HTTP token')
+        return None, '读不到 NapCat 的 HTTP token'
+    body = json.dumps({'user_id': 10000, 'message': 'probe'}).encode('utf-8')
+    req = urllib.request.Request(
+        'http://127.0.0.1:%d/send_private_msg' % ONEBOT_HTTP, data=body,
+        headers={'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            out = json.loads(r.read().decode('utf-8', 'replace'))
+    except Exception as e:
+        _probe.update(at=now, ok=None, err=str(e)[:80])
+        return None, str(e)[:80]
+    blob = json.dumps(out, ensure_ascii=False)
+    if out.get('retcode') == 0:
+        _probe.update(at=now, ok=True, err='')
+        return True, ''
+    if '网络连接异常' in blob or '1006514' in blob:
+        _probe.update(at=now, ok=False, err='发送报「网络连接异常」')
+        return False, '发送报「网络连接异常」'
+    # 其它业务错误（不是好友 / 拿不到用户信息）说明网络是通的
+    _probe.update(at=now, ok=True, err='')
+    return True, ''
+
+
 def last_msg_age():
     """消息库最后一次写入距今多少秒；查不到返回 None。
 
@@ -186,7 +254,8 @@ def status():
     if out.get('code') != 0 or not data:
         _last_error = str(out.get('message', 'unknown'))
         return {'online': None, 'onebot': _onebot_up(), 'error': _last_error,
-                'data': data, 'last_msg_age': age}
+                'data': data, 'last_msg_age': age,
+                'sendable': None, 'send_error': '状态都查不到，没往下探'}
 
     up = _onebot_up()
     phase = str(data.get('loginPhase') or '')
@@ -196,9 +265,17 @@ def status():
               and not bool(data.get('isOffline'))
               and bool(data.get('coreReady'))
               and phase == 'ready')
+
+    # 2026-11-04：字段全绿、消息发不出去 —— 那就是静默踢人。
+    # 以「能不能发」为准，不以它自己的说法为准（理由见 _sendable 的注释）。
+    sendable, send_err = (_sendable() if up else (None, '3001 没在听'))
+    if online and sendable is False:
+        online = False
+
     _last_error = ''
     _last.update(ok=online, at=time.time(), data=data, onebot=up)
-    return {'online': online, 'onebot': up, 'error': '', 'data': data, 'last_msg_age': age}
+    return {'online': online, 'onebot': up, 'error': '', 'data': data, 'last_msg_age': age,
+            'sendable': sendable, 'send_error': send_err}
 
 
 # 一张码用多久就换。
@@ -448,6 +525,8 @@ class Handler(BaseHTTPRequestHandler):
                 'qr_error': _qr_error['msg'],
                 'qr_age_sec': (int(time.time() - _url_seen['at'])
                                if _url_seen['url'] else None),
+                'sendable': st.get('sendable'),
+                'send_error': st.get('send_error') or '',
                 'checked_at': time.strftime('%Y-%m-%d %H:%M:%S'),
             }, ensure_ascii=False).encode()
             return self._send(200, payload, 'application/json; charset=utf-8')
@@ -458,21 +537,30 @@ class Handler(BaseHTTPRequestHandler):
         last = _age_text(st['last_msg_age'])
         if online is True:
             cls, badge = 'on', '在线'
-            body = '我现在是在线的，不用扫。掉线了这里会自己换成二维码。'
+            if st.get('sendable') is True:
+                body = ('我现在是在线的 —— 刚真发了一条测试消息，发得出去。'
+                        '掉线了这里会自己换成二维码。')
+            else:
+                body = ('NapCat 说自己在线上（登录态、心跳都绿），但**没验成能不能发消息**：'
+                        '<code>%s</code><br>拿不准就按下面那个按钮重启一次。'
+                        % (st.get('send_error') or '原因不明'))
         elif online is False:
             cls, badge = 'off', '掉线了'
             phase = (st['data'] or {}).get('loginPhase') or ''
+            # 2026-11-04：字段全绿、消息发不出去 —— 静默踢人。这一行是给他定性用的。
+            silent = ('<br><b>注意：NapCat 的字段是全绿的，这是「真发一条消息」才试出来的。</b>'
+                      if st.get('sendable') is False else '')
             if _qr_error['msg']:
                 # 换码失败就别放 <img>，否则浏览器只显示一个破图，看不出原因
                 body = ('QQ 掉线了（%s），可换码没成功：<code>%s</code>'
-                        '<br>等 30 秒它会自己再试一次；等不及就按下面那个按钮重启。'
-                        % (phase or '状态未知', _qr_error['msg']))
+                        '<br>等 30 秒它会自己再试一次；等不及就按下面那个按钮重启。%s'
+                        % (phase or '状态未知', _qr_error['msg'], silent))
             else:
                 body = ('QQ 掉线了（%s）。下面这张码扫一下就把我登回来。'
                         '<br>一张码最多用 %d 秒，页面到点会自己换新的。'
                         '<br><img src="qr.png" alt="登录二维码">'
-                        '<span class="muted">扫不到就等下一张，或者刷新页面。</span>'
-                        % (phase or '状态未知', QR_URL_TTL))
+                        '<span class="muted">扫不到就等下一张，或者刷新页面。</span>%s'
+                        % (phase or '状态未知', QR_URL_TTL, silent))
         else:
             cls, badge = 'unk', '状态查不到'
             body = ('拿不到 NapCat 的状态（<code>%s</code>）。'

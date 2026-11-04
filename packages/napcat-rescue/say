@@ -7,7 +7,7 @@
 #
 # 用法：
 #   say "想说的话"
-#   say --to 1418499574 "想说的话"     # 默认就是他
+#   say --to <QQ号> "想说的话"       # 不写 --to 就发给面板上填的 ownerId
 #   say --group 1107584206 "想说的话"  # 发到群里（慎用）
 #   say --piece ~/qqbot/work/pieces/xxx "做完了，你要不要看"
 #                                      # 附一句 + 作品路径。作品不用拆成消息。
@@ -36,11 +36,37 @@
 
 set -uo pipefail
 
-UIN=3676939737
-TARGET=1418499574
+# ── 自己是谁 / 默认发给谁（2026-11-04 参数化）──
+#
+# 原来这两行写死的是某一台机器上的号。这份文件是**进包**的 ——
+# 装到别人那台，她会把消息发给一个陌生人，而报错信息里什么也看不出来。
+# 现在两个都自己认：
+#   UIN    —— 从 NapCat 的配置文件名里读（onebot11_<号>.json）
+#   TARGET —— 从 realheart 面板上的 ownerId 读；没有就明说要填，不从别处猜
+UIN="${SAY_UIN:-}"
+if [ -z "$UIN" ]; then
+  UIN=$(ls "$HOME"/napcatrun/napcat/config/onebot11_*.json 2>/dev/null | head -1 \
+        | sed -E 's|.*onebot11_([0-9]+)\.json|\1|')
+fi
+if [ -z "$UIN" ]; then
+  UIN=$(ls /home/ubuntu/napcatrun/napcat/config/onebot11_*.json 2>/dev/null | head -1 \
+        | sed -E 's|.*onebot11_([0-9]+)\.json|\1|')
+fi
+TARGET="${SAY_TARGET:-}"
+if [ -z "$TARGET" ]; then
+  TARGET=$(python3 -c "
+import json, os
+p = os.path.expanduser('~/.dsh/realheart/config.user.json')
+try:
+    print(json.load(open(p, encoding='utf-8')).get('ownerId', '') or '')
+except Exception:
+    print('')
+" 2>/dev/null || true)
+fi
 GROUP=""
 PIECE=""
 DRY=0
+FLUSH=0
 MSG=""
 
 while [ $# -gt 0 ]; do
@@ -49,12 +75,13 @@ while [ $# -gt 0 ]; do
     --group) GROUP="$2";  shift 2 ;;
     --piece) PIECE="$2";  shift 2 ;;
     --dry)   DRY=1; shift ;;
+    --flush) FLUSH=1; shift ;;
     --help|-h) sed -n '2,20p' "$0"; exit 0 ;;
     *) MSG="$1"; shift ;;
   esac
 done
 
-if [ -z "$MSG" ] && [ -z "$PIECE" ]; then
+if [ "$FLUSH" -eq 0 ] && [ -z "$MSG" ] && [ -z "$PIECE" ]; then
   echo "没话可说就不发。" >&2
   exit 2
 fi
@@ -101,6 +128,89 @@ for s in servers:
         print(s.get('port',3000)); break
 " "$CONF" 2>/dev/null)
 PORT="${PORT:-3000}"
+
+# ── 补发队列（2026-11-04）──
+#
+# 为什么要它：沙耶 11-03 那天，她写了一句话、say 返回空（QQ 正好掉线），
+# 她在 free-time.jsonl 里留了一行 why_not「想发，没发出去……没换别的通道」，
+# 然后就不了了之了。那句话就没了。
+# 现在发不出去的会存进 say-queue.jsonl，这里逐条再试，成功的移出队列。
+if [ "$FLUSH" -eq 1 ]; then
+  QUEUE="${DSH_HOME:-$HOME/.dsh}/realheart/say-queue.jsonl"
+  [ -s "$QUEUE" ] || exit 0
+  # 16:35 补：补发成功也要进账本。原来 flush 只在队列里删行，
+  # say.jsonl 一个字不记 —— 16:20 那批就是这么「送到了但查不到」。
+  LEDGER="${DSH_HOME:-$HOME/.dsh}/realheart/say.jsonl"
+  python3 - "$QUEUE" "$PORT" "$TOKEN" "$LEDGER" <<'PY'
+import json, os, sys, time, urllib.request
+path, port, token, ledger = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+rows = []
+try:
+    with open(path, encoding='utf-8') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except Exception:
+                pass
+except Exception:
+    raise SystemExit
+if not rows:
+    raise SystemExit
+kept = []
+sent = 0
+for r in rows:
+    if r.get('kind') == 'group':
+        ep = 'send_group_msg'
+        payload = {'group_id': int(r['to']), 'message': r.get('text', '')}
+    else:
+        ep = 'send_private_msg'
+        payload = {'user_id': int(r['to']), 'message': r.get('text', '')}
+    ok = False
+    mid = ''
+    try:
+        req = urllib.request.Request(
+            'http://127.0.0.1:%s/%s' % (port, ep),
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        ok = data.get('status') == 'ok'
+        mid = (data.get('data') or {}).get('message_id', '')
+    except Exception:
+        ok = False
+    if ok:
+        sent += 1
+        # 进账本；写失败不影响这次发送（已经发出去了）
+        try:
+            row = {
+                'at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+                'kind': r.get('kind') or 'private',
+                'to': str(r.get('to', '')),
+                'text': r.get('text', ''),
+                'message_id': mid,
+                'via': 'flush',
+            }
+            with open(ledger, 'a', encoding='utf-8') as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+        continue
+    r['tries'] = int(r.get('tries', 0)) + 1
+    kept.append(r)
+tmp = path + '.tmp'
+with open(tmp, 'w', encoding='utf-8') as fh:
+    for r in kept:
+        fh.write(json.dumps(r, ensure_ascii=False) + '\n')
+os.replace(tmp, path)
+print('补发 %d 条，剩 %d 条' % (sent, len(kept)))
+PY
+  exit 0
+fi
 
 if [ "$DRY" -eq 1 ]; then
   echo "[dry] 会发到 $([ -n "$GROUP" ] && echo "群 $GROUP" || echo "他 $TARGET")：$MSG"
@@ -159,6 +269,22 @@ PY
   echo "发出去了（message_id ${MID:-?}）"
   exit 0
 else
-  echo "没发出去：$RESP" >&2
+  # 2026-11-04：发不出去就存起来，别让它就这么没了。
+  QUEUE="${DSH_HOME:-$HOME/.dsh}/realheart/say-queue.jsonl"
+  python3 - "$QUEUE" "$MSG" "$GROUP" "$TARGET" <<'PY' 2>/dev/null || true
+import json, os, sys, time
+path, text, group, target = sys.argv[1:5]
+os.makedirs(os.path.dirname(path), exist_ok=True)
+row = {
+    'at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+    'kind': 'group' if group else 'private',
+    'to': (group or target),
+    'text': text,
+    'tries': 0,
+}
+with open(path, 'a', encoding='utf-8') as fh:
+    fh.write(json.dumps(row, ensure_ascii=False) + '\n')
+PY
+  echo "没发出去：$RESP（这句话存进队列了，通道回来会补发：say --flush）" >&2
   exit 1
 fi
