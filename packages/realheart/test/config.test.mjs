@@ -44,9 +44,9 @@ test('端口写成字符串算坏 —— 不是整数', () => {
 });
 
 test('一次报全部，不是只报第一个（改一个重启一次，每次重启都打断会话）', () => {
-  const p = validateConfig({ pagePort: -1, freeTimeFrom: 25, indexTtlMs: 10, stateDir: '' });
+  const p = validateConfig({ pagePort: -1, indexTtlMs: 10, stateDir: '', freeTimeProfile: 'profiles/freetime' });
   const keys = new Set(p.map((x) => x.key));
-  for (const k of ['pagePort', 'freeTimeFrom', 'indexTtlMs', 'stateDir']) {
+  for (const k of ['pagePort', 'indexTtlMs', 'stateDir', 'freeTimeProfile']) {
     assert.ok(keys.has(k), `${k} 没被报出来`);
   }
 });
@@ -78,7 +78,6 @@ test('freeTimeProfile 只能是名字，不能是路径', () => {
 
 test('范围常量只有一份，Schema 和 validateConfig 用的是同一组', () => {
   assert.equal(RANGES.pagePort.max, 65535);
-  assert.equal(RANGES.freeTimeFrom.max, 23);
 });
 
 test('布尔项写成字符串要被拦（"yes" 是真值，以为关了其实没关）', () => {
@@ -104,7 +103,7 @@ test('describeConfig：每一项都得说清「改了会怎样」', () => {
 test('危险级必须覆盖他点名的那几样（关注入 / 数据目录 / 自由时间）', () => {
   const d = describeConfig();
   const danger = d.fields.filter((f) => f.level === 'danger').map((f) => f.key);
-  for (const k of ['injectMood', 'stateDir', 'freeTime', 'freeTimeFrom', 'freeTimeProfile']) {
+  for (const k of ['injectMood', 'stateDir', 'freeTime', 'freeTimeProfile']) {
     assert.ok(danger.includes(k), `${k} 该是危险级`);
   }
 });

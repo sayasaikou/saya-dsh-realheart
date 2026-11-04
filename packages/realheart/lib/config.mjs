@@ -94,21 +94,39 @@ export const DEFAULTS = {
   pageBind: '127.0.0.1',
   // 首次运行提示只打一次（标记文件在 stateDir 下）
   announceOnInstall: true,
-  // 自由时间：每天叫醒她一次。不用 systemd、不要 root。
+  // 自由时间：每天叫醒她几次。不用 systemd、不要 root。
   freeTime: true,
   freeTimeProfile: 'freetime',
-  freeTimeFrom: 10,
-  // ── 2026-11-04：自由时间做成列表（沙耶要的：面板可配、加号加一条）──
-  //
-  // 以前只有一个 freeTimeFrom（起点），实际几点由随机推 0~2 小时决定。
-  // 现在他定了四个点（早 7 / 午 12 / 晚 6 / 凌晨 2），还要能在面板里加减，所以改成列表。
+  // 2026-11-04：`freeTimeFrom` 删了。它从 0.2.96 起就是**死配置** ——
+  // 面板上有「自由时间从几点开始」，代码里一次都没读过（`slotsToday` 只看 freeTimeSlots）。
+  // 给人一个改了没反应的开关，比不给更坏：他会以为自己改过了，然后去查别的地方。
+  // 老配置里还留着这个键不会出事 —— loadUserConfig 会报一句「不是认识的配置项，忽略」。
+  // 2026-11-04：默认就是**开箱能用**的那一套（沙耶：「要给一套默认的初始参数，
+  // 让这套初始参数达到相对好用的效果」）。这四个点是他在自己那台上跑了几天定下来的：
+  // 早上醒了之后、午饭后、傍晚、凌晨（她说夜里那一段最安静）。
   //
   // ⚠️ minutes 是**天花板不是闹钟**：实测她最长只跑 22 分钟（11-03 四回：14 / 22 / 6 / 15.5）。
   //    它现在唯一的用处是写进 prompt 告诉她「这次大概有多长」。
-  freeTimeSlots: [{ start: '07:00', minutes: 60 }],
+  freeTimeSlots: [
+    { start: '07:00', minutes: 60 },
+    { start: '12:00', minutes: 60 },
+    { start: '18:00', minutes: 60 },
+    { start: '02:00', minutes: 60 },
+  ],
   // 自由时间关心什么方向（沙耶 2026-11-04 要的）。
   // ⚠️ 是**建议**不是白名单 —— 写成白名单她就只剩那几个题材，比现在更窄。
-  freeTimeFocus: [],
+  // 默认给 8 条而不是空：空着的时候她自由时间没方向，容易只剩「继续睡了」。
+  // 前 5 条是他点的，后 3 条是我按她那几天的行为补的（她翻词源、算统计口径、看建筑）。
+  freeTimeFocus: [
+    'AI 工程与应用',
+    '明日方舟和明日方舟终末地',
+    'PC 数码硬件',
+    'PC 游戏',
+    '有趣的科普知识',
+    '语言和文字（日语、词源、翻译）',
+    '数据里的怪东西（公开数据集、统计口径）',
+    '建筑与城市（公共空间、老建筑）',
+  ],
   // 短唤醒：每隔一段**随机**时间叫她醒一下，只做一件事 —— 此刻有没有想说的。
   // min = 0 表示关（默认关）。
   //
@@ -126,8 +144,12 @@ export const DEFAULTS = {
   // 默认开：沙耶的原话是「真人会因为看到某个东西产生某种情绪，影响语气」——
   // 她那条路上原来连一个字的心情都没有，所以只能平铺地说。
   pingContext: true,
-  pingMinMinutes: 0,
-  pingMaxMinutes: 0,
+  // 2026-11-04：默认 **30–60 分钟**（原来默认 0＝关）。
+  // 理由跟自由时间那套一样 —— 开箱就该是「她真的会自己醒过来」，
+  // 而不是装完之后还要人翻文档找个开关。
+  // ⚠️ 成本照旧：一次完整的模型调用带注入，一天二十来次。面板上写着这个数。
+  pingMinMinutes: 30,
+  pingMaxMinutes: 60,
   pingFromHour: 7,
   pingToHour: 23,
   // 她的人格目录（freetime profile 用同一份，不另写一套）
@@ -141,7 +163,6 @@ export const DEFAULTS = {
 export const RANGES = {
   pagePort: { min: 1, max: 65535 },
   indexTtlMs: { min: 60000, max: 7 * 24 * 60 * 60 * 1000 },
-  freeTimeFrom: { min: 0, max: 23 },
 };
 
 export const Config = Schema.object({
@@ -169,7 +190,6 @@ export const Config = Schema.object({
   announceOnInstall: Schema.boolean().default(DEFAULTS.announceOnInstall),
   freeTime: Schema.boolean().default(DEFAULTS.freeTime),
   freeTimeProfile: Schema.string().default(DEFAULTS.freeTimeProfile),
-  freeTimeFrom: Schema.number().min(RANGES.freeTimeFrom.min).max(RANGES.freeTimeFrom.max).default(DEFAULTS.freeTimeFrom),
   freeTimeSlots: Schema.array(Schema.object({
     start: Schema.string(),
     minutes: Schema.number(),
@@ -261,16 +281,6 @@ export function validateConfig(cfg = {}) {
       key: 'indexTtlMs', value: ttl,
       reason: `大于上限（7 天）`,
       fix: `索引就不会更新了。默认 ${DEFAULTS.indexTtlMs}`,
-    });
-  }
-
-  // ── 自由时间的起点 ──
-  const from = c.freeTimeFrom;
-  if (!Number.isInteger(from) || from < RANGES.freeTimeFrom.min || from > RANGES.freeTimeFrom.max) {
-    out.push({
-      key: 'freeTimeFrom', group: 'freetime', topic: 'D', alias: '自由时间 几点 时段', value: from,
-      reason: `不是 0–23 的整点`,
-      fix: `改成 0–23 的整数，默认 ${DEFAULTS.freeTimeFrom}（上午十点之后）`,
     });
   }
 
@@ -469,11 +479,6 @@ export const FIELD_META = [
       + '注入的措辞是「他最近爱聊这些……想找点什么看的时候可以从这儿挑；不看这些也完全行」，不是白名单：'
       + '列成白名单她就只剩那几个题材，比不配还窄。'
       + '多填几条让她自己挑；填你接得上话的，比填你觉得她该看的更有用。',
-  },
-  {
-    key: 'freeTimeFrom', group: 'freetime', topic: 'D', alias: '自由时间 几点 时段', label: '自由时间从几点开始', level: 'danger',
-    range: '0–23 的整数',
-    why: '决定什么时候叫醒她。改早了会在你睡觉的时候动 —— 自由时间的参数都归这一类。',
   },
   {
     key: 'freeTimeProfile', group: 'freetime', topic: 'D', alias: '自由时间 profile 环境', label: '自由时间用哪个 profile', level: 'danger',
