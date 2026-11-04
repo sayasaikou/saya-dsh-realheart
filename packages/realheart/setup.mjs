@@ -234,7 +234,7 @@ if (!REMOVE) {
     console.log('[realheart]     sudo systemctl daemon-reload');
     console.log('[realheart]     sudo systemctl enable --now realheart-freetime.timer');
     console.log('[realheart]   不装也能用 —— 只是她不会自己动，只会等你说话。');
-    console.log('[realheart]   短唤醒（每隔一阵醒一次、看有没有想说的）见 README 的 ping-run.sh。');
+    console.log('[realheart]   短唤醒（每隔一阵醒一次、看有没有想说的）：插件自己排，不用装 cron；开关在面板上（pingMinMinutes）。');
   } catch (err) {
     console.log(`[realheart] 排程文件没铺下来（${err?.message ?? err}）—— 她还是会工作，只是不会自己醒`);
   }
