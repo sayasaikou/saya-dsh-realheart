@@ -182,3 +182,44 @@ test('today：activity 前面是「看了」时，作品那段不能被截掉', 
   assert.ok(text.includes('crossing-2026-11-03'), '作品目录没带上');
   await rm(root, { recursive: true, force: true });
 });
+
+// 2026-11-04：原来只取**最后一次**的 material。一天四段自由时间，前三段留的话
+// 全被最后一段挤掉 —— 沙耶要的「素材」实际只有一个槽位。
+test('today：一天留过几句 material → 都带得上，不只最后一句', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rh-vt-t5-'));
+  const stateDir = join(root, 'state');
+  await mkdir(stateDir, { recursive: true });
+  const rows = [
+    { ts: todayAt(7, 20), activity: '做了《甲》', material: '早上看到一只猫趴在空调外机上' },
+    { ts: todayAt(12, 30), activity: '做了《乙》', material: '原来普尼克斯的观众是朝北坐的' },
+    { ts: todayAt(18, 10), activity: '做了《丙》', material: '那张图的金色有点刺眼' },
+  ];
+  await writeFile(join(stateDir, 'free-time.jsonl'), rows.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
+  const h = makeCtx();
+  apply(h.ctx, { stateDir, msgsDir: join(root, 'msgs'), servePage: false, freeTime: false, announceOnInstall: false, ownerId: '' });
+  await settle();
+  const text = await injectedText(h);
+  assert.ok(text.includes('留过 3 句'), '没数出几句：' + text.slice(0, 600));
+  assert.ok(text.includes('空调外机'), '最早那句被挤掉了');
+  assert.ok(text.includes('朝北坐'), '中间那句没了');
+  assert.ok(text.includes('金色'), '最后那句没了');
+  await rm(root, { recursive: true, force: true });
+});
+
+// 同一天里「什么都没做」那段 —— 以前过滤条件是「activity 非空」，
+// 于是只写了 material 的条目整条被丢，等于那句白写。
+test('today：只写了 material、没写 activity 的条目也不算丢', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rh-vt-t6-'));
+  const stateDir = join(root, 'state');
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(join(stateDir, 'free-time.jsonl'), JSON.stringify({
+    ts: todayAt(9, 5),
+    material: '什么都没干，就在看窗外那棵树',
+  }) + '\n', 'utf8');
+  const h = makeCtx();
+  apply(h.ctx, { stateDir, msgsDir: join(root, 'msgs'), servePage: false, freeTime: false, announceOnInstall: false, ownerId: '' });
+  await settle();
+  const text = await injectedText(h);
+  assert.ok(text.includes('那棵树'), '只写 material 的条目被丢了：' + text.slice(0, 500));
+  await rm(root, { recursive: true, force: true });
+});

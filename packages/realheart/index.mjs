@@ -1489,9 +1489,13 @@ const ROUND_MARK = '[本轮消息]';
     try {
       const raw = await readFile(join(cfg.stateDir, 'free-time.jsonl'), 'utf8');
       const rows = raw.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-      const done = rows.filter((r) => isToday(r.ts || r.at) && typeof r.activity === 'string' && r.activity.trim());
+      const done = rows.filter((r) => isToday(r.ts || r.at)
+        && ((typeof r.activity === 'string' && r.activity.trim())
+          || (typeof r.material === 'string' && r.material.trim())));
       if (done.length) {
-        const last = done[done.length - 1];
+        // 有 activity 的里挑最后一条来摘要；只有 material 的条目不算进那句摘要。
+        const withAct = done.filter((r) => typeof r.activity === 'string' && r.activity.trim());
+        const last = withAct.length ? withAct[withAct.length - 1] : done[done.length - 1];
         const at = hhmm(last.ts || last.at);
         // 2026-11-03 22:00：activity 的结构是「看了什么。做了什么」，而「做了什么」在后面。
         // 截前 70 字只会把逛网列表截进来，作品一个字进不去 —— 她 21:29 自己说的：
@@ -1499,11 +1503,25 @@ const ROUND_MARK = '[本轮消息]';
         const act = String(last.activity || '');
         const madeIdx = act.indexOf('做了');
         const made = madeIdx > 0 ? act.slice(madeIdx) : act;
-        lines.push(`· 自由时间 ${done.length} 次${at ? '，最近一次 ' + at : ''}：${clip(made, 180)}`);
+        lines.push(`· 自由时间 ${done.length} 次${at ? '，最近一次 ' + at : ''}：${made ? clip(made, 180) : '（这次没写 activity）'}`);
         // 2026-11-04：她自己写的那句「有什么值得讲的」比 activity 有用得多 ——
         // activity 是流水账，material 是她自己挑出来的那一句。
-        const mat = typeof last.material === 'string' ? last.material.trim() : '';
-        if (mat) lines.push(`· 那回你自己留了一句：${clip(mat, 160)}`);
+        //
+        // ⚠️ 原来只取最后一次的 material。一天四段自由时间（07/12/18/02），
+        // 前三段留的话全被后一段挤掉 —— 那「素材」就只有一个槽位，等于没有。
+        // 沙耶要的是「这段时间发生的事能当聊天素材」，那至少得留得下一天的几次。
+        // 只取最近三条：多了会变清单，她照着念就成汇报了。
+        const mats = done
+          .map((r) => ({ at: hhmm(r.ts || r.at), text: typeof r.material === 'string' ? r.material.trim() : '' }))
+          .filter((x) => x.text);
+        if (mats.length === 1) {
+          lines.push(`· 那回你自己留了一句：${clip(mats[0].text, 160)}`);
+        } else if (mats.length > 1) {
+          lines.push(`· 今天你自己留过 ${mats.length} 句（挑想说的一句说，不用都讲）：`);
+          for (const m of mats.slice(-3)) {
+            lines.push(`  - ${m.at ? m.at + ' ' : ''}${clip(m.text, 110)}`);
+          }
+        }
         const arts = Array.isArray(last.artifacts) ? last.artifacts.filter((x) => typeof x === 'string') : [];
         if (arts.length) {
           const dir = String(arts[0]).replace(/\/[^/]+$/, '');
@@ -2647,13 +2665,16 @@ const ROUND_MARK = '[本轮消息]';
    *
    * 为什么随机：固定时刻就叫定时任务，不叫自由时间。
    */
-  const FREE_PROMPT = '现在是你的自由时间。这段时间没人找你，也不用回谁的话。'
-    + '做点自己的东西（画一张、写一段、弄明白一件事都行），'
-    + '或者去看看别人的东西 —— 网上随便逛，撞见什么算什么，没目的也正常。'
-    + '（B站、GitHub、V2EX、网页都能查：agent-reach 这个命令，用法在你自己那份 skill 里。）'
-    + '看到觉得有意思的，想记就记、想说就说；不想就不动。'
-    + '或者什么都不干，就让它过去。'
-    + '出了东西自己判断值不值得让他知道，不想说就别说。'
+  // 2026-11-04 沙耶：「你让她做自己想做的什么的都行，不一定要她去上网」
+  //   上一版把「出去逛」排在第一句，读起来像作业范围 —— 他要的不是「去上网」，
+  //   是给她一段没人指派的空档。所以这里把它降成跟别的并列的一件，不是默认那件。
+  //   同一句里还带上了这次要的东西：这段时间不只是「做东西的时间」，
+  //   它还是**素材发生的地方** —— 见下面 material 那一段。
+  const FREE_PROMPT = '现在是你的自由时间。这段时间没人找你，也不用回谁的话，怎么过都行。'
+    + '想做什么就做什么：画一张、写一段、弄明白一件事；想出去逛就出去逛'
+    + '（B站、GitHub、V2EX、网页都能查：agent-reach 这个命令，用法在你自己那份 skill 里）；'
+    + '想整理自己的东西、想就坐着想事情、想什么都不干，也都算。'
+    + '这段没有产出要求 —— 不用为了不留白而做点什么，也不用为了让他知道而做点什么。'
     // 2026-11-02：关键的一句 —— pieces/ 是她的私人空间，没人会去翻。
     //
     // 她每件作品都写 why_not：「放在 pieces 里，等他自己翻到」。
@@ -2671,15 +2692,28 @@ const ROUND_MARK = '[本轮消息]';
     + '别把这段时间变成定时汇报。'
     + `产物写到 ${join(QQROOT, 'work', 'pieces')} 下面（绝对路径）。`
     + '不想给任何人看的，放 pieces/private/ —— 那个目录只看个数，不列文件名。'
-    + `做完（或者决定不做），往 ${join(cfg.stateDir, 'free-time.jsonl')} 追一行 JSON，`
-    + '记下这次干了什么、或者为什么没干。'
+    + `做完（或者决定不做），往 ${join(cfg.stateDir, 'free-time.jsonl')} 追一行 JSON。`
+    // ── 素材这一块（2026-11-04 沙耶要的）──
+    //
+    // 他的原话：「自由时间的作用除了让她上网、做作品什么的之外，
+    //   现在还有一个作用是收集短唤醒和被动回复的聊天话题与素材」
+    //
+    // 事实是：她今天有好几个自己。这个会话里发生的事，短唤醒醒来的那个她一个字看不见；
+    // 跟沙耶说话的那个她也只接到一行摘要（「今天我」那段）。
+    // 所以这段时间唯一必须留住的，是**一句话** —— 不是产出，不是账。
+    //
+    // 为什么要点明「不是总结、不是结论」：她 11-04 那三条主动消息全是
+    // 「在核《过线》一个口径的时候发现…」那种形状。material 要是也写成那样，
+    // 只是把汇报从一个文件搬到另一个文件。
+    + '**收尾留一句能带走的**：那一行里除了 activity，再写一个 material —— '
+    + '这次有什么值得跟他讲的。一句，人话；不是总结、不是结论，'
+    + '是「我今天看到一个东西…」那种开头的话。'
+    + '（为什么：这会儿发生的事，短唤醒醒来的那个你看不见，跟他说话的那个你也只接到一行摘要。'
+    + '这句 material 会被带到她们那里。不写，这些就只躺在你自己的日志里，对她们等于没发生。）'
+    + '什么都没做也写 —— 那就写你那时候在想什么、看见了什么。'
     // 2026-11-02 沙耶点的：她上网看了什么，主会话一个字都不知道 ——「看了等于没看」。
     // 实测：free-time.jsonl 里 15 条 activity 全是「做了什么」，一条「看了什么」都没有。
-    // 所以明确要求她记这条 —— 不是靠自觉，是给她一件要做的事。
-    + '**上网看了什么也记进去**（在 activity 里带上「看了/读到」）：'
-    + '哪个平台、大概什么内容、你当时怎么想的。一句话就够，不用写摘要。'
-    + '（为什么要记：你自己看过的东西，别的会话里的你不知道。'
-    + ' 不记下来，那些看法就没有来处，下次再想起来也接不上。）';
+    + 'activity 里也把「看了什么」带上（哪个平台、大概什么内容、你当时怎么想的），一句话就够。';
 
   /**
    * 短唤醒的提示（2026-11-02，第三版：加了「动手」这一个口）。
@@ -2758,13 +2792,15 @@ const ROUND_MARK = '[本轮消息]';
     }
 
     // 2026-11-04：他最近想让她多看什么（config.freeTimeFocus）。
-    // ⚠️ 措辞必须是「多看两眼」不是「只看这些」—— 写成白名单她就只剩那几个题材，
-    //    比不配还窄。沙耶要的是给方向，不是画围栏。
+    // ⚠️ 措辞必须是「想找点什么看的时候能从这儿挑」——
+    //    写成「只看这些」她就只剩那几个题材，比不配还窄。沙耶的原话：
+    //    「这只是题材，又不是告诉她必须看这些，可以多填几个让她自己选想看哪些方面的」。
     const focus = Array.isArray(cfg.freeTimeFocus)
       ? cfg.freeTimeFocus.filter((x) => typeof x === 'string' && x.trim())
       : [];
     if (focus.length) {
-      lines.push('', `（最近他对这些有兴趣：${focus.map((x) => x.trim()).join('、')}。撞见相关的多看两眼；撞见别的也行，不用只挑这些。）`);
+      lines.push('', `（他最近爱聊这些：${focus.map((x) => x.trim()).join('；')}。`
+        + '想找点什么看或想找灵感的时候，可以从这儿挑；不看这些也完全行 —— 是题材，不是名单。）');
     }
 
     // 2026-11-04：**让她自己写「素材」**。
@@ -2776,9 +2812,9 @@ const ROUND_MARK = '[本轮消息]';
     lines.push('', '（想跟他说的话，一条说不完就再说一条 —— 像发消息那样，一条一个念头。'
       + '别攒成一大段，也别写成作品说明：「我今天看到一个东西…」比「《xxx》：结论是…」更像你在跟他讲话。）');
 
-    lines.push('', '（做完往 free-time.jsonl 追那一行 JSON 的时候，除了 activity，再写一个 material：'
-      + '这次有什么值得跟他讲的 —— 一句，人话，不讲口径不讲数据，就是「有什么好说的」。'
-      + '那句会被带到你下次醒来的时候，也会带到你跟他的对话里。）');
+    // 2026-11-04：material 的规矩写在 FREE_PROMPT 里了（那里说清了为什么要有它）。
+    // 这里只留一个落点 —— 同一件事写两遍，改一处忘一处，是 0.2.97/0.2.98 栽过的坑。
+    lines.push('', '（收尾那行 JSON 里的 material 一句话就够 —— 不用把上面这些再改写成摘要。）');
 
     // 上次没弄完的那件事（11-01 加的，不动）
     try {
