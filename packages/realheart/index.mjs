@@ -3335,6 +3335,28 @@ PY
       return `建不了 ${dir}：${err?.message ?? err}`;
     }
 
+    // ── 默认人格（2026-11-04）──
+    // 沙耶：「包括默认的人格文件，全局文件等等，都要有一份默认值」。
+    // 判据：装完就该能感觉到「有人在」，而不是一个空壳在回话。
+    //
+    // ⚠️ **只在文件不存在时铺**：这台机器上的人格可能是用户自己写的（像他那份），
+    //    盖掉等于把那个人换掉 —— 那是这套东西里最不可接受的一种坏。
+    try {
+      await mkdir(cfg.personaHome, { recursive: true });
+      const personaFile = join(cfg.personaHome, 'AGENTS.md');
+      if (!existsSync(personaFile)) {
+        const src = join(dirname(fileURLToPath(import.meta.url)), 'scripts', 'persona-default.md');
+        if (existsSync(src)) {
+          await copyFile(src, personaFile);
+          log(`默认人格铺好了：${personaFile}（改它就行，之后不会再铺）`);
+        } else {
+          log(`包里没有 scripts/persona-default.md，人格目录是空的（${cfg.personaHome}）`, 'error');
+        }
+      }
+    } catch (err) {
+      log(`人格目录没铺好（${err?.message ?? err}）—— 她醒来会是一张白纸`, 'error');
+    }
+
     const pkgPath = join(dir, 'package.json');
     if (!existsSync(pkgPath)) {
       await writeFile(pkgPath, JSON.stringify({
