@@ -2976,6 +2976,29 @@ const ROUND_MARK = '[本轮消息]';
   //
   // ⚠️ 上线时**必须把 crontab 里那行 ping-run.sh 停掉**，否则两套一起跑，双叫、双花钱。
   const pingLastFile = () => join(DSH_HOME, 'realheart', 'ping.last');
+  // 🔴 2026-11-04 晚上发现的：**每次重启，短唤醒都会重新随机一次**。
+  // 原来只落 ping.last（上次叫醒的时刻），重启后拿它 + 随机间隔重算 ——
+  // 间隔是 30–60 分钟，重算出来可能比上一次更远。今天部署十几次，
+  // 结果是一次都没真叫出来，日志里全是「下一次 …」，一次「已叫她」都没有。
+  // 而且这个错很难看出来：日志正常、时间正常，只是永远往后推。
+  // 修法：跟自由时间一样，把**下一次的时刻**落下来，重启后照它走，不重算。
+  const pingNextFile = () => join(DSH_HOME, 'realheart', 'ping.next');
+
+  async function readPingNext() {
+    try {
+      const n = Number((await readFile(pingNextFile(), 'utf8')).trim());
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  async function writePingNext(ms) {
+    try {
+      await mkdir(dirname(pingNextFile()), { recursive: true });
+      await writeFile(pingNextFile(), String(ms), 'utf8');
+    } catch { /* 记不上最多是下次重启重排一次，不影响叫不叫 */ }
+  }
 
   async function readPingLast() {
     try {
@@ -3146,6 +3169,7 @@ const ROUND_MARK = '[本轮消息]';
 
     const arm = (at) => {
       if (pingTimer) clearTimeout(pingTimer);
+      void writePingNext(at);
       const delay = Math.max(1000, at - Date.now());
       pingTimer = setTimeout(() => { void fire(); }, delay);
       if (typeof pingTimer.unref === 'function') pingTimer.unref();
@@ -3184,12 +3208,18 @@ const ROUND_MARK = '[本轮消息]';
       }
     };
 
-    let last = await readPingLast();
     const now = Date.now();
-    // last 将来时（时钟被调过）就当没有 —— 不能因此一直不叫。
-    if (!last || last > now) last = now;
-    let nextAt = snapIntoPingWindow(last + gapMs(min, max), from, to);
-    if (nextAt <= now) nextAt = snapIntoPingWindow(now + gapMs(min, max), from, to);
+    // 先看有没有落过「下一次」。有就用它 —— 重启不该把排程重摇一次。
+    // 过期的（已经过了 10 分钟以上）也不认：那说明这段时间进程不在，
+    // 拿它当「现在就该叫」会把十来次重启攒到一起放出来。
+    let nextAt = await readPingNext();
+    if (!nextAt || nextAt < now - 10 * 60000) {
+      let last = await readPingLast();
+      // last 将来时（时钟被调过）就当没有 —— 不能因此一直不叫。
+      if (!last || last > now) last = now;
+      nextAt = snapIntoPingWindow(last + gapMs(min, max), from, to);
+      if (nextAt <= now) nextAt = snapIntoPingWindow(now + gapMs(min, max), from, to);
+    }
     arm(nextAt);
   }
 
