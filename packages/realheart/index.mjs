@@ -3330,6 +3330,18 @@ PY
   async function scheduleNextWake({ fromTimer = false } = {}) {
     const now = Date.now();
     let st = await readScheduledAt();
+    // 🔴 2026-11-04 抓到：**配置改了，落盘的排程不作废**。
+    // 沙耶把时段从 07/12/18/02 改成 07/12/18 之后，日志里还是「下一次 02:00 那段」——
+    // 因为这里读到 st 就直接用，从不问「这个 key 现在还在不在列表里」。
+    // 后果不是崩，是**到了那个点照样叫她一次**，然后才按新时段排。
+    // 这种错最难查：日志正常、页面正常，只是多醒了一次、多花一次钱。
+    if (st && st.key) {
+      const keys = new Set(slotsToday(new Date(now)).map((x) => x.key));
+      if (!keys.has(st.key)) {
+        log(`自由时间：排程里的「${st.key}」已经不在时段列表里了，作废重算`);
+        st = null;
+      }
+    }
     if (!st) {
       st = await pickNextSlot(new Date(now));
       await writeScheduledAt(st);
