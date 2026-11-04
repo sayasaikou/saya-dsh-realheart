@@ -205,6 +205,17 @@ export function apply(ctx, config = {}) {
   const cfg = { ...DEFAULTS, ...config, ...user.config };
   if (cfg.enabled === false) return;
 
+  // 2026-11-04：提示词也能在面板上改（沙耶：「包括每次唤醒给她的提示词」）。
+  // **空 = 用内置那版**，不是「不注入」——
+  // 这样内置文案更新时，没改过的人自动跟着更新，改了的人保自己的。
+  // 想彻底关掉某一段，用对应的 injectXxx 开关，别把配置清空（清空就是回到默认）。
+  // 放在这么前面是因为好几段的文案都要用它，而 const 有 TDZ —— 定义在后面、用在前，
+  // 表现是启动时一个 ReferenceError，还很像别的地方坏了。
+  const promptText = (key, builtin) => {
+    const v = cfg[key];
+    return (typeof v === 'string' && v.trim()) ? v.trim() : builtin;
+  };
+
   // ── 总开关（P-3 kill switch）──
   // 有这个文件就当整个插件不存在：不注入、不记账、四个工具都不注册。
   //
@@ -1020,7 +1031,7 @@ const ROUND_MARK = '[本轮消息]';
       // 同样的状态，只砍内容不用这句，她还会轻描淡写带一句「本鱼今天也有点凉」；
       // 加上这句，才真的一个字不提。
       // 所以：**只给状态不给禁令，她会把它当成可以拿出来说的素材。**
-      out.push('（知道就行，不必说出来 —— 它们不是你聊天的素材，只影响你说话的样子，不是你的话。）');
+      out.push(promptText('promptMoodBan', '（知道就行，不必说出来 —— 它们不是你聊天的素材，只影响你说话的样子，不是你的话。）'));
       out.push('变了就调 rh_mood 记一笔；哪条不对了，也记一笔说清楚。');
       return out.join('\n');
     }
@@ -1437,7 +1448,7 @@ const ROUND_MARK = '[本轮消息]';
       '你手上有能把话直接送出去的路。想说的那句不必是回复，也不必等他先开口。',
     ];
     for (const h of hints) lines.push(`· ${h.trim()}`);
-    lines.push('但只有真有话时才算数。没话就过，空过也是对的 —— 这段不是配额。');
+    lines.push(promptText('promptVoiceTail', '但只有真有话时才算数。没话就过，空过也是对的 —— 这段不是配额。'));
     return lines.join('\n');
   }
 
@@ -1558,7 +1569,7 @@ const ROUND_MARK = '[本轮消息]';
     } catch { /* 同上 */ }
 
     if (!lines.length) return '';
-    return ['【今天我】', ...lines, '（这些是你自己做过、说过的事。不用念给他听；但他说到某件你想不起来的，就照上面的路径去翻 —— 那不是别人的事。）'].join('\n');
+    return ['【今天我】', ...lines, promptText('promptTodayTail', '（这些是你自己做过、说过的事。不用念给他听；但他说到某件你想不起来的，就照上面的路径去翻 —— 那不是别人的事。）')].join('\n');
   }
 
   /**
@@ -2470,7 +2481,13 @@ const ROUND_MARK = '[本轮消息]';
     // 写在 Node 这边、由 Python 读 —— 定义只维护一份，两面才不会各说各的。
     // 写不了不算失败：面板会退化成「没有编辑区」，别的照常。
     try {
-      await writeFile(join(dir, 'config-schema.json'), JSON.stringify(describeConfig(cfg, { promptFree: FREE_PROMPT, promptPing: PING_PROMPT }), null, 2), 'utf8');
+      await writeFile(join(dir, 'config-schema.json'), JSON.stringify(describeConfig(cfg, {
+        promptFree: FREE_PROMPT,
+        promptPing: PING_PROMPT,
+        promptVoiceTail: '但只有真有话时才算数。没话就过，空过也是对的 —— 这段不是配额。',
+        promptTodayTail: '（这些是你自己做过、说过的事。不用念给他听；但他说到某件你想不起来的，就照上面的路径去翻 —— 那不是别人的事。）',
+        promptMoodBan: '（知道就行，不必说出来 —— 它们不是你聊天的素材，只影响你说话的样子，不是你的话。）',
+      }), null, 2), 'utf8');
     } catch (err) {
       log(`写 config-schema.json 失败（面板会没有编辑区）：${err?.message ?? err}`, 'error');
     }
@@ -2652,14 +2669,6 @@ const ROUND_MARK = '[本轮消息]';
     }
   }
 
-  // 2026-11-04：提示词也能在面板上改（沙耶：「包括每次唤醒给她的提示词」）。
-  // **空 = 用内置那版**，不是「不注入」——
-  // 这样内置文案更新时，没改过的人自动跟着更新，改了的人保自己的。
-  // 想彻底关掉某一段，用对应的 injectXxx 开关，别把配置清空（清空就是回到默认）。
-  const promptText = (key, builtin) => {
-    const v = cfg[key];
-    return (typeof v === 'string' && v.trim()) ? v.trim() : builtin;
-  };
 
   /**
    * 自由时间：每天叫她醒一次，没人跟她说话。

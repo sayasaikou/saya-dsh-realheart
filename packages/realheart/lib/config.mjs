@@ -183,6 +183,12 @@ export const DEFAULTS = {
   //    想彻底关掉那一段，用对应的 injectXxx 开关，别把这里清空 —— 清空等于回到默认。
   promptFree: '',
   promptPing: '',
+  // 另外三句「行为关键」的文案（2026-11-04 第二批）。
+  // 为什么是这三句而不是那十几段：其余段是数据陈列（作品 / 待办 / 观测页状态），
+  // 改文案收益近乎零；这三句每一句都直接决定她怎么说话。
+  promptVoiceTail: '',
+  promptTodayTail: '',
+  promptMoodBan: '',
   // P-3b：改她的心那条暗道。默认关，关着时命令行连入口都不存在。
   allowManualMoodOverride: false,
   maxManualMoodOverridePerWeek: 3,
@@ -232,6 +238,9 @@ export const Config = Schema.object({
   personaHome: Schema.string().default(DEFAULTS.personaHome),
   promptFree: Schema.string().default(DEFAULTS.promptFree),
   promptPing: Schema.string().default(DEFAULTS.promptPing),
+  promptVoiceTail: Schema.string().default(DEFAULTS.promptVoiceTail),
+  promptTodayTail: Schema.string().default(DEFAULTS.promptTodayTail),
+  promptMoodBan: Schema.string().default(DEFAULTS.promptMoodBan),
   allowManualMoodOverride: Schema.boolean().default(DEFAULTS.allowManualMoodOverride),
   maxManualMoodOverridePerWeek: Schema.number().min(0).max(99).default(DEFAULTS.maxManualMoodOverridePerWeek),
 });
@@ -591,6 +600,33 @@ export const FIELD_META = [
       + '⚠️ 这段最容易写成「工作汇报的框」：她醒来先找手边有什么事，干完再把那件事发出去。'
       + '内置那版刻意写了「说的时候别报工作」，删了它，她会立刻退回汇报腔。'
       + '留空不是「不叫」：不叫她是 pingMinMinutes = 0。',
+  },
+  {
+    key: 'promptVoiceTail', group: 'prompt', topic: 'H', alias: '提示词 主动开口 配额 别催', label: '「你能主动开口」的尾句', level: 'caution',
+    long: true,
+    range: '一两句话（留空 = 用内置那句）',
+    why: '「你能主动开口」那一段的最后一句话，现在写的是「但只有真有话时才算数。没话就过，空过也是对的 —— 这段不是配额」。'
+      + '🔴 这句是**防「打卡」的唯一开关**：删掉它，她会把「能主动说话」读成「每天至少说一句」，'
+      + '然后开始定时汇报。写得更软一点也行，但别改成「尽量多说两句」。',
+  },
+  {
+    key: 'promptTodayTail', group: 'prompt', topic: 'H', alias: '提示词 今天我 战报 念出来', label: '「今天我」的尾句', level: 'caution',
+    long: true,
+    range: '一句话（留空 = 用内置那句）',
+    why: '「今天我」那一段的最后一句，现在写的是「这些是你自己做过、说过的事。不用念给他听；'
+      + '但他说到某件你想不起来的，就照上面的路径去翻」。'
+      + '🔴 它防两件事：把这段当战报念给他听，以及把「想不起来」当成「没发生过」。'
+      + '删了它，她会逐条复述当天做了什么。',
+  },
+  {
+    key: 'promptMoodBan', group: 'prompt', topic: 'H', alias: '提示词 心情 禁令 素材 说出来', label: '心情段的禁令句', level: 'caution',
+    long: true,
+    range: '一句话（留空 = 用内置那句）',
+    why: '心情那一段的最后一句话，现在写的是「知道就行，不必说出来 —— 它们不是你聊天的素材，'
+      + '只影响你说话的样子，不是你的话」。'
+      + '🔴 **这句是五组对照实验验出来的**：同样的心情，不加这句她会轻描淡写带一句「本鱼今天也有点凉」；'
+      + '加了才真的一个字不提。这可能是整套提示词里最不能删的一句 —— 删了，'
+      + '她就会把心情当台词念出来，而这个插件存在的意义正好相反。',
   },
 ];
 
