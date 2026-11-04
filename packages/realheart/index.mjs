@@ -3172,7 +3172,7 @@ PY
   async function writeScheduledAt(slot) {
     try {
       await writeFile(freeScheduleFile(), JSON.stringify({
-        nextAt: slot.at, key: slot.key || '', minutes: slot.minutes || 60, at: localStamp(),
+        nextAt: slot.nextAt ?? slot.at, key: slot.key || '', minutes: slot.minutes || 60, at: localStamp(),
       }), 'utf8');
     } catch (err) {
       log(`自由时间：下次时刻没存下来（${err?.message ?? err}）`, 'error');
@@ -3191,14 +3191,14 @@ PY
   async function pickNextSlot(from = new Date()) {
     const st = await readFreeDone();
     const list = slotsToday(from);
-    if (!list.length) return { at: from.getTime() + 3600000, key: '', minutes: 60 };
+    if (!list.length) return { nextAt: from.getTime() + 3600000, key: '', minutes: 60 };
     const cand = list.find((x) => !st.done.includes(x.key) && x.at > from.getTime());
-    if (cand) return cand;
+    if (cand) return { nextAt: cand.at, key: cand.key, minutes: cand.minutes };
     // 今天没了 -> 明天第一段（明天那天 done 会被日期门自动清空）
     const first = list[0];
     const d = new Date(first.at);
     d.setDate(d.getDate() + 1);
-    return { at: d.getTime(), key: first.key, minutes: first.minutes };
+    return { nextAt: d.getTime(), key: first.key, minutes: first.minutes };
   }
 
   async function scheduleNextWake() {
