@@ -3025,49 +3025,6 @@ const ROUND_MARK = '[本轮消息]';
     } catch { /* 记不上就按内存里的走，下一轮再试 */ }
   }
 
-  /** 作品进度：最近七天多了几件、一共几件、最近一件叫什么。
-   *  判据跟 shell 版对齐：有成品（图 / 音频 / PDF / 视频）才算一件，空目录和测试件不算。 */
-  async function piecesProgressText() {
-    const dir = join(cfg.root, 'pieces');
-    const MEDIA = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg',
-      '.mp3', '.wav', '.ogg', '.m4a', '.pdf', '.mp4', '.webm'];
-    let names = [];
-    try {
-      names = await readdir(dir);
-    } catch {
-      return '';
-    }
-    let n = 0;
-    let recent = 0;
-    let newest = null;
-    const now = Date.now();
-    for (const name of names) {
-      if (name.startsWith('.')) continue;
-      const full = join(dir, name);
-      let st;
-      try { st = await stat(full); } catch { continue; }
-      if (!st.isDirectory()) continue;
-      let files = [];
-      try { files = (await readdir(full)).filter((f) => !f.startsWith('.')); } catch { continue; }
-      if (!files.length) continue;
-      if (!files.some((f) => MEDIA.some((e) => f.toLowerCase().endsWith(e)))) continue;
-      n += 1;
-      if (now - st.mtimeMs <= 7 * 86400 * 1000) recent += 1;
-      if (!newest || st.mtimeMs > newest.mtimeMs) newest = { mtimeMs: st.mtimeMs, path: full };
-    }
-    if (n <= 0) return '';
-    let title = '';
-    if (newest) {
-      try {
-        const first = (await readFile(join(newest.path, 'README.md'), 'utf8')).split('\n')[0].trim();
-        const m = /^#\s*([^/／|]{1,30})/.exec(first);
-        if (m) title = m[1].trim();
-      } catch { /* 没 README 就只报数 */ }
-    }
-    let out = recent > 0 ? `最近七天多了 ${recent} 件（一共 ${n} 件）` : `到 ${n} 件了`;
-    if (title) out += `，最近一件叫《${title}》`;
-    return out;
-  }
 
   /** 今天最后一条 material —— 她自己挑的那句「有什么值得跟他讲的」。 */
   async function pingMaterialText() {
