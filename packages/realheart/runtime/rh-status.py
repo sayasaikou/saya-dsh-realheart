@@ -1805,7 +1805,7 @@ def render_config_edit(flash=''):
         + '<div class="cfgbar">'
         '<input type="text" name="__why" placeholder="为什么改（会写进改动记录，可留空）" size="42">'
         '<button type="submit">保存到 config.user.json</button>'
-        '<span class="note">%s</span>'
+        '<span class="note">@@ESCAPE_HINT@@</span>'
         '</div></form>'
         '<script>'
         'function rhSearch(v){'
@@ -1833,7 +1833,14 @@ def render_config_edit(flash=''):
         'return confirm("这些是危险项：\\n"+t.join("、")+"\\n\\n改了要重启才生效。确定？");}'
         '</script>'
         '</div>'
-    ) % esc_hint
+    # 🔴 2026-11-04 23:17 抓到：这里原来是 `) % esc_hint` —— 用 % 格式化拼最后一个占位符。
+    #    而这一整块里塞着**所有字段的 why 文案**，只要哪一条里有个 %（比如「98.6% 的行」），
+    #    整个面板就 500：`ValueError: unsupported format character`。
+    #    而且它坏得很静：页面直接断连，浏览器只显示空白，日志里才看得出。
+    #    那次是 ownerId/msgsDir 两条新文案里的「98.6%」引的 —— 面板从 0.2.115 起就坏了，
+    #    我连着看了两个小时旧页面都没发现（因为 curl 一直失败，我看的是上一次的落盘）。
+    #    改成 replace：这一块以后随便写 % 都不会炸。
+    ).replace('@@ESCAPE_HINT@@', esc_hint)
 
 
 def list_cfg_backups():
