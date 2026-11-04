@@ -423,7 +423,7 @@ border-radius:7px;padding:5px 8px;font:inherit;font-size:12.5px}
 table.cfg input:focus,table.cfg select:focus{outline:none;border-color:#3f5a78}
 .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#a9b2c0}
 /* 2026-11-04：提示词那两项 —— 输入框要够大，内置原文折叠起来不占版面 */
-.bi{margin-top:6px}`n.imap{margin:14px 0 0;border-top:1px solid #232a35;padding-top:10px} .imap summary{cursor:pointer;color:#8f9bb0;font-size:12px} .imap table{margin-top:10px} .imap td{padding:4px 8px;vertical-align:top}
+.bi{margin-top:6px}`n.vault{margin:18px 0 0;border-top:1px solid #232a35;padding-top:12px} .vault h3{margin:0 0 6px;font-size:14px;color:#c9d1e0} .vault .btn{display:inline-block;padding:5px 12px;border-radius:8px;background:#1c2430;border:1px solid #2b3646;color:#9fd0ff;text-decoration:none;font-size:12px} .vault .btn:hover{background:#233046}.imap{margin:14px 0 0;border-top:1px solid #232a35;padding-top:10px} .imap summary{cursor:pointer;color:#8f9bb0;font-size:12px} .imap table{margin-top:10px} .imap td{padding:4px 8px;vertical-align:top}
 /* 2026-11-04: 改过的项 + 恢复默认 */
 .mod{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:8px;background:#3b2f16;color:#e6c07a;font-size:11px;vertical-align:middle}
 .rst{margin-left:8px;font-size:11px;color:#8f9bb0;cursor:pointer;white-space:nowrap} .bi summary{cursor:pointer;color:#8f9bb0;font-size:12px} .bi pre{max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:8px 0 0}
@@ -1640,6 +1640,50 @@ def _inject_map_html():
             '</details>' % (len(INJECT_MAP), rows))
 
 
+def _cfg_vault_html():
+    """导出 / 导入 / 回滚（2026-11-04）。
+
+    沙耶：「还有配套的导出导入，回滚备份等等功能，你懂我意思吧」。
+    备份这件事本来就有 —— 每次保存都会留 `.bak-<时间戳>`，但**从来没人能看见它们**：
+    备份只有「知道文件名并且会 ssh 的人」用得上，而需要回滚的人，
+    正好是刚刚点错的那一个。所以把三样放在一起：
+      ① 导出 —— 下载一份能直接塞回去的 JSON
+      ② 导入 —— 粘贴一份，先校验再写，坏的不落盘
+      ③ 回滚 —— 列出已有备份，一行一个「恢复」
+    """
+    baks = list_cfg_backups()
+    if baks:
+        rows = ''.join(
+            '<tr><td class="mono">%s</td><td class="mono">%d B</td>'
+            '<td><button type="submit" name="__bak" value="%s" onclick="return confirm(\'用这一份覆盖现在的配置？\')">恢复这份</button></td></tr>'
+            % (esc(time.strftime('%m-%d %H:%M:%S', time.localtime(b['at']))), b['size'], esc(b['name']))
+            for b in baks[:12])
+        bak_html = ('<table class="cfg"><tr><th>备份时间</th><th>大小</th><th>回滚</th></tr>%s</table>' % rows)
+        more = ('<p class="note">只列最近 12 份（一共 %d 份）。</p>' % len(baks)) if len(baks) > 12 else ''
+    else:
+        bak_html = '<p class="note">还没有备份 —— 第一次保存之后这里会出现。</p>'
+        more = ''
+    return (
+        '<div class="vault">'
+        '<h3>导出 / 导入 / 回滚</h3>'
+        '<p class="note">这三样都是为了「改坏了能退回去」。'
+        '保存配置时本来就会自动留备份，下面是最近的那些。</p>'
+        '<p><a class="btn" href="config/export">导出成一份 JSON</a>'
+        '<span class="note">带版本号、导出时间，以及「哪几项不是默认值」—— '
+        '一份配置里真正属于你调过的往往只有五六项，全列出来反而看不出自己动过什么。</span></p>'
+        + bak_html + more +
+        '<details class="imap"><summary>导入：粘贴一份 JSON（会先校验，坏的不写）</summary>'
+        '<textarea name="__import_text" rows="8" cols="70" class="mono" '
+        'placeholder=\'{"pingMinMinutes": 45, "freeTimeFocus": ["AI 与科技"]}\'></textarea>'
+        '<p><button type="submit" name="__import" value="1" '
+        'onclick="return confirm(\'用粘贴的这份覆盖现在的配置？\')">导入</button>'
+        '<label class="rst" style="margin-left:10px">'
+        '<input type="checkbox" name="__import_replace"> 整份替换（不勾 = 合并，只改粘贴里有的那几项）</label>'
+        '<span class="note">导入和回滚都会先给现在这份留一份备份，所以它们本身也能退。</span></p>'
+        '</details>'
+        '</div>')
+
+
 def render_config_edit(flash=''):
     schema = _cfg_schema()
     if not schema:
@@ -1757,6 +1801,7 @@ def render_config_edit(flash=''):
         + '<div class="cfgpanels">' + ''.join(panels) + '</div>'
 
         + _inject_map_html()
+        + _cfg_vault_html()
         + '<div class="cfgbar">'
         '<input type="text" name="__why" placeholder="为什么改（会写进改动记录，可留空）" size="42">'
         '<button type="submit">保存到 config.user.json</button>'
@@ -1789,6 +1834,132 @@ def render_config_edit(flash=''):
         '</script>'
         '</div>'
     ) % esc_hint
+
+
+def list_cfg_backups():
+    """config.user.json 的备份清单（新的在前）。
+
+    每次保存都会留一份 `.bak-<时间戳>` —— 那条规矩本来就有，
+    但**从来没人能看见它们**：备份只有「知道文件名并且会 ssh 的人」才用得上，
+    而需要回滚的人，正是刚刚点错的那一个。所以这里把它列到页面上。
+    """
+    d = os.path.dirname(USER_CFG)
+    base = os.path.basename(USER_CFG) + '.bak-'
+    out = []
+    try:
+        for name in os.listdir(d):
+            if not name.startswith(base):
+                continue
+            p = os.path.join(d, name)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            out.append({'name': name, 'size': st.st_size, 'at': st.st_mtime})
+    except OSError:
+        return []
+    out.sort(key=lambda x: x['at'], reverse=True)
+    return out
+
+
+def restore_cfg_backup(name):
+    """从备份恢复。**先给当前那份再留一份**，否则回滚本身就不可逆。"""
+    if not name or os.path.basename(name) != name or not name.startswith(os.path.basename(USER_CFG) + '.bak-'):
+        return False, '备份名不对'
+    src = os.path.join(os.path.dirname(USER_CFG), name)
+    if not os.path.exists(src):
+        return False, '这个备份不在了：%s' % name
+    try:
+        with open(src, encoding='utf-8') as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            return False, '备份里的内容不是一份配置'
+    except Exception as err:
+        return False, '备份读不出来：%s' % err
+    try:
+        stamp = time.strftime('%Y%m%d-%H%M%S')
+        if os.path.exists(USER_CFG):
+            with open(USER_CFG, 'rb') as s, open(USER_CFG + '.bak-' + stamp + '-before-rollback', 'wb') as d:
+                d.write(s.read())
+        tmp = USER_CFG + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+            fh.write('\n')
+        os.replace(tmp, USER_CFG)
+    except Exception as err:
+        return False, '写不进去：%s' % err
+    return True, '已从 %s 恢复（%d 项）—— 重启后生效' % (name, len(data))
+
+
+def export_cfg_text():
+    """导出：一份能直接塞回去的 JSON。
+
+    带上 version / exportedAt / 非默认项的名单 —— 前两个是「这是哪一版导出的」，
+    第三个是给人看的：一份配置里真正属于「我调过」的往往只有五六项，
+    全列出来反而看不出自己动过什么。
+    """
+    schema = _cfg_schema()
+    user = _user_cfg()
+    defs = {}
+    for f in (schema or {}).get('fields') or []:
+        defs[f['key']] = f.get('def')
+    changed = sorted([k for k in user if k in defs and user[k] != defs[k]])
+    return json.dumps({
+        'about': 'realheart config.user.json',
+        'version': (schema or {}).get('version') or '',
+        'exportedAt': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'changedFromDefault': changed,
+        'config': user,
+    }, ensure_ascii=False, indent=2)
+
+
+def import_cfg_text(text, replace=False):
+    """导入：先校验再写，坏的不落盘。
+
+    接受的形状有三种：直接一份 config、导出文件（带 config 键）、或者整段空。
+    校验只做一件事 —— 键必须是真的配置项。**值不在这里判**：
+    插件启动时的 validateConfig 会把坏值挑出来并说清哪一项错了，
+    在这里重写一遍规则，两份规则迟早会漂。
+
+    🔴 默认是**合并**，不是整份替换。理由：人会粘贴 {"pingMinMinutes": 45} 这种片段；
+    整份替换的话，她那 15 项别的配置会静默消失，而页面上看不出少了什么 ——
+    下次重启才发现「怎么没有自由时间了」。要真整份替换，勾那个框，那是显式动作。
+    """
+    if not (text or '').strip():
+        return False, '粘贴的框是空的'
+    try:
+        data = json.loads(text)
+    except Exception as err:
+        return False, '不是合法 JSON：%s' % err
+    if isinstance(data, dict) and isinstance(data.get('config'), dict):
+        data = data['config']
+    if not isinstance(data, dict):
+        return False, '最外层得是一个对象（{"键": 值}）'
+    schema = _cfg_schema()
+    known = {f['key'] for f in (schema or {}).get('fields') or []}
+    if not known:
+        return False, '还没拿到配置描述，写不了'
+    bad = [k for k in data if k not in known]
+    if bad:
+        return False, '这些不是认识的配置项：%s' % '、'.join(sorted(bad)[:6])
+    old = _user_cfg()
+    merged = dict(old)
+    merged.update(data)
+    wrote = dict(data) if replace else merged
+    try:
+        stamp = time.strftime('%Y%m%d-%H%M%S')
+        if os.path.exists(USER_CFG):
+            with open(USER_CFG, 'rb') as s, open(USER_CFG + '.bak-' + stamp + '-before-import', 'wb') as d:
+                d.write(s.read())
+        tmp = USER_CFG + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            json.dump(wrote, fh, ensure_ascii=False, indent=2)
+            fh.write('\n')
+        os.replace(tmp, USER_CFG)
+    except Exception as err:
+        return False, '写不进去：%s' % err
+    how = '整份替换' if replace else '合并'
+    return True, '导入完成（%s：共 %d 项，这次写了 %d 项）—— 重启后生效' % (how, len(wrote), len(data))
 
 
 def apply_config_post(form):
@@ -2037,6 +2208,18 @@ class Handler(BaseHTTPRequestHandler):
         if rest in (b'/debug',):
             self._send(200, build_debug().encode('utf-8'))
             return
+        if rest == b'/config/export':
+            # 2026-11-04：导出。用 attachment 让浏览器直接存成文件 ——
+            # 页面里贴 JSON 的话，人会先复制到别处、再改坏、再找不到原样。
+            data = export_cfg_text().encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Disposition', 'attachment; filename="realheart-config.json"')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'no-store, max-age=0')
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if rest.startswith(b'/config'):
             # 只在真正提交后带 ?ok=... 进来的那一次显示提示
             flash = ''
@@ -2070,7 +2253,14 @@ class Handler(BaseHTTPRequestHandler):
         from urllib.parse import parse_qs, quote
         body = self.rfile.read(n).decode('utf-8', 'replace')
         form = parse_qs(body, keep_blank_values=True)
-        ok, msg = apply_config_post(form)
+        # 同一个表单里三种动作：导入（粘贴一整份 JSON）、回滚（点某个备份）、改配置。
+        # 用哪个按钮决定哪条路 —— 不是靠字段在不在猜，猜错了会「点了保存结果导入了一份空配置」。
+        if '__import' in form:
+            ok, msg = import_cfg_text(form.get('__import_text', [''])[0],                replace=('__import_replace' in form))
+        elif '__bak' in form:
+            ok, msg = restore_cfg_backup(form.get('__bak', [''])[0])
+        else:
+            ok, msg = apply_config_post(form)
         loc = '/%s/config?saved=%s' % (SECRET.decode('utf-8', 'surrogateescape'), quote(msg))
         self.send_response(303)
         self.send_header('Location', loc)
