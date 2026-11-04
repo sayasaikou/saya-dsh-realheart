@@ -1166,6 +1166,35 @@ def _user_cfg():
     return d if isinstance(d, dict) else {}
 
 
+def _list_input(key, danger, cur):
+    """列表型的输入（2026-11-04）。
+
+    两种形状共用一个 textarea：
+      · 对象数组（freeTimeSlots）：一行一段，写成「07:00 60」= 起点 + 分钟
+      · 字符串数组（freeTimeFocus / voiceHints）：一行一条
+
+    为什么不做成一串动态输入框：那种要一堆 DOM 操作，出错时整页乱；
+    而这块最多四五行，textarea 加一个「+ 加一段」已经够用 ——
+    而且它天然可粘贴、可整段换掉。
+    """
+    if key == 'freeTimeSlots':
+        rows = "\n".join("%s %s" % (str(x.get('start', '')), str(x.get('minutes', '')))
+                         for x in (cur or []) if isinstance(x, dict))
+        hint = '一行一段：「07:00 60」= 早上七点起、最多一小时。'
+        add = '07:00 60'
+    else:
+        rows = "\n".join(str(x) for x in (cur or []))
+        hint = '一行一条。按回车换下一条。'
+        add = ''
+    btn = ''
+    if add:
+        btn = ('<button type="button" onclick="var t=document.querySelector(\'textarea[name=%s]\');'
+               't.value=(t.value.replace(/\\s+$/, \'\'))+\'\\n%s\';t.focus()">+ 加一段</button>'
+               % (key, add))
+    return ('<textarea name="%s"%s data-was="%s" rows="4" cols="30" class="mono">%s</textarea>'
+            '<br><span class="why">%s</span>%s' % (key, danger, esc(rows), esc(rows), esc(hint), btn))
+
+
 def _field_input(f, cur):
     # noInput 的项（P-3b 那两条）在页面上**只显示、不给输入框**。
     # 理由不是「藏起来」，是打开它本身必须是一次高成本动作：
@@ -1174,6 +1203,9 @@ def _field_input(f, cur):
         return '<span class="mono">%s</span><br><span class="why">只能在命令行改（见 realheart mood-override），这里不给输入框</span>' % esc(cur)
     key = esc(f['key'])
     danger = ' data-danger="1"' if f.get('level') == 'danger' else ''
+    # 2026-11-04：列表型（freeTimeSlots / freeTimeFocus / voiceHints）
+    if isinstance(f.get('def'), list):
+        return _list_input(key, danger, cur)
     if isinstance(f.get('def'), bool):
         now = bool(cur)
         opts = ''.join(
@@ -1669,6 +1701,20 @@ def apply_config_post(form):
         # 表现是「面板上改了、重启后没生效」—— 最难查的那一种。
         if isinstance(meta.get('def'), bool):
             val = (raw == 'true')
+        elif isinstance(meta.get('def'), list):
+            # 2026-11-04：列表型。textarea 里一行一条（对象数组写成「07:00 60」）。
+            # 不做这个转换就直接写回去的话，config.user.json 里会变成一个字符串，
+            # 插件的校验会判它「不是数组」然后丢掉 —— 表现就是「改了没生效」。
+            rows = [x.strip() for x in str(raw or '').splitlines() if x.strip()]
+            if key == 'freeTimeSlots':
+                val = []
+                for ln in rows:
+                    mm = re.match(r'^(\d{1,2}:\d{2})\s+(\d+)$', ln)
+                    if not mm:
+                        return False, '%s 里有一行看不懂：「%s」 —— 要写成 07:00 60' % (key, ln)
+                    val.append({'start': mm.group(1), 'minutes': int(mm.group(2))})
+            else:
+                val = rows
         elif isinstance(meta.get('def'), int):
             try:
                 val = int(str(raw).strip())

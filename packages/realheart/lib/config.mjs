@@ -98,6 +98,17 @@ export const DEFAULTS = {
   freeTime: true,
   freeTimeProfile: 'freetime',
   freeTimeFrom: 10,
+  // ── 2026-11-04：自由时间做成列表（沙耶要的：面板可配、加号加一条）──
+  //
+  // 以前只有一个 freeTimeFrom（起点），实际几点由随机推 0~2 小时决定。
+  // 现在他定了四个点（早 7 / 午 12 / 晚 6 / 凌晨 2），还要能在面板里加减，所以改成列表。
+  //
+  // ⚠️ minutes 是**天花板不是闹钟**：实测她最长只跑 22 分钟（11-03 四回：14 / 22 / 6 / 15.5）。
+  //    它现在唯一的用处是写进 prompt 告诉她「这次大概有多长」。
+  freeTimeSlots: [{ start: '07:00', minutes: 60 }],
+  // 自由时间关心什么方向（沙耶 2026-11-04 要的）。
+  // ⚠️ 是**建议**不是白名单 —— 写成白名单她就只剩那几个题材，比现在更窄。
+  freeTimeFocus: [],
   // 短唤醒：每隔一段**随机**时间叫她醒一下，只做一件事 —— 此刻有没有想说的。
   // min = 0 表示关（默认关）。
   //
@@ -159,6 +170,11 @@ export const Config = Schema.object({
   freeTime: Schema.boolean().default(DEFAULTS.freeTime),
   freeTimeProfile: Schema.string().default(DEFAULTS.freeTimeProfile),
   freeTimeFrom: Schema.number().min(RANGES.freeTimeFrom.min).max(RANGES.freeTimeFrom.max).default(DEFAULTS.freeTimeFrom),
+  freeTimeSlots: Schema.array(Schema.object({
+    start: Schema.string(),
+    minutes: Schema.number(),
+  })).default(DEFAULTS.freeTimeSlots),
+  freeTimeFocus: Schema.array(Schema.string()).default(DEFAULTS.freeTimeFocus),
   pingContext: Schema.boolean().default(DEFAULTS.pingContext),
   pingMinMinutes: Schema.number().min(0).max(1440).default(DEFAULTS.pingMinMinutes),
   pingMaxMinutes: Schema.number().min(0).max(1440).default(DEFAULTS.pingMaxMinutes),
@@ -256,6 +272,29 @@ export function validateConfig(cfg = {}) {
       reason: `不是 0–23 的整点`,
       fix: `改成 0–23 的整数，默认 ${DEFAULTS.freeTimeFrom}（上午十点之后）`,
     });
+  }
+
+  // ── 自由时间的时段列表（2026-11-04）──
+  // 为什么手校不用 Schema：面板写的是 JSON，某一项写错了 Schema 会整份拒，
+  // 那样她就没自由时间了 —— 而错的只是一条。逐条校，错的丢哪条就说哪条。
+  if (!Array.isArray(c.freeTimeSlots)) {
+    out.push({ key: 'freeTimeSlots', value: c.freeTimeSlots, reason: '不是数组', fix: '写成 [{ "start": "07:00", "minutes": 60 }] 这样的列表' });
+  } else {
+    c.freeTimeSlots.forEach((slot, i) => {
+      if (!slot || typeof slot !== 'object') {
+        out.push({ key: 'freeTimeSlots', value: slot, reason: `第 ${i + 1} 条不是对象`, fix: '每条写成 { "start": "07:00", "minutes": 60 }' });
+        return;
+      }
+      if (typeof slot.start !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(slot.start)) {
+        out.push({ key: 'freeTimeSlots', value: slot.start, reason: `第 ${i + 1} 条的 start 不是 HH:MM`, fix: '写成 07:00 / 12:30 这种' });
+      }
+      if (!Number.isFinite(slot.minutes) || slot.minutes < 1 || slot.minutes > 720) {
+        out.push({ key: 'freeTimeSlots', value: slot.minutes, reason: `第 ${i + 1} 条的 minutes 不在 1–720 之间`, fix: '写分钟数，比如 60' });
+      }
+    });
+  }
+  if (!Array.isArray(c.freeTimeFocus)) {
+    out.push({ key: 'freeTimeFocus', value: c.freeTimeFocus, reason: '不是数组', fix: '写成 ["AI 工程", "语言和文字"] 这样的字符串列表' });
   }
 
   // ── 四个目录 ──

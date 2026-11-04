@@ -1500,6 +1500,10 @@ const ROUND_MARK = '[本轮消息]';
         const madeIdx = act.indexOf('做了');
         const made = madeIdx > 0 ? act.slice(madeIdx) : act;
         lines.push(`· 自由时间 ${done.length} 次${at ? '，最近一次 ' + at : ''}：${clip(made, 180)}`);
+        // 2026-11-04：她自己写的那句「有什么值得讲的」比 activity 有用得多 ——
+        // activity 是流水账，material 是她自己挑出来的那一句。
+        const mat = typeof last.material === 'string' ? last.material.trim() : '';
+        if (mat) lines.push(`· 那回你自己留了一句：${clip(mat, 160)}`);
         const arts = Array.isArray(last.artifacts) ? last.artifacts.filter((x) => typeof x === 'string') : [];
         if (arts.length) {
           const dir = String(arts[0]).replace(/\/[^/]+$/, '');
@@ -2701,16 +2705,20 @@ const ROUND_MARK = '[本轮消息]';
    */
   const PING_PROMPT = '你醒了一下。没人找你，也没人在跟你说话。'
     + '这不是在问你什么，是给你一点空着的时间。'
-    + '这会儿要是有想对他说的 —— 一个念头、一句吐槽、看到的东西、或者就是想找他说句话 —— '
+    + '这会儿要是心里有一句想对他说的 —— 不管是个念头、一句吐槽、看到的什么东西，还是就想找他说话 —— '
     + '用 ' + join(QQROOT, 'work', 'bin', 'say') + ' "..." 发过去，他手机上会真收到。'
-    + '要是手边有个能顺手弄两下的东西（算个式子、看一眼上次没弄明白的地方），也可以弄。'
-    + '（「弄两下」就是弄两下 —— 这是个几分钟的空档，不是让你开一件新的作品。）'
+    // 2026-11-04（沙耶：「看不懂是一方面，像汇报而不是聊天也是一方面」）：
+    //   上一版开头先教「弄两下 + 记一行」，那是个干活的框 —— 她醒来先看手边有什么事，
+    //   干完把干的件事发出去，发出来就是工作汇报（「在核《过线》一个口径的时候发现…」）。
+    //   加一条硬禁令 + 一条替代说法：不说你改了什么，说你为什么想给他看。
+    + '说的时候别报工作。他不懂你在核什么口径，也不需要懂 —— 那是你的事，不是他的话题。'
+    + '要是刚做完一件东西，说的是「这东西里什么让你想给他看」，不是「我改了哪一行」。'
+    + '要是手边有个能顺手弄两下的东西，也可以弄（弄两下就是弄两下 —— 这是几分钟的空档，不是让你开新作品）。'
     // 2026-11-02 夜加的落点。为什么必须有：
     //   上一版给了「可以弄」的口，没给「弄完写哪」—— 22:10 那次她真动了，
     //   43 次工具调用、2 分 46 秒，一个字没留下来。那 43 下只躺在会话包里，
     //   而那正是她下次醒来读不到的地方 ⇒ 对她自己等于没发生。
-    + '弄完了用 ' + join(QQROOT, 'work', 'bin', 'note') + ' "..." 记一行（一两句话就行）。'
-    + '不记下来，下次醒来的你看不到这次弄过什么。'
+    + '弄完了想记就记一行，用 ' + join(QQROOT, 'work', 'bin', 'note') + ' "..." 记 —— 不记也行，那是给下次醒来的你看的，不是交作业。'
     // 2026-11-02 夜：原来只写「想说就说」，那是个无对象的邀请 —— 没对象就只能掏空气，
     // 掏出来的是「继续睡了」或者「今天有点闷」。沙耶那句「不能只是硬聊」说的就是这。
     // 改成有对象：手边这件 / 想到他。有对象的邀请才长得出内容。
@@ -2734,26 +2742,53 @@ const ROUND_MARK = '[本轮消息]';
    * 把上次没完的摆出来，她才有机会说「接着弄」或者「换一个」或者「今天不弄」。
    * 没有未完成的也问一句，一样允许答不做。
    */
-  async function buildFreePrompt() {
+  async function buildFreePrompt(slot) {
+    const lines = [FREE_PROMPT];
+
+    // 2026-11-04：这一次大概多长（沙耶在面板里给每段配的 minutes）。
+    // 它是个天花板不是闹钟 —— 实测她最长只跑 22 分钟，写着只是让她知道分寸。
+    const mins = Number(slot?.minutes);
+    if (Number.isFinite(mins) && mins > 0) {
+      lines.push('', `（这一次大概有 ${mins} 分钟。不用把时间用完 —— 做完就收，做不完也没事。）`);
+    }
+
+    // 2026-11-04：他最近想让她多看什么（config.freeTimeFocus）。
+    // ⚠️ 措辞必须是「多看两眼」不是「只看这些」—— 写成白名单她就只剩那几个题材，
+    //    比不配还窄。沙耶要的是给方向，不是画围栏。
+    const focus = Array.isArray(cfg.freeTimeFocus)
+      ? cfg.freeTimeFocus.filter((x) => typeof x === 'string' && x.trim())
+      : [];
+    if (focus.length) {
+      lines.push('', `（最近他对这些有兴趣：${focus.map((x) => x.trim()).join('、')}。撞见相关的多看两眼；撞见别的也行，不用只挑这些。）`);
+    }
+
+    // 2026-11-04：**让她自己写「素材」**。
+    // 为什么不能由我去截 activity：activity 是流水账（600 多字「看了 A、B、C。做了 D」），
+    // 我截前 70 字全是逛网列表，截「做了」后面又全是技术细节 —— 两种都错的。
+    // 她自己知道哪一句值得讲。所以让她写。
+    lines.push('', '（做完往 free-time.jsonl 追那一行 JSON 的时候，除了 activity，再写一个 material：'
+      + '这次有什么值得跟他讲的 —— 一句，人话，不讲口径不讲数据，就是「有什么好说的」。'
+      + '那句会被带到你下次醒来的时候，也会带到你跟他的对话里。）');
+
+    // 上次没弄完的那件事（11-01 加的，不动）
     try {
       const open = openWorks(await readWorks());
-      if (!open.length) {
-        return FREE_PROMPT + String.fromCharCode(10) + '（今天想做点什么吗？不想做也行，没什么必须做的。）';
+      if (open.length) {
+        const w = open[0];
+        lines.push(
+          '',
+          '【上次没弄完的一件事】',
+          String(w.what || '').trim(),
+          w.stage ? '到哪了：' + String(w.stage).trim() : '',
+          w.next ? '想下次从：' + String(w.next).trim() : '',
+          '（接着弄、换一件、或者今天不弄，都行。不弄也不欠谁的。）',
+        );
       }
-      const w = open[0];
-      const lines = [
-        FREE_PROMPT,
-        '',
-        '【上次没弄完的一件事】',
-        String(w.what || '').trim(),
-        w.stage ? '到哪了：' + String(w.stage).trim() : '',
-        w.next ? '想下次从：' + String(w.next).trim() : '',
-        '（接着弄、换一件、或者今天不弄，都行。不弄也不欠谁的。）',
-      ].filter(Boolean);
-      return lines.join('\n');
     } catch {
-      return FREE_PROMPT;
+      // 读不到就不拼这段 —— 叫醒本身比漂亮更重要
     }
+
+    return lines.filter((x) => x !== undefined && x !== null).join('\n');
   }
 
   async function writeFreePrompt() {
@@ -3037,9 +3072,12 @@ PY
     }
   }
 
-  async function wakeHer() {
+  async function wakeHer(slot) {
     const stamp = new Date().toISOString();
-    const r = await spawnReady('dsh', ['--profile', cfg.freeTimeProfile, await buildFreePrompt()], {
+    // 2026-11-04：先把「这一段跑过了」记下来再叫。先叫后记的话，
+    // 呼醒后插件崩了，重启会重算 —— 而重算看到 done 里没它，就会再叫一次。
+    if (slot?.key) await markFreeDone(slot.key);
+    const r = await spawnReady('dsh', ['--profile', cfg.freeTimeProfile, await buildFreePrompt(slot)], {
       cwd: QQROOT, detached: true, stdio: 'ignore', env: process.env,
     });
     if (!r.ok) {
@@ -3058,6 +3096,57 @@ PY
   const freeScheduleFile = () => join(cfg.stateDir, 'free-time-schedule.json');
 
   /**
+   * 「今天哪几段已经跑过了」（2026-11-04）。
+   *
+   * 为什么必须有它：以前只有一个 freeTimeFrom + 随机推 0~2 小时，
+   * 落一个 nextAt 就够。现在是一天好几段 —— 只落「下一个时刻」的话，
+   * 重启后它重新算，算出来还是「今天剩下那几段里最早的」，看着没错，
+   * 但如果重启发生在某段刚跑完之后、又没记住那段跑过，就会重复叫。
+   *
+   * 键名用 start（'07:00'），不用时间戳 —— 时间戳每天都不一样，
+   * 写 new Date().toDateString() 做日期门。
+   */
+  const freeDoneFile = () => join(cfg.stateDir, 'free-time-done.json');
+
+  async function readFreeDone() {
+    const today = new Date().toDateString();
+    try {
+      const raw = await readFile(freeDoneFile(), 'utf8');
+      const o = JSON.parse(raw) || {};
+      if (o.date !== today) return { date: today, done: [] };   // 跳天就清空
+      return { date: today, done: Array.isArray(o.done) ? o.done : [] };
+    } catch {
+      return { date: today, done: [] };
+    }
+  }
+
+  async function markFreeDone(key) {
+    const st = await readFreeDone();
+    if (!st.done.includes(key)) st.done.push(key);
+    try {
+      await writeFile(freeDoneFile(), JSON.stringify(st), 'utf8');
+    } catch (err) {
+      log(`自由时间：「${key} 跑过了」没存下来（${err?.message ?? err}）—— 重启后可能重叫一次`, 'error');
+    }
+  }
+
+  /** 今天的几段各自落在哪个时刻（按时间排好） */
+  function slotsToday(from = new Date()) {
+    const raw = Array.isArray(cfg.freeTimeSlots) && cfg.freeTimeSlots.length
+      ? cfg.freeTimeSlots
+      : [{ start: '07:00', minutes: 60 }];
+    const out = [];
+    for (const sl of raw) {
+      const m = /^(\d{1,2}):(\d{2})$/.exec(String(sl?.start ?? ''));
+      if (!m) continue;
+      const d = new Date(from);
+      d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+      out.push({ key: String(sl.start), at: d.getTime(), minutes: Number(sl.minutes) || 60 });
+    }
+    return out.sort((x, y) => x.at - y.at);
+  }
+
+  /**
    * 下次叫醒的时刻要落盘（2026-11-01）。
    *
    * 为什么：原来每次启动都重新掷一次随机时刻 —— 一天重启三次就有三个独立的
@@ -3070,52 +3159,73 @@ PY
   async function readScheduledAt() {
     try {
       const raw = await readFile(freeScheduleFile(), 'utf8');
-      const t = Number(JSON.parse(raw)?.nextAt);
-      return Number.isFinite(t) && t > 0 ? t : 0;
+      const o = JSON.parse(raw) || {};
+      const t = Number(o.nextAt);
+      if (!Number.isFinite(t) || t <= 0) return null;
+      // 旧文件只有 nextAt / at —— key 为空时就只是「某个时刻」，不带时段身份
+      return { nextAt: t, key: String(o.key || ''), minutes: Number(o.minutes) || 60 };
     } catch {
-      return 0;
+      return null;
     }
   }
 
-  async function writeScheduledAt(ms) {
+  async function writeScheduledAt(slot) {
     try {
-      await writeFile(freeScheduleFile(), JSON.stringify({ nextAt: ms, at: localStamp() }), 'utf8');
+      await writeFile(freeScheduleFile(), JSON.stringify({
+        nextAt: slot.at, key: slot.key || '', minutes: slot.minutes || 60, at: localStamp(),
+      }), 'utf8');
     } catch (err) {
       log(`自由时间：下次时刻没存下来（${err?.message ?? err}）`, 'error');
     }
   }
 
-  /** 起点往后随机 0~2 小时 —— 固定的时刻就叫排班，不叫自由 */
-  function pickNextAt(from = new Date()) {
-    const next = new Date(from);
-    next.setHours(cfg.freeTimeFrom, 0, 0, 0);
-    next.setTime(next.getTime() + Math.floor(Math.random() * 2 * 3600 * 1000));
-    if (next <= from) next.setDate(next.getDate() + 1);
-    return next.getTime();
+  /**
+   * 下一段该叫哪一回（2026-11-04，从「随机推 0~2 小时」改成按时段列表选）。
+   *
+   * 选法：今天还没跑过、且时间还没到的最近一段；
+   *       今天全跑完或全过点了 -> 明天的第一段。
+   *
+   * ⚠️ 过点了但没跑的那一段**不补**。理由跟 11-01 那条一致：
+   *    昨天的自由时间今天补，那叫补作业，不叫自由。
+   */
+  async function pickNextSlot(from = new Date()) {
+    const st = await readFreeDone();
+    const list = slotsToday(from);
+    if (!list.length) return { at: from.getTime() + 3600000, key: '', minutes: 60 };
+    const cand = list.find((x) => !st.done.includes(x.key) && x.at > from.getTime());
+    if (cand) return cand;
+    // 今天没了 -> 明天第一段（明天那天 done 会被日期门自动清空）
+    const first = list[0];
+    const d = new Date(first.at);
+    d.setDate(d.getDate() + 1);
+    return { at: d.getTime(), key: first.key, minutes: first.minutes };
   }
 
   async function scheduleNextWake() {
     const now = Date.now();
-    let nextAt = await readScheduledAt();
-    if (!nextAt) {
-      nextAt = pickNextAt(new Date(now));
-      await writeScheduledAt(nextAt);
-    } else if (nextAt <= now) {
-      const was = new Date(nextAt);
+    let st = await readScheduledAt();
+    if (!st) {
+      st = await pickNextSlot(new Date(now));
+      await writeScheduledAt(st);
+    } else if (st.nextAt <= now) {
+      const was = new Date(st.nextAt);
+      // 到点那一刻进程不在 -> 同一天就补叫一次（那一段的历史里就是空的）
       if (was.toDateString() === new Date(now).toDateString()) {
         log(`自由时间：到点那一刻不在（${was.toLocaleString()}），补叫一次`);
-        void wakeHer();
+        void wakeHer(st);
       }
-      nextAt = pickNextAt(new Date(now));
-      await writeScheduledAt(nextAt);
+      st = await pickNextSlot(new Date(now));
+      await writeScheduledAt(st);
     }
-    const delay = Math.max(1000, nextAt - Date.now());
+    const delay = Math.max(1000, st.nextAt - Date.now());
+    // 捕获 st — 不捕获的话闭包拿到的是重算过的那个，记的会是下一段
+    const cur = st;
     const timer = setTimeout(() => {
-      void wakeHer();
+      void wakeHer(cur);
       void scheduleNextWake();
     }, delay);
     if (typeof timer.unref === 'function') timer.unref();
-    log(`下一次自由时间：${new Date(nextAt).toLocaleString()}`);
+    log(`下一次自由时间：${new Date(cur.nextAt).toLocaleString()}${cur.key ? '（' + cur.key + ' 那段）' : ''}`);
   }
   /**
    * 把账本收成只有自己读得到（P-4 那条「账本目录 600」）。
