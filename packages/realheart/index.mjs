@@ -2945,6 +2945,235 @@ const ROUND_MARK = '[本轮消息]';
       log(`ping.json 没写下来（${err?.code ?? err?.message ?? err}）—— 短唤醒不会跑`, 'error');
     }
   }
+
+  // ── 短唤醒：插件内定时器（2026-11-04）──
+  //
+  // 为什么搬进来：原来靠 cron 每 5 分钟跑一次 ping-run.sh —— bash + python3 + cron 三样外部依赖。
+  // 换台机器装 realheart，这三样都没有 ⇒ 短唤醒永远不跑；而包里躺着一份 11-02 的旧脚本，
+  // 让人以为「已经装了」。沙耶：「把这些要做进插件的东西都打包做进去」。
+  //
+  // 现在跟自由时间一套机制：进程内 setTimeout。状态落 ping.last（毫秒时间戳），
+  // 文件名跟 shell 版一样 —— 两版并存或者换回去都不会读错。
+  //
+  // ⚠️ 上线时**必须把 crontab 里那行 ping-run.sh 停掉**，否则两套一起跑，双叫、双花钱。
+  const pingLastFile = () => join(DSH_HOME, 'realheart', 'ping.last');
+
+  async function readPingLast() {
+    try {
+      const n = Number((await readFile(pingLastFile(), 'utf8')).trim());
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  async function writePingLast(ms) {
+    try {
+      await mkdir(dirname(pingLastFile()), { recursive: true });
+      await writeFile(pingLastFile(), String(ms), 'utf8');
+    } catch { /* 记不上就按内存里的走，下一轮再试 */ }
+  }
+
+  /** 作品进度：最近七天多了几件、一共几件、最近一件叫什么。
+   *  判据跟 shell 版对齐：有成品（图 / 音频 / PDF / 视频）才算一件，空目录和测试件不算。 */
+  async function piecesProgressText() {
+    const dir = join(cfg.root, 'pieces');
+    const MEDIA = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg',
+      '.mp3', '.wav', '.ogg', '.m4a', '.pdf', '.mp4', '.webm'];
+    let names = [];
+    try {
+      names = await readdir(dir);
+    } catch {
+      return '';
+    }
+    let n = 0;
+    let recent = 0;
+    let newest = null;
+    const now = Date.now();
+    for (const name of names) {
+      if (name.startsWith('.')) continue;
+      const full = join(dir, name);
+      let st;
+      try { st = await stat(full); } catch { continue; }
+      if (!st.isDirectory()) continue;
+      let files = [];
+      try { files = (await readdir(full)).filter((f) => !f.startsWith('.')); } catch { continue; }
+      if (!files.length) continue;
+      if (!files.some((f) => MEDIA.some((e) => f.toLowerCase().endsWith(e)))) continue;
+      n += 1;
+      if (now - st.mtimeMs <= 7 * 86400 * 1000) recent += 1;
+      if (!newest || st.mtimeMs > newest.mtimeMs) newest = { mtimeMs: st.mtimeMs, path: full };
+    }
+    if (n <= 0) return '';
+    let title = '';
+    if (newest) {
+      try {
+        const first = (await readFile(join(newest.path, 'README.md'), 'utf8')).split('\n')[0].trim();
+        const m = /^#\s*([^/／|]{1,30})/.exec(first);
+        if (m) title = m[1].trim();
+      } catch { /* 没 README 就只报数 */ }
+    }
+    let out = recent > 0 ? `最近七天多了 ${recent} 件（一共 ${n} 件）` : `到 ${n} 件了`;
+    if (title) out += `，最近一件叫《${title}》`;
+    return out;
+  }
+
+  /** 今天最后一条 material —— 她自己挑的那句「有什么值得跟他讲的」。 */
+  async function pingMaterialText() {
+    try {
+      const raw = await readFile(join(cfg.stateDir, 'free-time.jsonl'), 'utf8');
+      const d = new Date();
+      const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const out = [];
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        let row;
+        try { row = JSON.parse(line); } catch { continue; }
+        const ts = String(row.ts || row.at || '');
+        const m = typeof row.material === 'string' ? row.material.trim() : '';
+        if (!m || !ts.startsWith(day)) continue;
+        out.push(m);
+      }
+      return out.length ? out[out.length - 1].slice(0, 160) : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** 上次醒着的时候记的那一行（note 写的 small.jsonl）。给人自己接上，不是给他讲的话题。 */
+  async function pingLastNoteText() {
+    try {
+      const raw = await readFile(join(DSH_HOME, 'realheart', 'small.jsonl'), 'utf8');
+      let last = null;
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        let row;
+        try { row = JSON.parse(line); } catch { continue; }
+        const did = String(row.did || '').trim();
+        if (did) last = did;
+      }
+      if (!last) return '';
+      return last.length > 80 ? last.slice(0, 80) + '…' : last;
+    } catch {
+      return '';
+    }
+  }
+
+  /** 此刻的调子（心情账本最后一条）。只给 feeling 和等级，不给来由。 */
+  async function pingToneText() {
+    try {
+      const moods = await readMood();
+      const last = moods[moods.length - 1];
+      if (!last) return '';
+      const f = String(last.feeling || '').trim();
+      if (!f) return '';
+      const lv = Number(last.level);
+      return Number.isFinite(lv) ? `${f}（${lv}/10）` : f;
+    } catch {
+      return '';
+    }
+  }
+
+  /** 短唤醒那一整段提示词（跟 shell 版逐段对齐：进度 / 素材 / 他最后说的 / 上次记的 / 调子）。 */
+  async function buildPingPrompt() {
+    const parts = [PING_PROMPT];
+    const prog = await piecesProgressText();
+    if (prog) parts.push('', `（你自己那条线：${prog}。给你自己定个位，不用在回复里提它。）`);
+    const mat = await pingMaterialText();
+    if (mat) parts.push('', `（你自由时间留下的那句：${mat} —— 想接着说就说，不想说就算了，不用换种说法再说一遍。）`);
+    const talk = await recentTalkText();
+    if (talk) {
+      parts.push('', `（他今天最后跟你说的话：${talk.replace(/^· /gm, '')} —— 只是让你知道这边走到哪了，不用接，也不用回。）`);
+    }
+    const note = await pingLastNoteText();
+    if (note) parts.push('', `（你上次醒着的时候记过一行：${note}。那是给你自己接上的，不是给他讲的话题。）`);
+    if (cfg.pingContext !== false) {
+      const tone = await pingToneText();
+      if (tone) parts.push('', `（你此刻的调子：${tone}。这是调子，不是内容 —— 它影响你怎么说，但别把它说出来。）`);
+    }
+    return parts.join('\n');
+  }
+
+  /** 短唤醒的时段窗口。跨午夜（比如 22 点到次日 6 点）也认。 */
+  function pingWindow() {
+    const from = Number.isFinite(Number(cfg.pingFromHour)) ? Number(cfg.pingFromHour) : 9;
+    const to = Number.isFinite(Number(cfg.pingToHour)) ? Number(cfg.pingToHour) : 23;
+    return { from, to };
+  }
+  function inPingWindow(d, from, to) {
+    const h = d.getHours();
+    return from <= to ? (h >= from && h < to) : (h >= from || h < to);
+  }
+  /** 落在窗口外就推到下一个窗口开始 —— 深夜不叫醒她，不是「跳过」，是「顺延」。 */
+  function snapIntoPingWindow(ms, from, to) {
+    if (inPingWindow(new Date(ms), from, to)) return ms;
+    const up = new Date(ms);
+    up.setHours(from, 0, 0, 0);
+    if (up.getTime() <= ms) up.setDate(up.getDate() + 1);
+    return up.getTime();
+  }
+
+  let pingTimer = null;
+  async function startPingLoop() {
+    const min = Number(cfg.pingMinMinutes) || 0;
+    if (min <= 0) {
+      log('短唤醒：关着（pingMinMinutes = 0）');
+      return;
+    }
+    const maxRaw = Number(cfg.pingMaxMinutes) || 0;
+    const max = maxRaw > 0 ? Math.max(maxRaw, min) : min;
+    const { from, to } = pingWindow();
+    const gapMs = (a, b) => (Math.floor(Math.random() * (b - a + 1)) + a) * 60000;
+
+    const arm = (at) => {
+      if (pingTimer) clearTimeout(pingTimer);
+      const delay = Math.max(1000, at - Date.now());
+      pingTimer = setTimeout(() => { void fire(); }, delay);
+      if (typeof pingTimer.unref === 'function') pingTimer.unref();
+      log(`短唤醒：下一次 ${new Date(at).toLocaleString()}（间隔 ${min}–${max} 分钟，${from}–${to} 点）`);
+    };
+
+    const fire = async () => {
+      try {
+        // 先拼 prompt 再落时间戳：拼挂了不该把「已经叫过」记上。
+        const prompt = await buildPingPrompt();
+        await writePingLast(Date.now());
+        // 补发她之前没发出去的话（say --flush）——跟「叫不叫她」是两件事，
+        // 所以放在叫醒之前，且失败不影响这一轮。
+        try {
+          const sayPath = join(QQROOT, 'work', 'bin', 'say');
+          if (existsSync(sayPath)) await execFileAsync(sayPath, ['--flush']).catch(() => {});
+        } catch { /* 补发失败不挡叫醒 */ }
+        const r = await spawnReady('dsh', ['--profile', cfg.freeTimeProfile, prompt], {
+          cwd: QQROOT, detached: true, stdio: 'ignore', env: process.env,
+        });
+        if (!r.ok) {
+          log(`短唤醒叫不起来她：${r.error?.code === 'ENOENT' ? '找不到 dsh（PATH 变了？）' : (r.error?.message ?? r.error)}`, 'error');
+        } else {
+          r.child.unref();
+          log(`短唤醒：已叫她（PID ${r.child.pid}）`);
+        }
+      } catch (err) {
+        log(`短唤醒这一轮出错：${err?.message ?? err}`, 'error');
+      } finally {
+        const m2 = Number(cfg.pingMinMinutes) || 0;
+        if (m2 > 0) {
+          const x2 = Math.max(Number(cfg.pingMaxMinutes) || 0, m2);
+          const w = pingWindow();
+          arm(snapIntoPingWindow(Date.now() + gapMs(m2, x2), w.from, w.to));
+        }
+      }
+    };
+
+    let last = await readPingLast();
+    const now = Date.now();
+    // last 将来时（时钟被调过）就当没有 —— 不能因此一直不叫。
+    if (!last || last > now) last = now;
+    let nextAt = snapIntoPingWindow(last + gapMs(min, max), from, to);
+    if (nextAt <= now) nextAt = snapIntoPingWindow(now + gapMs(min, max), from, to);
+    arm(nextAt);
+  }
+
   /**
    * note 脚本的原文（2026-11-02 夜）。
    *
@@ -3481,6 +3710,14 @@ PY
       const freeErr = await ensureFreeProfile();
       if (freeErr) log(`自由时间没铺好（${freeErr}）`, 'error');
       else await scheduleNextWake();
+    }
+
+    // 短唤醒：插件内定时器（2026-11-04 从 cron 搬进来）。
+    // ⚠️ 装在有 cron 那台的时候，**先停 cron 那行**，否则两套一起跑、双叫双花钱。
+    try {
+      await startPingLoop();
+    } catch (err) {
+      log(`短唤醒没排上：${err?.message ?? err}`, 'error');
     }
 
     const pageUrl = await ensureRuntime();
