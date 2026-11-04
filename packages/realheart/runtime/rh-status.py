@@ -422,6 +422,12 @@ table.cfg input,table.cfg select{background:#0e1014;color:#e6e8ec;border:1px sol
 border-radius:7px;padding:5px 8px;font:inherit;font-size:12.5px}
 table.cfg input:focus,table.cfg select:focus{outline:none;border-color:#3f5a78}
 .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#a9b2c0}
+/* 2026-11-04：提示词那两项 —— 输入框要够大，内置原文折叠起来不占版面 */
+.bi{margin-top:6px}
+/* 2026-11-04: 改过的项 + 恢复默认 */
+.mod{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:8px;background:#3b2f16;color:#e6c07a;font-size:11px;vertical-align:middle}
+.rst{margin-left:8px;font-size:11px;color:#8f9bb0;cursor:pointer;white-space:nowrap} .bi summary{cursor:pointer;color:#8f9bb0;font-size:12px} .bi pre{max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:8px 0 0}
+textarea.mono{line-height:1.5;white-space:pre-wrap;width:100%;max-width:640px}
 .pend{display:inline-block;margin-top:3px;color:#d8a13a;font-size:11px;line-height:1.5}
 .cfgsearch{margin:10px 0 8px;display:flex;gap:10px;align-items:center}
 .cfgbar{margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -1203,6 +1209,16 @@ def _field_input(f, cur):
         return '<span class="mono">%s</span><br><span class="why">只能在命令行改（见 realheart mood-override），这里不给输入框</span>' % esc(cur)
     key = esc(f['key'])
     danger = ' data-danger="1"' if f.get('level') == 'danger' else ''
+    # 2026-11-04：长文本（提示词）。判据用显式 long，不按长度猜 ——
+    # 猜的话，一句 90 字的路径说明也会变成大框，页面立刻乱。
+    # 下面那个 details 装的是**内置原文**：这些项的默认值是空串（空 = 用内置），
+    # 光看输入框是空的，人会以为「这里本来就是空的」。
+    if f.get('long'):
+        b = f.get('builtin') or ''
+        hint = ('<details class="bi"><summary>留空时用的是内置这版（点开看原文）</summary>'
+                '<pre class="mono">%s</pre></details>' % esc(b)) if b else ''
+        return ('<textarea name="%s"%s data-was="%s" rows="10" cols="70" class="mono">%s</textarea>%s'
+                % (key, danger, esc(cur), esc(cur), hint))
     # 2026-11-04：列表型（freeTimeSlots / freeTimeFocus / voiceHints）
     if isinstance(f.get('def'), list):
         return _list_input(key, danger, cur)
@@ -1227,6 +1243,7 @@ GROUP_META = [
     ('E', 'E · 她能干什么', True),
     ('F', 'F · 钱与资源', False),
     ('G', 'G · 出事了怎么办', False),
+    ('H', 'H · 她怎么说话（提示词）', False),
 ]
 
 
@@ -1611,10 +1628,18 @@ def render_config_edit(flash=''):
         if own is not None and own != eff:
             note = ('<br><span class="pend">现在生效的是 <code>%s</code> —— 上面这个要重启才换过去</span>'
                     % esc(str(eff)))
+        # 2026-11-04：改过的项要看得出来，而且能一键回到默认。
+        # 「已改」这个标记不是装饰：这一页有五十多个开关，没有它，
+        # 人重启完回来找不着自己动过哪一项 —— 那正是「改了没生效」最常见的来源。
+        mark = ''
+        if own is not None:
+            mark = (' <span class="mod">已改</span>'
+                    '<label class="rst"><input type="checkbox" name="__reset__%s">恢复默认</label>'
+                    % esc(f['key']))
         return ('<tr class="lv-%s"><td class="lv">%s</td>'
-                '<td><b>%s</b><br><span class="mono">%s</span>%s</td>'
+                '<td><b>%s</b>%s<br><span class="mono">%s</span>%s</td>'
                 '<td>%s</td><td class="mono">%s</td><td class="why">%s</td></tr>'
-                % (lv, LEVEL_TEXT.get(lv, lv), esc(f.get('label') or f['key']), esc(f['key']), note,
+                % (lv, LEVEL_TEXT.get(lv, lv), esc(f.get('label') or f['key']), mark, esc(f['key']), note,
                    _field_input(f, cur), esc(f.get('range') or ''), esc(f.get('why') or '')))
 
     head = '<tr><th>级别</th><th>项</th><th>当前值</th><th>合法范围</th><th>改了会怎样</th></tr>'
@@ -1730,6 +1755,14 @@ def apply_config_post(form):
     new = dict(user)
     changed = []
     for key, meta in known.items():
+        # 2026-11-04：「恢复默认」—— 勾上就把这一项从 config.user.json 里删掉。
+        # 删掉而不是写回默认值：写回去之后它还是「已改」，
+        # 而内置默认将来更新时，这一项就不会跟着更新了。
+        if ('__reset__' + key) in form:
+            if key in new:
+                changed.append((key, user.get(key), '(回到内置默认)'))
+                new.pop(key, None)
+            continue
         if key not in form:
             continue
         raw = form[key][0] if isinstance(form.get(key), list) else form.get(key)

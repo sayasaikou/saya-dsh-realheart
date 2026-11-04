@@ -2470,7 +2470,7 @@ const ROUND_MARK = '[本轮消息]';
     // 写在 Node 这边、由 Python 读 —— 定义只维护一份，两面才不会各说各的。
     // 写不了不算失败：面板会退化成「没有编辑区」，别的照常。
     try {
-      await writeFile(join(dir, 'config-schema.json'), JSON.stringify(describeConfig(cfg), null, 2), 'utf8');
+      await writeFile(join(dir, 'config-schema.json'), JSON.stringify(describeConfig(cfg, { promptFree: FREE_PROMPT, promptPing: PING_PROMPT }), null, 2), 'utf8');
     } catch (err) {
       log(`写 config-schema.json 失败（面板会没有编辑区）：${err?.message ?? err}`, 'error');
     }
@@ -2651,6 +2651,16 @@ const ROUND_MARK = '[本轮消息]';
       log(`建不了改动记录：${err?.message ?? err}`, 'error');
     }
   }
+
+  // 2026-11-04：提示词也能在面板上改（沙耶：「包括每次唤醒给她的提示词」）。
+  // **空 = 用内置那版**，不是「不注入」——
+  // 这样内置文案更新时，没改过的人自动跟着更新，改了的人保自己的。
+  // 想彻底关掉某一段，用对应的 injectXxx 开关，别把配置清空（清空就是回到默认）。
+  const promptText = (key, builtin) => {
+    const v = cfg[key];
+    return (typeof v === 'string' && v.trim()) ? v.trim() : builtin;
+  };
+
   /**
    * 自由时间：每天叫她醒一次，没人跟她说话。
    *
@@ -2837,7 +2847,7 @@ const ROUND_MARK = '[本轮消息]';
    * 没有未完成的也问一句，一样允许答不做。
    */
   async function buildFreePrompt(slot) {
-    const lines = [FREE_PROMPT];
+    const lines = [promptText('promptFree', FREE_PROMPT)];
 
     // 2026-11-04：这一次大概多长（沙耶在面板里给每段配的 minutes）。
     // 它是个天花板不是闹钟 —— 实测她最长只跑 22 分钟，写着只是让她知道分寸。
@@ -2938,7 +2948,7 @@ const ROUND_MARK = '[本轮消息]';
         // 纯 shell 不该去解 DSH 的配置树，跟 prompt 一个道理。
         context: cfg.pingContext !== false,
         profile: cfg.freeTimeProfile,
-        prompt: PING_PROMPT,
+        prompt: promptText('promptPing', PING_PROMPT),
       }, null, 2) + String.fromCharCode(10), 'utf8');
       try { await chmod(p, 0o600); } catch { /* 权限收不上来不影响它能不能跑 */ }
     } catch (err) {
@@ -3076,7 +3086,7 @@ const ROUND_MARK = '[本轮消息]';
 
   /** 短唤醒那一整段提示词（跟 shell 版逐段对齐：进度 / 素材 / 他最后说的 / 上次记的 / 调子）。 */
   async function buildPingPrompt() {
-    const parts = [PING_PROMPT];
+    const parts = [promptText('promptPing', PING_PROMPT)];
     const prog = await piecesProgressText();
     if (prog) parts.push('', `（你自己那条线：${prog}。给你自己定个位，不用在回复里提它。）`);
     const mat = await pingMaterialText();

@@ -172,6 +172,17 @@ export const DEFAULTS = {
   // 2026-11-04：默认不再指向 ~/qqbot/home（那是某一台的人格），改成插件自己的目录。
   // 目录不存在时 ensureFreeProfile 会铺一份**包内自带的默认人格**（见 scripts/persona-default.md）。
   personaHome: join(HOME_ROOT, 'persona'),
+  // ── 提示词（2026-11-04，沙耶要的「全量开放」）──
+  //
+  // 为什么做成配置：他的原话是「把所有的配置都做成可调节选项……包括每次唤醒给她的提示词」。
+  // 理由比我原来的保守做法对 —— 真要改的人会叫 agent 改，藏在源码里等于让 agent 去翻 4000 行。
+  // 放上来，人和 agent 看的是同一份契约。
+  //
+  // ⚠️ **空 = 用内置那版**，不是「不注入」。
+  //   这样内置文案更新时，没改过的人会自动跟着更新（改了的人保留自己的）。
+  //    想彻底关掉那一段，用对应的 injectXxx 开关，别把这里清空 —— 清空等于回到默认。
+  promptFree: '',
+  promptPing: '',
   // P-3b：改她的心那条暗道。默认关，关着时命令行连入口都不存在。
   allowManualMoodOverride: false,
   maxManualMoodOverridePerWeek: 3,
@@ -219,6 +230,8 @@ export const Config = Schema.object({
   pingFromHour: Schema.number().min(0).max(23).default(DEFAULTS.pingFromHour),
   pingToHour: Schema.number().min(0).max(23).default(DEFAULTS.pingToHour),
   personaHome: Schema.string().default(DEFAULTS.personaHome),
+  promptFree: Schema.string().default(DEFAULTS.promptFree),
+  promptPing: Schema.string().default(DEFAULTS.promptPing),
   allowManualMoodOverride: Schema.boolean().default(DEFAULTS.allowManualMoodOverride),
   maxManualMoodOverridePerWeek: Schema.number().min(0).max(99).default(DEFAULTS.maxManualMoodOverridePerWeek),
 });
@@ -558,16 +571,42 @@ export const FIELD_META = [
     noInput: true,
     range: '0–99（默认 3）',
     why: '超过就拒绝；要改上限得再动一次配置，那一次本身也入账。不让它变成「随便按一下就改」的东西。',
-  },];
+  },
+  // ── 提示词（2026-11-04）──
+  // 沙耶：「把所有的配置都做成可调节选项……包括每次唤醒给她的提示词」。
+  {
+    key: 'promptFree', group: 'prompt', topic: 'H', alias: '提示词 自由时间 唤醒 文案 说什么', label: '自由时间 · 提示词', level: 'caution',
+    long: true,
+    range: '整段文本（留空 = 用内置那版）',
+    why: '自由时间叫醒她时给的那一整段话，决定这两个小时她过成什么样：'
+      + '写「做点东西」她就做东西，写「怎么过都行」她才可能什么都不干。'
+      + '⚠️ 改坏了不会报错 —— 她只是变了个人说话的调子。改完去「自由时间」那一栏看她下一次醒来什么样。'
+      + '留空不是「不叫她」：不叫她是上面那个 freeTime 开关。',
+  },
+  {
+    key: 'promptPing', group: 'prompt', topic: 'H', alias: '提示词 短唤醒 文案 说什么', label: '短唤醒 · 提示词', level: 'caution',
+    long: true,
+    range: '整段文本（留空 = 用内置那版）',
+    why: '短唤醒时给她的那一段，决定她醒来会不会开口、开口像不像在说话。'
+      + '⚠️ 这段最容易写成「工作汇报的框」：她醒来先找手边有什么事，干完再把那件事发出去。'
+      + '内置那版刻意写了「说的时候别报工作」，删了它，她会立刻退回汇报腔。'
+      + '留空不是「不叫」：不叫她是 pingMinMinutes = 0。',
+  },
+];
 
-/** 面板用的整份描述（带当前值）。Python 侧拿它渲染，不自己维护一份。 */
-export function describeConfig(current = {}) {
+/** 面板用的整份描述（带当前值）。Python 侧拿它渲染，不自己维护一份。
+ *
+ * `builtins`（2026-11-04）：提示词那两项的**内置原文**。它们默认是空串
+ * （空 = 用内置），所以面板光看 current 是看不出「留空会发生什么」的 ——
+ * 把内置那版一并给出去，页面上就能写「留空时用的是下面这段」。 */
+export function describeConfig(current = {}, builtins = {}) {
   const cfg = { ...DEFAULTS, ...current };
   return {
     fields: FIELD_META.map((m) => ({
       ...m,
       current: cfg[m.key],
       def: DEFAULTS[m.key],
+      builtin: builtins[m.key] || '',
     })),
     // 逃逸口：面板上没有的，去哪儿改（P-3 要求写明）
     escape: {
