@@ -423,7 +423,7 @@ border-radius:7px;padding:5px 8px;font:inherit;font-size:12.5px}
 table.cfg input:focus,table.cfg select:focus{outline:none;border-color:#3f5a78}
 .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#a9b2c0}
 /* 2026-11-04：提示词那两项 —— 输入框要够大，内置原文折叠起来不占版面 */
-.bi{margin-top:6px}
+.bi{margin-top:6px}`n.imap{margin:14px 0 0;border-top:1px solid #232a35;padding-top:10px} .imap summary{cursor:pointer;color:#8f9bb0;font-size:12px} .imap table{margin-top:10px} .imap td{padding:4px 8px;vertical-align:top}
 /* 2026-11-04: 改过的项 + 恢复默认 */
 .mod{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:8px;background:#3b2f16;color:#e6c07a;font-size:11px;vertical-align:middle}
 .rst{margin-left:8px;font-size:11px;color:#8f9bb0;cursor:pointer;white-space:nowrap} .bi summary{cursor:pointer;color:#8f9bb0;font-size:12px} .bi pre{max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:8px 0 0}
@@ -1595,6 +1595,51 @@ def render_say():
             + '<div class="say-list">' + ''.join(out) + '</div></div>')
 
 
+# ── 「其余十几段文案在哪」（2026-11-04）──
+#
+# 沙耶：「你说的其余十几段，可以给个路径，点一下直接打开对应的文件或者文件夹」。
+#
+# 网页上点不开服务器上的文件（浏览器拦 file://，而且看页面的人多半在另一台机器上）。
+# 最接近的等价物是：**点开就能看见那段长什么样、并且知道去哪个函数里改**。
+# 所以这里是「段名 → 函数 → 这段管什么」的地图，默认折叠，不占版面。
+#
+# ⚠️ 这里只是**说明文字**，不是逻辑。真本在 index.mjs —— 改那边的段名时记得回来对一下。
+#    故意不给行号：行号天天漂，漂了比没有更坏（照着错的去找，会以为代码没了）。
+INJECT_MAP = [
+    ('【你现在的状态】', 'moodSectionText', '她此刻的心情。禁令句已经上配置页了（promptMoodBan）。'),
+    ('【今天我】', 'todaySectionText', '今天做了什么、说过什么、心情几条。尾句已经上配置页（promptTodayTail）。'),
+    ('【你能主动开口】', 'voiceSectionText', '三条能主动发话的路。尾句已经上配置页（promptVoiceTail）。'),
+    ('【上次没弄完的一件事】', 'buildFreePrompt', '自由时间开头摆出来的那件没完的事。'),
+    ('【今天聊到过的】', 'recentTalkText', '他今天最后说的三句 —— 让自由时间的她知道这边走到哪了。'),
+    ('【你留下的话】', 'keptList', '她自己写下来、想留着的句子。'),
+    ('【你手边的事】', 'workSectionText', '她手上没做完的活。'),
+    ('【这几天的样子】', 'recentDaysText', '最近几天的流水，按天折起来。'),
+    ('【你做过的一个判断】', 'ownJudgementText', '她自己下过的判断，只取超过一天的。'),
+    ('【你最近经历过的】', 'recentExperienceText', '最近发生过、值得她记着的几件事。'),
+    ('【你说过的一件事】', 'claimSectionText', '她下过的断言，以及后来被推翻的那些。'),
+    ('【你能看到什么】', 'viewSectionText', '她能看见的渠道（页面 / 消息 / 文件）。'),
+    ('【你在哪】', 'whereSectionText', '这台机器、这个目录、这份人格。'),
+    ('【你没说完的那句】', 'holdSectionText', '她说了一半停下来的话。'),
+    ('【你自己说的那种状态】', 'styleSectionText', '某种心情下她打算怎么说话。'),
+    ('【待改的注入】', 'pendingChangeText', '有人要改她的注入、还没落地的那些。'),
+    ('【观测页】', 'statusPageText', '观测页地址和口令提示。'),
+    ('【时间感】', 'timeSectionText', '上一轮开口是几小时前 —— 让她知道分寸。'),
+]
+
+
+def _inject_map_html():
+    """把那张地图渲染成一块折叠区。默认收起，不抢配置项的版面。"""
+    rows = ''.join(
+        '<tr><td class="mono">%s</td><td class="mono">%s</td><td class="why">%s</td></tr>'
+        % (esc(a), esc(b), esc(c)) for a, b, c in INJECT_MAP)
+    return ('<details class="imap"><summary>其余 %d 段文案在哪（点开看段名和函数）</summary>'
+            '<p class="note">这些是数据陈列，不是「她怎么说话」，所以没做成配置项 —— '
+            '每加一个输入框，这一页就多一堵墙。要改它们，改 <code>index.mjs</code> 里对应那个函数；'
+            '改之前先看一眼它上面那段注释：每一段都写着「为什么是这句话」，删掉经常不是因为难看，是因为会出事。</p>'
+            '<table class="cfg"><tr><th>段名</th><th>在哪个函数</th><th>这段管什么</th></tr>%s</table>'
+            '</details>' % (len(INJECT_MAP), rows))
+
+
 def render_config_edit(flash=''):
     schema = _cfg_schema()
     if not schema:
@@ -1711,6 +1756,7 @@ def render_config_edit(flash=''):
         + '<div class="cfgtabs">' + ''.join(tabs) + '</div>'
         + '<div class="cfgpanels">' + ''.join(panels) + '</div>'
 
+        + _inject_map_html()
         + '<div class="cfgbar">'
         '<input type="text" name="__why" placeholder="为什么改（会写进改动记录，可留空）" size="42">'
         '<button type="submit">保存到 config.user.json</button>'
