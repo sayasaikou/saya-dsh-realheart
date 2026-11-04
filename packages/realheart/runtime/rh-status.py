@@ -1253,19 +1253,38 @@ RECOMMEND = [
         'name': 'dsh-napcat',
         'kind': '通道（别人的）',
         'what': 'QQ 通道。她收发消息全靠它 —— 没有它，她就是一个不会说话的账本。',
-        'used': '用到现在的两个坑：同账号在两处登会互踢（看着像风控，其实不是）；'
-                '掉线时 NapCat 的 3001 端口不通 —— 那是「没登录」，不是「服务坏了」。',
+        'used': '用到现在的三个坑：同账号在两处登会互踢（看着像风控，其实不是）；'
+                '掉线时 NapCat 的 3001 端口不通 —— 那是「没登录」，不是「服务坏了」；'
+                '🔴 2026-11-04 抓到最坑的一个：**静默踢人不写日志**。'
+                '19:06 实测，get_login_info 照样返回 user_id:xxx、get_status 照样 online:true good:true、'
+                'run.log 连一行 KickedOffLine 都没有，而 send_private_msg 返回 '
+                '1006514「网络连接异常」—— 她已经几个小时发不出话，客户端自己不知道。'
+                '所以任何监控的判据都必须是**真发一条消息**，不能看「登录状态」。',
         'companions': [
             {
                 'name': 'napcat-rescue',
-                'what': '掉线时的扫码抢救页。不用 SSH 上去，在几万行日志里翻那个两分钟就过期的二维码链接。',
+                'what': '掉线时的扫码抢救页。不用 SSH 上去，在几万行日志里翻那个两分钟就过期的二维码链接。'
+                        '🔴 2026-11-04 改过判据：原来只看 NapCat 自称的状态（3001 通 + isLogin/coreReady/loginPhase），'
+                        '静默踢人时那三样全绿，页面写着「在线」而消息发不出去。'
+                        '现在最后一道是**真发一条消息**：发不出去就直接判掉线、把二维码换上来。',
                 'install': '在仓库的 packages/napcat-rescue/，跑 ./install.sh',
                 'by': 'ours',
             },
             {
                 'name': 'say',
-                'what': '一条命令让她用自己的身份发消息。自由时间里想说什么，不用等谁先开口。',
+                'what': '一条命令让她用自己的身份发消息。自由时间里想说什么，不用等谁先开口。'
+                        '发送失败会写进 say-queue.jsonl，`say --flush` 逐条重试 —— '
+                        '掉线那几小时里她说的每一句都不会丢。',
                 'install': '随 napcat-rescue 一起装（同一个包里的 say）',
+                'by': 'ours',
+            },
+            {
+                'name': 'sentinel（掉线哨兵）',
+                'what': '每分钟看她一眼，掉了就把二维码推给他。'
+                        '⚠️ 判据就是上面那条 —— 真发一条消息（发给 10000 客服号，没人看得到），'
+                        '`retcode 0` 或「不是好友」算在线，`1006514 网络连接异常` 算掉线。'
+                        '按「登录状态」判的哨兵会一直报在线，人还以为监控在保护她。',
+                'install': '本机脚本 E:\\dsh-napcat\\sentinel\\sentinel.js（没进包：号和 token 写死在里头，换账号要改）',
                 'by': 'ours',
             },
         ],
@@ -1274,23 +1293,41 @@ RECOMMEND = [
 
 
 def _installed_bundles():
-    """这台机器上装了哪些 bundle —— 只看 profiles，不猜别的地方。"""
+    """这台机器上装了哪些 bundle —— 只看 profiles，不猜别的地方。
+
+    2026-11-04 修：原来只读 `profiles/<name>/package.json` 里的 `dsh.profile.bundles`，
+    结果是**配套工具那一块从来没显示过** —— 她那台明明装着 dsh-napcat，
+    可 package.json 的 bundles 数组里没写它（是直接装进 node_modules 的），
+    于是 `installed` 永远是 false，整块推荐只剩一句「现在没有匹配的」。
+    现在两路都认：声明的 bundles + node_modules 里真有的目录。
+    """
     out = set()
     prof_dir = os.path.join(os.path.expanduser('~'), '.dsh', 'profiles')
     try:
         for name in os.listdir(prof_dir):
-            p = os.path.join(prof_dir, name, 'package.json')
+            base = os.path.join(prof_dir, name)
+            # ① 声明的 bundles
             try:
-                with open(p, encoding='utf-8') as fh:
+                with open(os.path.join(base, 'package.json'), encoding='utf-8') as fh:
                     d = json.load(fh)
+                prof = (d.get('dsh') or {}).get('profile') or {}
+                for b in (prof.get('bundles') or []):
+                    out.add(str(b))
             except Exception:
-                continue
-            prof = (d.get('dsh') or {}).get('profile') or {}
-            for b in (prof.get('bundles') or []):
-                out.add(str(b))
+                pass
+            # ② node_modules 里真有的（直接装的不会出现在 bundles 里）
+            nm = os.path.join(base, 'node_modules')
+            try:
+                for pkg in os.listdir(nm):
+                    if pkg.startswith('@') or pkg.startswith('.'):
+                        continue
+                    out.add(pkg)
+            except Exception:
+                pass
     except Exception:
         pass
-    return out
+    # 只留推荐页关心的那几个 —— node_modules 里几百个包，别让它们把判断搅浑
+    return out & {it['id'] for it in RECOMMEND}
 
 
 def render_recommend():
