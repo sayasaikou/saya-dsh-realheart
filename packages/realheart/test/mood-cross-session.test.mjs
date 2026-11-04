@@ -86,7 +86,7 @@ test('sessionLabel：群聊 / 私聊都认得出，认不出就老实说另一�
 test('群里记的心情，私聊里也看得见 —— 但写着「不是在当前场合记的」', async () => {
   await seedIndex();
   const h = makeCtx();
-  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(h.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
 
   const r = await h.tools.get('rh_mood').execute(
@@ -104,7 +104,7 @@ test('群里记的心情，私聊里也看得见 —— 但写着「不是在当
 
 test('本场合自己记的，不带「别处」那句', async () => {
   const h = makeCtx();
-  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(h.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
 
   await h.tools.get('rh_mood').execute(
@@ -120,7 +120,7 @@ test('本场合自己记的，不带「别处」那句', async () => {
 
 test('拿不到事件 id、但说得清来处 → 能写进去，标成 told', async () => {
   const h = makeCtx();
-  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(h.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
 
   const told = '今早看到一篇讲深海噪声的文章，看完手有点发凉';
@@ -139,7 +139,7 @@ test('拿不到事件 id、但说得清来处 → 能写进去，标成 told', a
 
 test('太短的自述还是拒 —— 「不知道」三个字不算来处', async () => {
   const h = makeCtx();
-  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(h.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
 
   const r = await h.tools.get('rh_mood').execute(
@@ -153,7 +153,7 @@ test('太短的自述还是拒 —— 「不知道」三个字不算来处', asy
 
 test('同一个场合记了两条不同的情绪 → 两条都在注入里', async () => {
   const h = makeCtx();
-  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(h.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
 
   const exec = { agent: { session: { id: PRIVATE } } };
@@ -169,7 +169,7 @@ test('同一个场合记了两条不同的情绪 → 两条都在注入里', asy
 
 test('别处记的会摆出来，但标明是别处的、带不带由她自己定', async () => {
   const h = makeCtx();
-  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(h.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
 
   await h.tools.get('rh_mood').execute({ feeling: '还算稳', level: 5, why_ref: 'none:unexplained' }, { agent: { session: { id: PRIVATE } } });
@@ -184,7 +184,7 @@ test('别处记的会摆出来，但标明是别处的、带不带由她自己�
 
 test('injectNow 开了才有钟，关着一个字不塞', async () => {
   const off = makeCtx();
-  apply(off.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(off.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
   const inj0 = off.handlers.find((x) => x.name === 'system-prompt/assemble');
   const a0 = { sections: [] };
@@ -192,7 +192,7 @@ test('injectNow 开了才有钟，关着一个字不塞', async () => {
   assert.ok(!(o0.sections ?? []).some((s) => s.name === 'realheart:clock'), 'injectNow 默认关，但钟出现了');
 
   const on = makeCtx();
-  apply(on.ctx, { servePage: false, freeTime: false, announceOnInstall: false, injectNow: true });
+  apply(on.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false, injectNow: true });
   await settle();
   const inj1 = on.handlers.find((x) => x.name === 'system-prompt:assemble') ?? on.handlers.find((x) => x.name === 'system-prompt/assemble');
   const a1 = { sections: [] };

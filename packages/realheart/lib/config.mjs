@@ -18,22 +18,32 @@ import { join, isAbsolute } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import Schema from '@deepseek-ai/schemastery';
 
-/** 她的东西都在这个根下面（QQ 那台机器上的约定） */
+/** 老约定：她的东西都在 ~/qqbot 下面。**只留给老用户和兼容用**，新装的不再默认指这里。 */
 export const QQROOT = join(os.homedir(), 'qqbot');
 export const DSH_HOME = process.env.DSH_HOME || join(os.homedir(), '.dsh');
 
+// 2026-11-04：默认根目录改成「插件自己的目录」。
+// 为什么改：以前 root / stateDir / auditDir / historyDir / msgsDir 全指向 ~/qqbot ——
+// 那是**沙耶那一台**的约定（qqbot-memory 落的账）。装给别人就是五个路径全指向不存在的
+// 地方：不崩，但一半数据源是空的，而人看不出「为什么她什么都不记得」。
+// 现在的判据：**默认值必须对着「装插件的那个人」成立**，不是对着某一台已经调好的机器。
+export const HOME_ROOT = join(DSH_HOME, 'realheart');
+
 export const DEFAULTS = {
   enabled: true,
-  // 帐本、状态文件所在目录
-  // 她的根：产物（pieces）和人格都在这下面。可以换，但换了等于换一个人住的房子。
-  root: QQROOT,
-  stateDir: join(QQROOT, 'work', 'realheart'),
+  // 她的根：产物（pieces/）和人格都在这下面。可以换，换了等于换一个人住的房子。
+  root: HOME_ROOT,
+  // 账本、状态文件所在目录
+  stateDir: join(HOME_ROOT, 'state'),
   // 三路事件源
   sessionsRoot: join(DSH_HOME, 'sessions'),
-  auditDir: join(QQROOT, 'data', 'audit'),
-  historyDir: join(QQROOT, 'data', 'history'),
+  // 下面三个是「qqbot 那套」的产物，**默认不接**（空 = 这一路没有）。
+  // 接了才有：审计里的工具调用、对话历史、落盘的消息原文。
+  // 用 qqbot 的人自己填上，不用的就别让它们指着不存在的目录。
+  auditDir: '',
+  historyDir: '',
   // 第四路：qqbot-memory 落盘的消息（data/msgs）—— text 里是真话，不是时间戳
-  msgsDir: join(QQROOT, 'data', 'msgs'),
+  msgsDir: '',
   // 他本人的 QQ 号。用来看「最后一句是不是他在问我」。不填就不拦 pause。
   ownerId: '',
   // 索引多久重建一次（毫秒）。默认一小时。
@@ -101,31 +111,27 @@ export const DEFAULTS = {
   // 面板上有「自由时间从几点开始」，代码里一次都没读过（`slotsToday` 只看 freeTimeSlots）。
   // 给人一个改了没反应的开关，比不给更坏：他会以为自己改过了，然后去查别的地方。
   // 老配置里还留着这个键不会出事 —— loadUserConfig 会报一句「不是认识的配置项，忽略」。
-  // 2026-11-04：默认就是**开箱能用**的那一套（沙耶：「要给一套默认的初始参数，
-  // 让这套初始参数达到相对好用的效果」）。这四个点是他在自己那台上跑了几天定下来的：
-  // 早上醒了之后、午饭后、傍晚、凌晨（她说夜里那一段最安静）。
-  //
-  // ⚠️ minutes 是**天花板不是闹钟**：实测她最长只跑 22 分钟（11-03 四回：14 / 22 / 6 / 15.5）。
-  //    它现在唯一的用处是写进 prompt 告诉她「这次大概有多长」。
+  // 2026-11-04：默认 **09 / 14 / 20 三段**，不再是「他那一台的四段」。
+  // 他订的是 07 / 12 / 18 / 02 —— 那个 02:00 是他自己的作息，装给别人就是半夜动一次，
+  // 既白花钱又吵。默认取大多数人醒着、又不需要人开口的三段。
   freeTimeSlots: [
-    { start: '07:00', minutes: 60 },
-    { start: '12:00', minutes: 60 },
-    { start: '18:00', minutes: 60 },
-    { start: '02:00', minutes: 60 },
+    { start: '09:00', minutes: 60 },
+    { start: '14:00', minutes: 60 },
+    { start: '20:00', minutes: 60 },
   ],
-  // 自由时间关心什么方向（沙耶 2026-11-04 要的）。
-  // ⚠️ 是**建议**不是白名单 —— 写成白名单她就只剩那几个题材，比现在更窄。
+  // 自由时间关心什么方向。
+  // ⚠️ 是**建议**不是白名单 —— 写成白名单她就只剩那几个题材，比不配还窄。
   // 默认给 8 条而不是空：空着的时候她自由时间没方向，容易只剩「继续睡了」。
-  // 前 5 条是他点的，后 3 条是我按她那几天的行为补的（她翻词源、算统计口径、看建筑）。
+  // ⚠️ 这 8 条是**通用方向**，不是某个人爱看的：装插件的人自己改。
   freeTimeFocus: [
-    'AI 工程与应用',
-    '明日方舟和明日方舟终末地',
-    'PC 数码硬件',
-    'PC 游戏',
-    '有趣的科普知识',
-    '语言和文字（日语、词源、翻译）',
-    '数据里的怪东西（公开数据集、统计口径）',
-    '建筑与城市（公共空间、老建筑）',
+    'AI 与科技',
+    '科学与科普',
+    '语言与文字',
+    '历史与社会',
+    '设计与建筑',
+    '游戏与虚拟世界',
+    '硬件与动手折腾',
+    '数据与统计',
   ],
   // 短唤醒：每隔一段**随机**时间叫她醒一下，只做一件事 —— 此刻有没有想说的。
   // min = 0 表示关（默认关）。
@@ -144,16 +150,19 @@ export const DEFAULTS = {
   // 默认开：沙耶的原话是「真人会因为看到某个东西产生某种情绪，影响语气」——
   // 她那条路上原来连一个字的心情都没有，所以只能平铺地说。
   pingContext: true,
-  // 2026-11-04：默认 **30–60 分钟**（原来默认 0＝关）。
-  // 理由跟自由时间那套一样 —— 开箱就该是「她真的会自己醒过来」，
-  // 而不是装完之后还要人翻文档找个开关。
-  // ⚠️ 成本照旧：一次完整的模型调用带注入，一天二十来次。面板上写着这个数。
-  pingMinMinutes: 30,
-  pingMaxMinutes: 60,
-  pingFromHour: 7,
+  // 2026-11-04：默认 **60–120 分钟**（上一版是 30–60，再早是 0＝关）。
+  // 为什么不像他那台一样 30–60：那是「已经调好、也知道自己在花钱」的人用的。
+  // 装插件的人第一次开，一天二十来次模型调用会先把他吓一跳 —— 而「她偶尔主动找你」
+  // 和「她一小时来一次」在读的人眼里完全是两种东西。默认宁可稀一点：稀了才好往密调。
+  // ⚠️ 成本照旧写在面板上：一次完整的模型调用带注入。
+  pingMinMinutes: 60,
+  pingMaxMinutes: 120,
+  pingFromHour: 9,
   pingToHour: 23,
   // 她的人格目录（freetime profile 用同一份，不另写一套）
-  personaHome: join(QQROOT, 'home'),
+  // 2026-11-04：默认不再指向 ~/qqbot/home（那是某一台的人格），改成插件自己的目录。
+  // 目录不存在时 ensureFreeProfile 会铺一份**包内自带的默认人格**（见 scripts/persona-default.md）。
+  personaHome: join(HOME_ROOT, 'persona'),
   // P-3b：改她的心那条暗道。默认关，关着时命令行连入口都不存在。
   allowManualMoodOverride: false,
   maxManualMoodOverridePerWeek: 3,
@@ -308,7 +317,9 @@ export function validateConfig(cfg = {}) {
   }
 
   // ── 四个目录 ──
-  for (const key of ['root', 'stateDir', 'sessionsRoot', 'auditDir', 'historyDir', 'personaHome']) checkDir(key, c[key], out);
+  // 2026-11-04：auditDir / historyDir 不在这条线上 —— 它们**允许空**（空 = 不接这一路数据源）。
+  // 默认值就是空：那是 qqbot 那套的产物，不用 qqbot 的人填了只会得到三个不存在的目录。
+  for (const key of ['root', 'stateDir', 'sessionsRoot', 'personaHome']) checkDir(key, c[key], out);
 
   // ── profile 名字不许带路径分隔符 ──
   if (typeof c.freeTimeProfile !== 'string' || !c.freeTimeProfile.trim()) {

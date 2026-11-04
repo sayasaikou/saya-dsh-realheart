@@ -40,9 +40,12 @@ function makeCtx() {
 
 const settle = (ms = 500) => new Promise((r) => setTimeout(r, ms));
 
-test('干净机器上：默认路径确实指向 ~/qqbot，而且那个目录一开始不存在', async () => {
-  assert.equal(DEFAULTS.root, join(FAKE_HOME, 'qqbot'));
-  assert.equal(existsSync(join(FAKE_HOME, 'qqbot')), false);
+// 2026-11-04：默认根目录改成插件自己的目录（$DSH_HOME/realheart），
+// 不再指向 ~/qqbot —— 那是**某一台机器**的约定。判据：默认值要对着「装插件的人」成立。
+test('干净机器上：默认路径指向插件自己的目录，而且一开始不存在', async () => {
+  assert.equal(DEFAULTS.root, join(DSH, 'realheart'));
+  assert.equal(DEFAULTS.stateDir, join(DSH, 'realheart', 'state'));
+  assert.equal(existsSync(join(DSH, 'realheart')), false);
 });
 
 test('干净机器上：起得来，八个工具都在，注入不抛错', async () => {
@@ -80,7 +83,7 @@ test('干净机器上：账本目录会被自己建出来（不用人先写 mkdi
   const h = makeCtx();
   apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
-  const dir = join(FAKE_HOME, 'qqbot', 'work', 'realheart');
+  const dir = join(DSH, 'realheart', 'state');
   assert.ok(existsSync(dir), '账本目录没建：' + dir);
   const names = await readdir(dir);
   assert.ok(Array.isArray(names));
@@ -93,7 +96,7 @@ test('干净机器上：写一条心情能落盘（没有通道也不影响写�
   const r = await h.tools.get('rh_mood').execute({ feeling: '有点累', level: 5 });
   assert.ok(typeof r.text === 'string' && r.text.length > 0, 'returned: ' + String(r?.text));
   assert.ok(!r.text.includes('没记'), '被拒了：' + r.text);
-  const file = join(FAKE_HOME, 'qqbot', 'work', 'realheart', 'mood.jsonl');
+  const file = join(DSH, 'realheart', 'state', 'mood.jsonl');
   assert.ok(existsSync(file), 'mood.jsonl 没落盘');
 });
 

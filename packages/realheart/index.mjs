@@ -3584,7 +3584,14 @@ PY
         // 枚举写死：不接受自由文本，免得它退化成一句敷衍。
         // 这类记录不进「有成因」统计，来处也不进注入。
         const NONE_ENUM = ['unexplained', 'body', 'weather', 'sleep', 'unknown'];
-        const effectiveRef = found.length === 0 && noSource ? 'none:unexplained' : whyRef;
+        // 🔴 2026-11-04：这个兜底原来只判「索引为空」，于是把两种情况混在一起了。
+        //   索引为空本来是干净机器（没接 audit / history / msgs）的常态 ——
+        //   而 0.2.104 把这三个默认改成空之后，**每一台新装的都变成这种机器**。
+        //   结果：她明明写了一整句来处（≥8 字），也被 here 兜成 none:unexplained，
+        //   那句话直接丢掉；而「不知道」三个字反而因为兜底而通过。
+        //   现在的判据：**只有她什么都没写**才兜 bottom；写了东西就按正常规则判。
+        const rawRef = String(whyRef || '').trim();
+        const effectiveRef = (found.length === 0 && noSource && !rawRef) ? 'none:unexplained' : whyRef;
         const noneMatch = /^none:([a-z_]+)$/i.exec(effectiveRef);
         let whyKind = 'ref';
         let whyEnum = null;

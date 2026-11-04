@@ -75,7 +75,7 @@ test('作品和小动作同时有：两行都在', async () => {
   ].join('\n'), 'utf8');
 
   const h = makeCtx();
-  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(h.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
 
   const text = await inject(h);
@@ -89,7 +89,7 @@ test('作品和小动作同时有：两行都在', async () => {
 test('只有小动作：也出现（没作品不能整段消失）', async () => {
   await rm(FREE, { force: true });
   const h = makeCtx();
-  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(h.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
   const text = await inject(h);
   assert.ok(text.includes('换水时间'), '只有小动作时该出现：' + JSON.stringify(text));
@@ -99,7 +99,7 @@ test('只有小动作：也出现（没作品不能整段消失）', async () =>
 test('都没有：整段不出现', async () => {
   await rm(SMALL, { force: true });
   const h = makeCtx();
-  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(h.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
   const text = await inject(h);
   assert.equal(text, '', '两样都没有时不该凑一段空的，实际：' + JSON.stringify(text));

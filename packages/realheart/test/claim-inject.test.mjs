@@ -64,7 +64,7 @@ test('有断言时，注入里真有这一段', async () => {
   ].join('\n'), 'utf8');
 
   const h = makeCtx();
-  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(h.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
 
   const text = await inject(h);
@@ -82,7 +82,7 @@ test('被推翻的不出现', async () => {
   ].join('\n'), 'utf8');
 
   const h = makeCtx();
-  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(h.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
 
   const text = await inject(h);
@@ -93,7 +93,7 @@ test('被推翻的不出现', async () => {
 test('一条都没有时，整段不出现', async () => {
   await rm(CLAIMS, { force: true });
   const h = makeCtx();
-  apply(h.ctx, { servePage: false, freeTime: false, announceOnInstall: false });
+  apply(h.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
   const text = await inject(h);
   assert.equal(text, '', '没有断言时不该出现空段落，实际：' + JSON.stringify(text));
