@@ -199,3 +199,36 @@ test('启动时把自由时间的 prompt 落到文件里（systemd 那边要读�
     await rm(h.root, { recursive: true, force: true });
   }
 });
+
+// 2026-11-04：沙耶点的「三个自己互不知道对方做了什么」——
+// 这一格是「对话 → 自由时间」。判据两条：真话带得上；注入噪音要剥干净。
+test('自由时间：带上今天最后聊到的几句，噪音剥掉', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rh-si-talk-'));
+  const stateDir = join(root, 'state');
+  const msgsDir = join(root, 'msgs');
+  await mkdir(stateDir, { recursive: true });
+  await mkdir(msgsDir, { recursive: true });
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  const fn = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}.jsonl`;
+  await writeFile(join(msgsDir, fn), [
+    { at: Date.now(), sessionId: 'napcat-private-1', name: null, text: 'Time sampled while preparing turn 44, step 1: 2026-11-04T13:24:17+08:00[Asia/Shanghai]' },
+    { at: Date.now(), sessionId: 'napcat-private-1', name: '另一处的近况：这段时间没有新对话', text: '[另一处的近况：这段时间没有新对话]\n[本轮消息] 那就听你的，重启吧' },
+    { at: Date.now(), sessionId: 'napcat-private-1', name: '蓝色大肥鱼', text: '[蓝色大肥鱼] 原文对得上，没编。' },
+    { at: Date.now(), sessionId: 'napcat-private-1', name: null, text: '还有要做的吗？' },
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
+  const h = makeCtx();
+  apply(h.ctx, { stateDir, msgsDir, servePage: false, freeTime: false, announceOnInstall: false });
+  await settle(600);
+  try {
+    const text = await readFile(join(HOME, 'realheart', 'free-prompt.txt'), 'utf8');
+    assert.match(text, /【今天聊到过的】/);
+    assert.ok(text.includes('那就听你的，重启吧'), '真话没带进来：' + text.slice(0, 400));
+    assert.ok(text.includes('还有要做的吗？'), '最后一句没带进来');
+    assert.ok(!text.includes('Time sampled'), 'time-context 噪音没剥掉');
+    // 2026-11-04：部署后第一眼抓到的 —— 两条肥鱼自己说的话也被当成「他说的」带进去了
+    assert.ok(!text.includes('原文对得上'), '另一条肥鱼的话被当成他说的了');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

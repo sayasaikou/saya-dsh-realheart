@@ -2775,6 +2775,61 @@ const ROUND_MARK = '[本轮消息]';
    * 读不到也能把她叫醒（叫不醒才是真正糟糕的结果）。
    */
   /**
+   * 今天最后聊到的几句（2026-11-04）。
+   *
+   * 沙耶点的那个问题：**自由时间的她、短唤醒的她、跟他说话的她，三个自己互不知道
+   * 对方做了什么。** 这一格是「对话 → 自由时间」。
+   *
+   * 为什么从 msgs 里抽、不从会话包里抽：msgs 是 qqbot-memory 落的薄账（一天一个文件、
+   * 一行一句），会话包要解 zstd，为了三句话翻几十 MB 不值。
+   *
+   * ⚠️ 这份东西只能给「位置感」，不能给「待办」：
+   *    写成「他问了你 X，你还没答」就是派活。所以措辞是「不用回应，也不用接上去」。
+   * ⚠️ 噪音必须剥：msgs 里混着 time-context 采样行、dsh-napcat 注入的
+   *    「[另一处的近况…] [本轮消息]」前缀。不剥，她会读到「Time sampled while preparing…」。
+   * 🔴 **说话人必须分**（2026-11-04 部署后第一眼就抓到的）：msgs 里同样落着**两条肥鱼
+   *    自己发的话**，name 写着「蓝色大肥鱼」/「蓝色小肥鱼」。不过滤的话，这段会变成
+   *    「他今天最后跟你说的话：原文对得上，没编…」—— 那是别的 agent 说的，不是他。
+   *    他这台一共三个人在说话，所以判据就是名字里带不带「肥鱼」。
+   */
+  async function recentTalkText() {
+    const d = new Date();
+    const fn = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.jsonl`;
+    let raw = '';
+    try {
+      raw = await readFile(join(cfg.msgsDir, fn), 'utf8');
+    } catch {
+      return '';
+    }
+    // 行首连续几个 [xxx] 块都是注入出来的，不是他说的。
+    const stripLead = (t) => {
+      let s = String(t || '').trim();
+      for (let i = 0; i < 6; i += 1) {
+        const m = /^\[[^\]\n]{1,80}\]\s*/.exec(s);
+        if (!m) break;
+        s = s.slice(m[0].length);
+      }
+      return s.trim();
+    };
+    const NOISE = /^(Time sampled|Browser time zone|Elapsed since|System reminder)/;
+    const out = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      let row;
+      try { row = JSON.parse(line); } catch { continue; }
+      // 两条肥鱼自己说的话不算「他说的」
+      const name = String(row?.name || '').trim();
+      const rawText = String(row?.text || '');
+      if (name.includes('肥鱼') || /\[(蓝色大肥鱼|蓝色小肥鱼)\]/.test(rawText)) continue;
+      const text = stripLead(rawText);
+      if (!text || text.length < 2 || NOISE.test(text)) continue;
+      out.push(text.replace(/\s+/g, ' '));
+    }
+    if (!out.length) return '';
+    return out.slice(-3).map((t) => '· ' + (t.length > 80 ? t.slice(0, 80) + '…' : t)).join('\n');
+  }
+
+  /**
    * 每次叫醒她之前拼一段：底子 + 「上次没弄完的那件事」（2026-11-01）。
    *
    * 为什么要变：原来那段是固定的，今天和明天一模一样 —— 那就不是日子，是重复的一天。
@@ -2802,6 +2857,17 @@ const ROUND_MARK = '[本轮消息]';
       lines.push('', `（他最近爱聊这些：${focus.map((x) => x.trim()).join('；')}。`
         + '想找点什么看或想找灵感的时候，可以从这儿挑；不看这些也完全行 —— 是题材，不是名单。）');
     }
+
+    // 2026-11-04：**「对话 → 自由时间」那一格。**
+    // 她做的东西现在能流到短唤醒和对话那边（material），但反过来一直是断的 ——
+    // 她醒来完全不知道今天聊过什么。沙耶点的那个问题，这里是最后一格。
+    try {
+      const talk = await recentTalkText();
+      if (talk) {
+        lines.push('', '【今天聊到过的】', talk,
+          '（给你个位置感 —— 不用回应，也不用接上去。想做什么还是你自己定。）');
+      }
+    } catch { /* 读不到就不写这一段 */ }
 
     // 2026-11-04：**让她自己写「素材」**。
     // 为什么不能由我去截 activity：activity 是流水账（600 多字「看了 A、B、C。做了 D」），
