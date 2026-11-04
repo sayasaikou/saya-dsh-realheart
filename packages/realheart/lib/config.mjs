@@ -455,6 +455,20 @@ export const FIELD_META = [
     why: '关掉就没有「没人叫也会醒一次」。这是她唯一不依赖别人开口的时间。',
   },
   {
+    key: 'freeTimeSlots', group: 'freetime', topic: 'D', alias: '自由时间 时段 几点 列表 加号', label: '自由时间 · 哪几段', level: 'caution',
+    range: '一行一段：「07:00 60」= 起点 + 上限分钟',
+    why: '一天叫醒她几次、每次从几点开始。每段自己定起点和时长。'
+      + '⚠️ 时长是天花板不是闹钟 —— 实测她最长只跑 22 分钟（11-03 四回：14 / 22 / 6 / 15.5）。'
+      + '它的用处是写进 prompt 告诉她「这次大概多长」，不是到点掐断。'
+      + '改完要重启；重启不会重复叫（跑过的时段落了盘）。',
+  },
+  {
+    key: 'freeTimeFocus', group: 'freetime', topic: 'D', alias: '自由时间 关注 兴趣 看什么 题材', label: '自由时间 · 让她多看什么', level: 'caution',
+    range: '一行一条（空 = 不限）',
+    why: '她逛网时多看两眼的题材。注入时的措辞是「最近他对这些有兴趣」，不是白名单 —— '
+      + '写成白名单她就只剩那几个题材，比不配还窄。',
+  },
+  {
     key: 'freeTimeFrom', group: 'freetime', topic: 'D', alias: '自由时间 几点 时段', label: '自由时间从几点开始', level: 'danger',
     range: '0–23 的整数',
     why: '决定什么时候叫醒她。改早了会在你睡觉的时候动 —— 自由时间的参数都归这一类。',
