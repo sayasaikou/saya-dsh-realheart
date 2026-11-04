@@ -216,6 +216,14 @@ export function apply(ctx, config = {}) {
     return (typeof v === 'string' && v.trim()) ? v.trim() : builtin;
   };
 
+  /** 把 moodFadeHours 说成人话（「一天前」「36 小时前」「3 天前」）。 */
+  const moodFadeLabel = () => {
+    const h = Number(cfg.moodFadeHours) || 24;
+    if (h < 24) return `${h} 小时前`;
+    if (h % 24 === 0) return `${h / 24} 天前`;
+    return `${(h / 24).toFixed(1)} 天前`;
+  };
+
   // ── 总开关（P-3 kill switch）──
   // 有这个文件就当整个插件不存在：不注入、不记账、四个工具都不注册。
   //
@@ -925,7 +933,7 @@ const ROUND_MARK = '[本轮消息]';
       const row = rows[i - 1];
       if (ctl.voided.has(i)) continue;
       if (row?.at && ctl.voided.has(String(row.at))) continue;
-      if (!moodBleedsIn(row, sessionId)) continue;
+      if (!moodBleedsIn(row, sessionId, { minLevel: cfg.bleedMinLevel, maxHours: cfg.bleedMaxHours })) continue;
       bleed = row;
       break;
     }
@@ -996,7 +1004,9 @@ const ROUND_MARK = '[本轮消息]';
         }
         return `· ${f}${lvOf(r.level)}${bits.length ? ' —— ' + bits.join('，') : ''}`;
       };
-      const dayMs = 24 * 3600 * 1000;
+      // 2026-11-04：这条线原来写死 24 小时（「过了一天的那几条不再占正文」）。
+      // 沙耶要「能改的全放上来」，所以换成 cfg.moodFadeHours：多旧的心情不再占正文、只留一行点名。
+      const dayMs = cfg.moodFadeHours * 3600 * 1000;
       const stamp = (r) => {
         const t = Date.parse(String(r.at || ''));
         return Number.isNaN(t) ? 0 : t;
@@ -1013,7 +1023,7 @@ const ROUND_MARK = '[本轮消息]';
       }
       for (const r of keepFresh) out.push(lineOf(r));
       if (tucked.length) {
-        out.push(`（另外还有 ${tucked.length} 条是一天前记的：`
+        out.push(`（另外还有 ${tucked.length} 条是 ${moodFadeLabel()} 记的：`
           + `${tucked.map((r) => String(r.feeling || '').trim()).join('、')}。`
           + '已经不占正文了 —— 还在不在，你自己说。）');
       }

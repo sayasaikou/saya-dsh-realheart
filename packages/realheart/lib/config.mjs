@@ -181,6 +181,11 @@ export const DEFAULTS = {
   // ⚠️ **空 = 用内置那版**，不是「不注入」。
   //   这样内置文案更新时，没改过的人会自动跟着更新（改了的人保留自己的）。
   //    想彻底关掉那一段，用对应的 injectXxx 开关，别把这里清空 —— 清空等于回到默认。
+  // ── 心情的呈现阈值（2026-11-04：沙耶要「能改的全放上来」）──
+  // 这三个数字原来写死在代码里，而它们直接改她说话的样子。
+  bleedMinLevel: 6,
+  bleedMaxHours: 12,
+  moodFadeHours: 24,
   promptFree: '',
   promptPing: '',
   // 另外三句「行为关键」的文案（2026-11-04 第二批）。
@@ -236,6 +241,9 @@ export const Config = Schema.object({
   pingFromHour: Schema.number().min(0).max(23).default(DEFAULTS.pingFromHour),
   pingToHour: Schema.number().min(0).max(23).default(DEFAULTS.pingToHour),
   personaHome: Schema.string().default(DEFAULTS.personaHome),
+  bleedMinLevel: Schema.number().min(1).max(10).default(DEFAULTS.bleedMinLevel),
+  bleedMaxHours: Schema.number().min(0).max(168).default(DEFAULTS.bleedMaxHours),
+  moodFadeHours: Schema.number().min(1).max(720).default(DEFAULTS.moodFadeHours),
   promptFree: Schema.string().default(DEFAULTS.promptFree),
   promptPing: Schema.string().default(DEFAULTS.promptPing),
   promptVoiceTail: Schema.string().default(DEFAULTS.promptVoiceTail),
@@ -491,6 +499,26 @@ export const FIELD_META = [
     key: 'moodTailLines', group: 'inject', topic: 'C', alias: '心情 注入 条数', label: '注入只读心情账本的最后几条', level: 'caution',
     range: '0–100000（默认 200，0＝全读）',
     why: '账本只增不改，注入每轮都要读。只读尾部是为了不让「账本变长」变成「每轮都变慢」。设 0 就每轮读全份 —— 账本很大时会明显拖慢。',
+  },
+  {
+    key: 'moodFadeHours', group: 'inject', topic: 'C', alias: '心情 衰减 旧了 一天 收起来', label: '心情多久算「旧了」', level: 'caution',
+    range: '1–720 小时（默认 24）',
+    why: '比这更旧的心情不再占正文，只收成一行点名（「另外还有 2 条是 3 天前记的：……」）。'
+      + '⚠️ 它不是删除：那几条还在账本里，只是不挤在「你现在的状态」里 —— '
+      + '呈现层的衰减，判断留给它自己。调小 = 只谈眼前；调大 = 旧情绪也一直摆着。',
+  },
+  {
+    key: 'bleedMinLevel', group: 'inject', topic: 'C', alias: '渗透 心情 传染 跨场合 浓度', label: '别处的情绪多浓才带过来', level: 'caution',
+    range: '1–10（默认 6）',
+    why: '别处记的心情（另一个会话、另一个人）要渗进这里，浓度至少得有这么高。'
+      + '完全不隔开不像人（人在别处被气到，回来语气会变）；全带过来又不分场合。'
+      + '⚠️ 带过来时会标明「不是在当前场合记的」，带不带由它自己定。调小 = 更容易串味。',
+  },
+  {
+    key: 'bleedMaxHours', group: 'inject', topic: 'C', alias: '渗透 心情 新的 多久 跨场合', label: '多新的别处情绪才会带过来', level: 'caution',
+    range: '0–168 小时（默认 12，0＝不带）',
+    why: '上面那条「多浓」的时间版：超过这个时长的别处情绪不算「此刻也被影响」，不再渗。'
+      + '设 0 就是完全隔开 —— 那更像两个互不相干的人，不像一个人有两段生活。',
   },  {
     key: 'stateDir', group: 'ledger', topic: 'C', alias: '账本 目录 数据', label: '账本目录', level: 'danger',
     range: '绝对路径',
