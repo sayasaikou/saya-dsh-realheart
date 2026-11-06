@@ -2791,6 +2791,9 @@ const ROUND_MARK = '[本轮消息]';
    */
   const PING_PROMPT = '你醒了一下。没人找你，这会儿是你自己的几分钟。'
     + '要是想跟他说句话，用 ' + join(QQROOT, 'work', 'bin', 'say') + ' "..." 发过去，他手机上会真收到。'
+    // 2026-11-06 夜：三条通道里只有 say 会看时机（那边正说着话就压住）。
+    // 另外两条不看，会插在正说着的话中间 —— 这正是这一轮要治的病，别自己绕开。
+    + '这一句只走 say。别用 napcat_send_message / qqbot_say：那两条不看时机，会插在正说着的话中间。'
     // 碎片例子。**别换成完整的句子** —— 完整句子会被她当成格式套，
     // 碎片套不出格式，只能套出「短」。
     + '像给朋友发微信那样：第一句很短，常常就几个字 ——'
@@ -3133,6 +3136,29 @@ const ROUND_MARK = '[本轮消息]';
     return up.getTime();
   }
 
+  /**
+   * 那边现在是不是正在说话（2026-11-06）。
+   *
+   * 读的是 work/bin/talk-state.py —— 跟 say（发之前）和 hold-dispatch（放之前）
+   * 是同一个定义。三处各写一遍，迟早一处改了另两处没改。
+   *
+   * 读不到就当「安静」：宁可叫一次，也不要因为这个判断失灵就再也不叫。
+   */
+  async function readTalkState() {
+    const py = join(QQROOT, 'work', 'bin', 'talk-state.py');
+    try {
+      const { stdout } = await execFileAsync(py, [], { timeout: 20000 });
+      const p = String(stdout).trim().split(/\s+/).map((x) => Number(x));
+      return {
+        generating: p[0] === 1 ? 1 : 0,
+        recvSecs: Number.isFinite(p[1]) ? p[1] : -1,
+        anySecs: Number.isFinite(p[2]) ? p[2] : -1,
+      };
+    } catch {
+      return { generating: 0, recvSecs: -1, anySecs: -1 };
+    }
+  }
+
   let pingTimer = null;
   async function startPingLoop() {
     const min = Number(cfg.pingMinMinutes) || 0;
@@ -3155,7 +3181,25 @@ const ROUND_MARK = '[本轮消息]';
     };
 
     const fire = async () => {
+      let deferTo = 0;
       try {
+        // ── 那边正在说话吗（2026-11-06）──
+        //
+        // 沙耶提的那件事：短唤醒老是在我们正说着话的时候冒出来。
+        // 原来这里唯一关心的是「到点没有」—— 到点就叫、叫醒的她就发，
+        // 而叫醒那一刻她完全不知道这边正在聊什么，也不知道刚有一条回复正发出去。
+        // 换个叫醒时刻只能碰运气，所以先问一句：这边安静吗。
+        //
+        // 十分钟是「这一轮话还没散」的量级。热的时候不叫，把下一次推到十分钟后再看，
+        // 而不是直接跳到 30–60 分钟之后：他聊完十分钟，她醒来正好是安静期。
+        const t = await readTalkState();
+        const hotRecv = t.recvSecs >= 0 && t.recvSecs < 600;
+        if (t.generating || hotRecv) {
+          deferTo = Date.now() + 10 * 60000;
+          const why = t.generating ? '我这轮还在生成' : `他 ${Math.round(t.recvSecs / 60)} 分钟前说过话`;
+          log(`短唤醒：那边正在说话（${why}），这一轮不叫，十分钟后再看`);
+          return;
+        }
         // 先拼 prompt 再落时间戳：拼挂了不该把「已经叫过」记上。
         const prompt = await buildPingPrompt();
         await writePingLast(Date.now());
@@ -3177,11 +3221,17 @@ const ROUND_MARK = '[本轮消息]';
       } catch (err) {
         log(`短唤醒这一轮出错：${err?.message ?? err}`, 'error');
       } finally {
-        const m2 = Number(cfg.pingMinMinutes) || 0;
-        if (m2 > 0) {
-          const x2 = Math.max(Number(cfg.pingMaxMinutes) || 0, m2);
-          const w = pingWindow();
-          arm(snapIntoPingWindow(Date.now() + gapMs(m2, x2), w.from, w.to));
+        if (deferTo) {
+          // 压延只推十分钟：这不是「跳过这一轮」，是「等他这一轮说完」。
+          const w0 = pingWindow();
+          arm(snapIntoPingWindow(deferTo, w0.from, w0.to));
+        } else {
+          const m2 = Number(cfg.pingMinMinutes) || 0;
+          if (m2 > 0) {
+            const x2 = Math.max(Number(cfg.pingMaxMinutes) || 0, m2);
+            const w = pingWindow();
+            arm(snapIntoPingWindow(Date.now() + gapMs(m2, x2), w.from, w.to));
+          }
         }
       }
     };
