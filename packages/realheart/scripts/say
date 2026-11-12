@@ -7,7 +7,7 @@
 #
 # 用法：
 #   say "想说的话"
-#   say --to <QQ号> "想说的话"       # 不写 --to 就发给面板上填的 ownerId
+#   say --to 1418499574 "想说的话"     # 默认就是他
 #   say --group 1107584206 "想说的话"  # 发到群里（慎用）
 #   say --piece ~/qqbot/work/pieces/xxx "做完了，你要不要看"
 #                                      # 附一句 + 作品路径。作品不用拆成消息。
@@ -36,37 +36,110 @@
 
 set -uo pipefail
 
-# ── 自己是谁 / 默认发给谁（2026-11-04 参数化）──
+# ── 自己是谁 / 默认发给谁（2026-11-07 参数化）──
 #
-# 原来这两行写死的是某一台机器上的号。这份文件是**进包**的 ——
-# 装到别人那台，她会把消息发给一个陌生人，而报错信息里什么也看不出来。
-# 现在两个都自己认：
-#   UIN    —— 从 NapCat 的配置文件名里读（onebot11_<号>.json）
-#   TARGET —— 从 realheart 面板上的 ownerId 读；没有就明说要填，不从别处猜
-UIN="${SAY_UIN:-}"
-if [ -z "$UIN" ]; then
-  UIN=$(ls "$HOME"/napcatrun/napcat/config/onebot11_*.json 2>/dev/null | head -1 \
-        | sed -E 's|.*onebot11_([0-9]+)\.json|\1|')
+# 沙耶的原话：「插件的东西，不要硬编码我们自己独有的地址路径，
+# 这个插件如果装在别人的机器上，会出问题的。」
+#
+# 这份文件是**进包**的 —— 写死号的话，装到别人那台她会发给一个陌生人，
+# 而且报错信息里什么也看不出来。
+#
+#   UIN    —— 环境变量 SAY_UIN；没有就挑「有启用 httpServers 的那个配置」，
+#             从配置文件名读号。**不能靠 head -1**：这台机器上有两个
+#             onebot11_*.json，号小的那个排在前面，挑错了就发不出去。
+#   TARGET —— 环境变量 SAY_TARGET；没有就从面板 config.user.json 读 ownerId；
+#             还读不到就明说要填，不从别处猜
+# NapCat 配置目录：不写死任何一台机器的路径。
+#   SAY_NAPCAT_CONFIG → $NAPCAT_HOME/napcat/config → 几个常见位置 → 在 $HOME 下按目录名找
+_has_onebot() { [ -d "$1" ] && ls "$1"/onebot11_*.json >/dev/null 2>&1; }
+SAY_CFG_DIR="${SAY_NAPCAT_CONFIG:-}"
+if [ -z "$SAY_CFG_DIR" ]; then
+  for _d in "${NAPCAT_HOME:-}/napcat/config" "$HOME/napcatrun/napcat/config" "$HOME/napcat/config" "$HOME/qq/napcat/config"; do
+    if _has_onebot "$_d"; then SAY_CFG_DIR="$_d"; break; fi
+  done
 fi
-if [ -z "$UIN" ]; then
-  UIN=$(ls /home/ubuntu/napcatrun/napcat/config/onebot11_*.json 2>/dev/null | head -1 \
-        | sed -E 's|.*onebot11_([0-9]+)\.json|\1|')
+# 候选都没中：在 $HOME 下按「目录里有 onebot11_*.json」去找，不是碰运气挑第一个目录
+if [ -z "$SAY_CFG_DIR" ]; then
+  for _d in $(find "$HOME" -maxdepth 6 -type f -name 'onebot11_*.json' 2>/dev/null | xargs -r -n1 dirname | sort -u); do
+    if _has_onebot "$_d"; then SAY_CFG_DIR="$_d"; break; fi
+  done
+fi
+if [ -z "$SAY_CFG_DIR" ]; then
+  echo "找不到 NapCat 的配置目录 —— 用 SAY_NAPCAT_CONFIG=<目录> 指一下就能发。" >&2
+  exit 3
+fi
+
+UIN="${SAY_UIN:-}"
+CONF=""
+if [ -n "$UIN" ]; then
+  CONF="$SAY_CFG_DIR/onebot11_${UIN}.json"
+  [ -f "$CONF" ] || CONF=""
+fi
+if [ -z "$CONF" ]; then
+  for _f in "$SAY_CFG_DIR"/onebot11_*.json; do
+    [ -f "$_f" ] || continue
+    if python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+for s in (d.get("network") or {}).get("httpServers") or []:
+    if s.get("enable"):
+        sys.exit(0)
+sys.exit(1)
+' "$_f" 2>/dev/null; then
+      CONF="$_f"
+      UIN=$(basename "$_f" .json | sed -E 's/^onebot11_//')
+      break
+    fi
+  done
 fi
 TARGET="${SAY_TARGET:-}"
 if [ -z "$TARGET" ]; then
-  TARGET=$(python3 -c "
+  # ① 面板上填的 ownerId（新装的机器走这条）
+  TARGET=$(python3 -c '
 import json, os
-p = os.path.expanduser('~/.dsh/realheart/config.user.json')
+dsh = os.environ.get("DSH_HOME") or os.path.expanduser("~/.dsh")
 try:
-    print(json.load(open(p, encoding='utf-8')).get('ownerId', '') or '')
+    print(json.load(open(os.path.join(dsh, "realheart", "config.user.json"), encoding="utf-8")).get("ownerId", "") or "")
 except Exception:
-    print('')
-" 2>/dev/null || true)
+    print("")
+' 2>/dev/null || true)
+fi
+if [ -z "$TARGET" ]; then
+  # ② 账本里最后一条私聊的收件人 —— 从没在面板填过 ownerId 的机器靠这条自举
+  TARGET=$(python3 -c '
+import json, os
+dsh = os.environ.get("DSH_HOME") or os.path.expanduser("~/.dsh")
+p = os.path.join(dsh, "realheart", "say.jsonl")
+last = ""
+try:
+    for line in open(p, encoding="utf-8"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if (r.get("kind") or "private") == "private" and r.get("to"):
+            last = str(r["to"])
+except Exception:
+    pass
+print(last)
+' 2>/dev/null || true)
+fi
+if [ -z "$TARGET" ]; then
+  # ③ 都没有就说清楚要什么，不从别处猜
+  echo "不知道发给谁：面板上没填 ownerId，账本里也没有发过的私聊。填一个再说（或者是 SAY_TARGET）。" >&2
+  exit 4
 fi
 GROUP=""
 PIECE=""
 DRY=0
 FLUSH=0
+NOW=0
 MSG=""
 
 while [ $# -gt 0 ]; do
@@ -76,6 +149,7 @@ while [ $# -gt 0 ]; do
     --piece) PIECE="$2";  shift 2 ;;
     --dry)   DRY=1; shift ;;
     --flush) FLUSH=1; shift ;;
+    --now)   NOW=1; shift ;;
     --help|-h) sed -n '2,20p' "$0"; exit 0 ;;
     *) MSG="$1"; shift ;;
   esac
@@ -98,8 +172,13 @@ $PIECE"
 fi
 
 # token 从 NapCat 的 onebot 配置里读 —— 不写死在任何地方，配置变了它自己跟
-CONF="$HOME/napcatrun/napcat/config/onebot11_${UIN}.json"
-[ -f "$CONF" ] || CONF="/home/ubuntu/napcatrun/napcat/config/onebot11_${UIN}.json"
+if [ -z "${CONF:-}" ]; then
+  CONF="$SAY_CFG_DIR/onebot11_${UIN}.json"
+fi
+if [ ! -f "$CONF" ]; then
+  echo "找不到 NapCat 配置（$SAY_CFG_DIR/onebot11_*.json）—— 发不了。不是我的问题，是配置路径变了。" >&2
+  exit 3
+fi
 if [ ! -f "$CONF" ]; then
   echo "找不到 $CONF —— 发不了。不是我的问题，是配置路径变了。" >&2
   exit 3
@@ -138,13 +217,40 @@ PORT="${PORT:-3000}"
 if [ "$FLUSH" -eq 1 ]; then
   QUEUE="${DSH_HOME:-$HOME/.dsh}/realheart/say-queue.jsonl"
   [ -s "$QUEUE" ] || exit 0
+  # 2026-11-06：补发也要等安静的时候。
+  # 补发是「之前没发出去的话」，一堆攒着的话趁他刚说完时刷过去，比不补更糟。
+  TS_PY="$HOME/qqbot/work/bin/talk-state.py"
+  if [ -x "$TS_PY" ]; then
+    read -r GEN_F RECV_F _ANY_F < <("$TS_PY" 2>/dev/null) || true
+    if [ "${GEN_F:-0}" = "1" ]; then exit 0; fi
+    case "${RECV_F:--1}" in
+      ''|*[!0-9-]*) : ;;
+      *) [ "$RECV_F" -ge 0 ] && [ "$RECV_F" -lt 300 ] && exit 0 ;;
+    esac
+  fi
   # 16:35 补：补发成功也要进账本。原来 flush 只在队列里删行，
   # say.jsonl 一个字不记 —— 16:20 那批就是这么「送到了但查不到」。
   LEDGER="${DSH_HOME:-$HOME/.dsh}/realheart/say.jsonl"
-  python3 - "$QUEUE" "$PORT" "$TOKEN" "$LEDGER" <<'PY'
+  AGED="$HOME/qqbot/work/bin/aged-label.py"
+  python3 - "$QUEUE" "$PORT" "$TOKEN" "$LEDGER" "$AGED" <<'PY'
 import json, os, sys, time, urllib.request
-path, port, token, ledger = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+path, port, token, ledger, aged = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+
+# ── 补发的话要带时间记号（2026-11-06 夜，大肥鱼提的）──
+# 原样补发，收信人看不出这是几小时前写的：「还是没想明白」会被当成此刻在想。
+# 话说出去的语气差不多，差的是时间 —— 把时间丢掉，等于把话的意思改了。
+try:
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location('aged_label', aged)
+    _aged = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_aged)
+    def mark(text, when):
+        return _aged.decorate(text, when)
+except Exception:
+    def mark(text, when):
+        return text
 rows = []
+bad = []
 try:
     with open(path, encoding='utf-8') as fh:
         for line in fh:
@@ -154,20 +260,26 @@ try:
             try:
                 rows.append(json.loads(line))
             except Exception:
-                pass
+                bad.append(line)
 except Exception:
     raise SystemExit
-if not rows:
+# 2026-11-07 大肥鱼：坏行原来是被 pass 掉的 —— 那等于「解析不了就删掉」，
+# 而且不报错、不记账本、不留痕。队列无声少东西，这是唯一一条能做到这样的路径。
+if bad:
+    sys.stderr.write('⚠ 队列里 %d 行不是合法 JSON，原样留着（没解析、没发）\n' % len(bad))
+if not rows and not bad:
     raise SystemExit
+n_before = len(rows) + len(bad)
 kept = []
 sent = 0
 for r in rows:
+    text = mark(str(r.get('text', '')), r.get('ts') or r.get('at'))
     if r.get('kind') == 'group':
         ep = 'send_group_msg'
-        payload = {'group_id': int(r['to']), 'message': r.get('text', '')}
+        payload = {'group_id': int(r['to']), 'message': text}
     else:
         ep = 'send_private_msg'
-        payload = {'user_id': int(r['to']), 'message': r.get('text', '')}
+        payload = {'user_id': int(r['to']), 'message': text}
     ok = False
     mid = ''
     try:
@@ -189,9 +301,11 @@ for r in rows:
         try:
             row = {
                 'at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+                'id': r.get('id') or '',
+                'status': 'sent',
                 'kind': r.get('kind') or 'private',
                 'to': str(r.get('to', '')),
-                'text': r.get('text', ''),
+                'text': text,
                 'message_id': mid,
                 'via': 'flush',
             }
@@ -203,9 +317,25 @@ for r in rows:
     r['tries'] = int(r.get('tries', 0)) + 1
     kept.append(r)
 tmp = path + '.tmp'
+# 2026-11-07：写回前先看文件有没有被别人动过。
+# os.replace 是整体覆盖 —— 补发那几十秒里 say 失败新塞进来的条目，
+# 会被这行一并抹掉（append 拿到的是旧 inode，replace 之后数据随旧文件一起消失）。
+# 行数对不上就不覆盖，留给下一轮：
+n_now = -1
+try:
+    with open(path, encoding='utf-8') as fh:
+        n_now = sum(1 for l in fh if l.strip())
+except Exception:
+    pass
+if n_now != n_before:
+    sys.stderr.write('⚠ 队列在补发期间被改过（%d 行 → %d 行），这次不覆盖，留给下一轮\n' % (n_before, n_now))
+    print('补发 %d 条（队列被并发改过，未写回）' % sent)
+    raise SystemExit
 with open(tmp, 'w', encoding='utf-8') as fh:
     for r in kept:
         fh.write(json.dumps(r, ensure_ascii=False) + '\n')
+    for line in bad:
+        fh.write(line + '\n')
 os.replace(tmp, path)
 print('补发 %d 条，剩 %d 条' % (sent, len(kept)))
 PY
@@ -215,6 +345,59 @@ fi
 if [ "$DRY" -eq 1 ]; then
   echo "[dry] 会发到 $([ -n "$GROUP" ] && echo "群 $GROUP" || echo "他 $TARGET")：$MSG"
   exit 0
+fi
+
+# ── 这一句现在该不该发（2026-11-06）──
+#
+# 沙耶说的那件事：短唤醒夹在我们正在说话的时候冒出来，像插嘴。
+# 根子不在叫醒，在**发的这一下** —— 醒来那一刻就发，而那一刻常常正是他刚说完、
+# 我刚回完的时候。换个叫醒的时刻也只能碰运气。
+#
+# 所以把「想说什么」和「什么时候说」拆开：这边正在有人说话，就存进 hold 队列，
+# 由 hold-dispatch.sh 等他安静下来再放。
+#
+# ⚠️ 只在私聊里这么做。群里的主动消息有另一套口径，不在这次改动里。
+if [ "$NOW" -eq 0 ] && [ -z "$GROUP" ]; then
+  TS_PY="$HOME/qqbot/work/bin/talk-state.py"
+  GEN=0
+  RECV=-1
+  if [ -x "$TS_PY" ]; then
+    read -r GEN RECV _ANY < <("$TS_PY" 2>/dev/null) || true
+  fi
+  HOT=0
+  [ "${GEN:-0}" = "1" ] && HOT=1
+  # 他 90 秒内说过话也算热 —— 那会儿插件那边八成正在回，走正常回复通道就行。
+  #
+  # 2026-11-07：180 → 90。原来三分钟太长：他三分钟前说完、我三分钟前也回完了，
+  # 这一轮其实已经过去，我却还把这句压进 hold —— 压到半天后才放出来，
+  # 放出来的时候语早就不接了。这就是沙耶说的割裂感。
+  # 90 秒只够盖住「他刚说完、回复还在路上」那一段。
+  case "${RECV:--1}" in
+    ''|*[!0-9-]*) : ;;
+    *) [ "$RECV" -ge 0 ] && [ "$RECV" -lt 90 ] && HOT=1 ;;
+  esac
+  if [ "$HOT" -eq 1 ]; then
+    HOLD="${DSH_HOME:-$HOME/.dsh}/realheart/hold.jsonl"
+    python3 - "$HOLD" "$MSG" "$TARGET" "$GEN" "$RECV" <<'PY' 2>/dev/null || true
+import json, os, sys, time
+path, text, target, gen, recv = sys.argv[1:6]
+os.makedirs(os.path.dirname(path), exist_ok=True)
+row = {
+    'at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+    'ts': int(time.time()),
+    'kind': 'private',
+    'to': str(target),
+    'text': text,
+    'why': 'hot',
+    'gen': gen,
+    'recv': recv,
+}
+with open(path, 'a', encoding='utf-8') as fh:
+    fh.write(json.dumps(row, ensure_ascii=False) + '\n')
+PY
+    echo "那边正在说话（生成中=$GEN，他最后说话 ${RECV} 秒前），这句先压着（hold）。安静下来会自动放。" >&2
+    exit 0
+  fi
 fi
 
 # 消息里的引号、换行都用 python 打包，别让 shell 去拼 JSON
@@ -238,7 +421,10 @@ RESP=$(curl -s -m 12 -X POST "http://127.0.0.1:$PORT/$EP" \
   -H "Content-Type: application/json" \
   -d "$BODY" 2>&1)
 
-if echo "$RESP" | grep -q '"status":"ok"'; then
+# 2026-11-07：原来的判据钉死了紧凑 JSON —— 只要响应里多一个空格（"status": "ok"），
+# 每条都会被判成发送失败：话进队列、flush 再发一遍，结果是重复发送。
+# 放宽成容错空格。
+if echo "$RESP" | grep -qE '"status"[[:space:]]*:[[:space:]]*"ok"'; then
   MID=$(echo "$RESP" | python3 -c "
 import json,sys
 try: print(json.load(sys.stdin).get('data',{}).get('message_id',''))
@@ -258,6 +444,7 @@ path, text, mid, group, target = sys.argv[1:6]
 os.makedirs(os.path.dirname(path), exist_ok=True)
 row = {
     'at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+    'status': 'sent',
     'kind': 'group' if group else 'private',
     'to': (group or target),
     'text': text,
@@ -270,13 +457,21 @@ PY
   exit 0
 else
   # 2026-11-04：发不出去就存起来，别让它就这么没了。
+  # 2026-11-07：同时进账本，status=queued，带 id。
+  #   为什么：账本从前只记成功的，事后翻账「她说过什么」就缺一块 ——
+  #   分不清「她没说话」和「她说了没送到」。今天报数就是卡在这。
+  #   id 用来到时把 queued 和 sent 串成同一句：flush 发成功写 status=sent、同 id。
   QUEUE="${DSH_HOME:-$HOME/.dsh}/realheart/say-queue.jsonl"
-  python3 - "$QUEUE" "$MSG" "$GROUP" "$TARGET" <<'PY' 2>/dev/null || true
-import json, os, sys, time
-path, text, group, target = sys.argv[1:5]
+  LEDGER_Q="${DSH_HOME:-$HOME/.dsh}/realheart/say.jsonl"
+  python3 - "$QUEUE" "$LEDGER_Q" "$MSG" "$GROUP" "$TARGET" <<'PY' 2>/dev/null || true
+import json, os, sys, time, uuid
+path, ledger, text, group, target = sys.argv[1:6]
 os.makedirs(os.path.dirname(path), exist_ok=True)
+rid = uuid.uuid4().hex[:12]
+at = time.strftime('%Y-%m-%dT%H:%M:%S%z')
 row = {
-    'at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+    'at': at,
+    'id': rid,
     'kind': 'group' if group else 'private',
     'to': (group or target),
     'text': text,
@@ -284,6 +479,18 @@ row = {
 }
 with open(path, 'a', encoding='utf-8') as fh:
     fh.write(json.dumps(row, ensure_ascii=False) + '\n')
+try:
+    with open(ledger, 'a', encoding='utf-8') as fh:
+        fh.write(json.dumps({
+            'at': at,
+            'id': rid,
+            'status': 'queued',
+            'kind': row['kind'],
+            'to': row['to'],
+            'text': text,
+        }, ensure_ascii=False) + '\n')
+except Exception:
+    pass
 PY
   echo "没发出去：$RESP（这句话存进队列了，通道回来会补发：say --flush）" >&2
   exit 1

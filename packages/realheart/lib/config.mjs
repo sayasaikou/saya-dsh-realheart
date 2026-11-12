@@ -205,52 +205,77 @@ export const RANGES = {
   indexTtlMs: { min: 60000, max: 7 * 24 * 60 * 60 * 1000 },
 };
 
+/** 只保留「能直接用的值」。
+ *
+ * 2026-11-11：宿主传进来的 config 里，volatile 的那些字段不是标量 ——
+ * 实测是空对象（JSON.stringify 出来是 {}），在 0.2.2-rc 桌面上则是 undefined。
+ * 不管它是包装、是代理还是没解析的表达式，它都不是用户写的值：
+ * {...DEFAULTS, ...config} 把它当值收下，validateConfig 就会报「不是 true / false」。
+ * 本插件的配置项全是标量或字符串数组，所以「对象一律丢掉」是安全的。
+ * 显式写 null 的保留 —— 那是真的坏值，该报。
+ */
+export function plainConfig(obj) {
+  const out = {};
+  const dropped = [];
+  for (const [k, v] of Object.entries(obj ?? {})) {
+    if (v === undefined) { dropped.push(k); continue; }
+    if (v !== null && typeof v === 'object' && !Array.isArray(v)) { dropped.push(k); continue; }
+    if (Array.isArray(v) && v.some((x) => x !== null && typeof x === 'object')) { dropped.push(k); continue; }
+    out[k] = v;
+  }
+  if (dropped.length) {
+    try { out.__droppedByHost = dropped; } catch { /* 只用于诊断 */ }
+    delete out.__droppedByHost; // 不污染配置，仅在上面统计
+  }
+  return out;
+}
+
 export const Config = Schema.object({
-  enabled: Schema.boolean().default(DEFAULTS.enabled),
-  root: Schema.string().default(DEFAULTS.root),
-  stateDir: Schema.string().default(DEFAULTS.stateDir),
-  sessionsRoot: Schema.string().default(DEFAULTS.sessionsRoot),
-  auditDir: Schema.string().default(DEFAULTS.auditDir),
-  historyDir: Schema.string().default(DEFAULTS.historyDir),
-  msgsDir: Schema.string().default(DEFAULTS.msgsDir),
-  ownerId: Schema.string().default(DEFAULTS.ownerId),
-  indexTtlMs: Schema.number().min(RANGES.indexTtlMs.min).max(RANGES.indexTtlMs.max).default(DEFAULTS.indexTtlMs),
-  injectMood: Schema.boolean().default(DEFAULTS.injectMood),
-  injectNow: Schema.boolean().default(DEFAULTS.injectNow),
-  injectVoice: Schema.boolean().default(DEFAULTS.injectVoice),
-  injectToday: Schema.boolean().default(DEFAULTS.injectToday),
-  voiceHints: Schema.array(Schema.string()).default(DEFAULTS.voiceHints),
-  sayLogPath: Schema.string().default(DEFAULTS.sayLogPath),
-  toolsOff: Schema.array(Schema.string()).default(DEFAULTS.toolsOff),
-  injectBudgetChars: Schema.number().min(200).max(20000).default(DEFAULTS.injectBudgetChars),
-  moodTailLines: Schema.number().min(0).max(100000).default(DEFAULTS.moodTailLines),
-  servePage: Schema.boolean().default(DEFAULTS.servePage),
-  pagePort: Schema.number().min(RANGES.pagePort.min).max(RANGES.pagePort.max).default(DEFAULTS.pagePort),
-  pageBind: Schema.string().default(DEFAULTS.pageBind),
-  announceOnInstall: Schema.boolean().default(DEFAULTS.announceOnInstall),
-  freeTime: Schema.boolean().default(DEFAULTS.freeTime),
-  freeTimeProfile: Schema.string().default(DEFAULTS.freeTimeProfile),
+  enabled: Schema.boolean().default(DEFAULTS.enabled).volatile(),
+  root: Schema.string().default(DEFAULTS.root).volatile(),
+  stateDir: Schema.string().default(DEFAULTS.stateDir).volatile(),
+  sessionsRoot: Schema.string().default(DEFAULTS.sessionsRoot).volatile(),
+  auditDir: Schema.string().default(DEFAULTS.auditDir).volatile(),
+  historyDir: Schema.string().default(DEFAULTS.historyDir).volatile(),
+  msgsDir: Schema.string().default(DEFAULTS.msgsDir).volatile(),
+  ownerId: Schema.string().default(DEFAULTS.ownerId).volatile(),
+  indexTtlMs: Schema.number().min(RANGES.indexTtlMs.min).max(RANGES.indexTtlMs.max).default(DEFAULTS.indexTtlMs).volatile(),
+  injectMood: Schema.boolean().default(DEFAULTS.injectMood).volatile(),
+  injectNow: Schema.boolean().default(DEFAULTS.injectNow).volatile(),
+  injectVoice: Schema.boolean().default(DEFAULTS.injectVoice).volatile(),
+  injectToday: Schema.boolean().default(DEFAULTS.injectToday).volatile(),
+  voiceHints: Schema.array(Schema.string()).default(DEFAULTS.voiceHints).volatile(),
+  sayLogPath: Schema.string().default(DEFAULTS.sayLogPath).volatile(),
+  toolsOff: Schema.array(Schema.string()).default(DEFAULTS.toolsOff).volatile(),
+  injectBudgetChars: Schema.number().min(200).max(20000).default(DEFAULTS.injectBudgetChars).volatile(),
+  moodTailLines: Schema.number().min(0).max(100000).default(DEFAULTS.moodTailLines).volatile(),
+  servePage: Schema.boolean().default(DEFAULTS.servePage).volatile(),
+  pagePort: Schema.number().min(RANGES.pagePort.min).max(RANGES.pagePort.max).default(DEFAULTS.pagePort).volatile(),
+  pageBind: Schema.string().default(DEFAULTS.pageBind).volatile(),
+  announceOnInstall: Schema.boolean().default(DEFAULTS.announceOnInstall).volatile(),
+  freeTime: Schema.boolean().default(DEFAULTS.freeTime).volatile(),
+  freeTimeProfile: Schema.string().default(DEFAULTS.freeTimeProfile).volatile(),
   freeTimeSlots: Schema.array(Schema.object({
     start: Schema.string(),
     minutes: Schema.number(),
   })).default(DEFAULTS.freeTimeSlots),
-  freeTimeFocus: Schema.array(Schema.string()).default(DEFAULTS.freeTimeFocus),
-  pingContext: Schema.boolean().default(DEFAULTS.pingContext),
-  pingMinMinutes: Schema.number().min(0).max(1440).default(DEFAULTS.pingMinMinutes),
-  pingMaxMinutes: Schema.number().min(0).max(1440).default(DEFAULTS.pingMaxMinutes),
-  pingFromHour: Schema.number().min(0).max(23).default(DEFAULTS.pingFromHour),
-  pingToHour: Schema.number().min(0).max(23).default(DEFAULTS.pingToHour),
-  personaHome: Schema.string().default(DEFAULTS.personaHome),
-  bleedMinLevel: Schema.number().min(1).max(10).default(DEFAULTS.bleedMinLevel),
-  bleedMaxHours: Schema.number().min(0).max(168).default(DEFAULTS.bleedMaxHours),
-  moodFadeHours: Schema.number().min(1).max(720).default(DEFAULTS.moodFadeHours),
-  promptFree: Schema.string().default(DEFAULTS.promptFree),
-  promptPing: Schema.string().default(DEFAULTS.promptPing),
-  promptVoiceTail: Schema.string().default(DEFAULTS.promptVoiceTail),
-  promptTodayTail: Schema.string().default(DEFAULTS.promptTodayTail),
-  promptMoodBan: Schema.string().default(DEFAULTS.promptMoodBan),
-  allowManualMoodOverride: Schema.boolean().default(DEFAULTS.allowManualMoodOverride),
-  maxManualMoodOverridePerWeek: Schema.number().min(0).max(99).default(DEFAULTS.maxManualMoodOverridePerWeek),
+  freeTimeFocus: Schema.array(Schema.string()).default(DEFAULTS.freeTimeFocus).volatile(),
+  pingContext: Schema.boolean().default(DEFAULTS.pingContext).volatile(),
+  pingMinMinutes: Schema.number().min(0).max(1440).default(DEFAULTS.pingMinMinutes).volatile(),
+  pingMaxMinutes: Schema.number().min(0).max(1440).default(DEFAULTS.pingMaxMinutes).volatile(),
+  pingFromHour: Schema.number().min(0).max(23).default(DEFAULTS.pingFromHour).volatile(),
+  pingToHour: Schema.number().min(0).max(23).default(DEFAULTS.pingToHour).volatile(),
+  personaHome: Schema.string().default(DEFAULTS.personaHome).volatile(),
+  bleedMinLevel: Schema.number().min(1).max(10).default(DEFAULTS.bleedMinLevel).volatile(),
+  bleedMaxHours: Schema.number().min(0).max(168).default(DEFAULTS.bleedMaxHours).volatile(),
+  moodFadeHours: Schema.number().min(1).max(720).default(DEFAULTS.moodFadeHours).volatile(),
+  promptFree: Schema.string().default(DEFAULTS.promptFree).volatile(),
+  promptPing: Schema.string().default(DEFAULTS.promptPing).volatile(),
+  promptVoiceTail: Schema.string().default(DEFAULTS.promptVoiceTail).volatile(),
+  promptTodayTail: Schema.string().default(DEFAULTS.promptTodayTail).volatile(),
+  promptMoodBan: Schema.string().default(DEFAULTS.promptMoodBan).volatile(),
+  allowManualMoodOverride: Schema.boolean().default(DEFAULTS.allowManualMoodOverride).volatile(),
+  maxManualMoodOverridePerWeek: Schema.number().min(0).max(99).default(DEFAULTS.maxManualMoodOverridePerWeek).volatile(),
 });
 
 /** 合法 IP 的粗判 —— 不追求覆盖一切写法，够挡住手滑写进去的域名和空串。 */function isBindAddr(v) {
@@ -280,7 +305,7 @@ function checkDir(key, value, out) {
  */
 export function validateConfig(cfg = {}) {
   const out = [];
-  const c = { ...DEFAULTS, ...cfg };
+  const c = { ...DEFAULTS, ...plainConfig(cfg) };
 
   // ── 布尔项 ──
   // 不查这个的话，`"injectMood": "yes"` 会被一路带到运行里 —— 而 `"yes"` 是真值，
@@ -433,7 +458,7 @@ export const FIELD_META = [
   {
     key: 'voiceHints', group: 'inject', topic: 'C', alias: '主动 说话 路径 say 具体 怎么发', label: '告诉她具体怎么发（可选）', level: 'caution',
     range: '字符串数组（默认空）',
-    why: '每一条作为一行写进上面那段。例：/home/ubuntu/qqbot/work/bin/say "想说的话" —— 用你自己的号直发私聊。'
+    why: '每一条作为一行写进上面那段。例：<你的部署根>/work/bin/say "想说的话" —— 用你自己的号直发私聊。'
       + '为什么不做自动探测：不同机器路径不同，猜错了她会照着错路径试，比不写更坏。',
   },
   {
@@ -679,7 +704,7 @@ export const FIELD_META = [
  * （空 = 用内置），所以面板光看 current 是看不出「留空会发生什么」的 ——
  * 把内置那版一并给出去，页面上就能写「留空时用的是下面这段」。 */
 export function describeConfig(current = {}, builtins = {}) {
-  const cfg = { ...DEFAULTS, ...current };
+  const cfg = { ...DEFAULTS, ...plainConfig(current) };
   return {
     fields: FIELD_META.map((m) => ({
       ...m,

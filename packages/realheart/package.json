@@ -1,6 +1,6 @@
 {
   "name": "realheart",
-  "version": "0.2.118",
+  "version": "0.3.0",
   "description": "给她一个能记账的心情层：心情必须有来处，改动必须有账，她自己能停能查",
   "type": "module",
   "main": "index.mjs",
@@ -19,7 +19,8 @@
     "CHANGELOG.md",
     "LICENSE",
     "skills/",
-    "!**/*.bak-*"
+    "!**/*.bak-*",
+    "client"
   ],
   "keywords": [
     "dsh",
@@ -32,6 +33,13 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ]
     }
   },
   "engines": {
@@ -48,5 +56,14 @@
   "bugs": {
     "url": "https://github.com/sayasaikou/saya-dsh-realheart/issues"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "default": "./index.mjs"
+    },
+    "./client": {
+      "default": "./client/index.js"
+    },
+    "./package.json": "./package.json"
+  }
 }

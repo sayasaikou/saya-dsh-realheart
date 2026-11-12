@@ -19,7 +19,7 @@
  * 那件事机器判定不了，硬判就是另一种演。先把门立起来，真假留给时间看。
  */
 
-import { Config, DEFAULTS, DSH_HOME, QQROOT, validateConfig, loadUserConfig, describeConfig } from './lib/config.mjs';
+import { Config, DEFAULTS, DSH_HOME, QQROOT, validateConfig, loadUserConfig, describeConfig, plainConfig } from './lib/config.mjs';
 import { instanceTagFrom, lastInjectPaths } from './lib/instance-tag.mjs';
 import { maskSecret, pageHint, whereSecret } from './lib/secrets.mjs';
 import { sessionIdOfAssembleContext, sessionIdOfExec, moodVisibleIn, moodBleedsIn, sessionLabel } from './lib/session.mjs';
@@ -29,7 +29,7 @@ import net from 'node:net';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { appendFile, mkdir, readFile, readdir, writeFile, copyFile, chmod, open, stat, unlink } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { promisify } from 'node:util';
 import {
@@ -202,7 +202,7 @@ export function apply(ctx, config = {}) {
   // 理由在 lib/config.mjs：面板不能写 profile 的 YAML（那会热重挂、打断会话），
   // 所以它写自己的文件，插件启动时读进来合并。代价：必须重启才生效。
   const user = loadUserConfig(DSH_HOME);
-  const cfg = { ...DEFAULTS, ...config, ...user.config };
+  const cfg = { ...DEFAULTS, ...plainConfig(config), ...plainConfig(user.config) };
   if (cfg.enabled === false) return;
 
   // 2026-11-04：提示词也能在面板上改（沙耶：「包括每次唤醒给她的提示词」）。
@@ -263,6 +263,12 @@ export function apply(ctx, config = {}) {
       line(`[realheart]   · ${p.key} = ${JSON.stringify(p.value)} —— ${p.reason}`);
       line(`[realheart]     怎么改：${p.fix}`);
     }
+    // 2026-11-11：ctx.logger 不落盘，这几条在日志里根本看不到。直接写文件。
+    try {
+      mkdirSync(join(DSH_HOME, 'realheart'), { recursive: true });
+      writeFileSync(join(DSH_HOME, 'realheart', 'last-boot-error.json'),
+        JSON.stringify({ at: new Date().toISOString(), count: problems.length, problems }, null, 2), 'utf8');
+    } catch { /* 写不出去也不能影响 throw */ }
     throw new Error(`realheart 配置有 ${problems.length} 处不对（详见日志），拒绝启动`);
   }
 
@@ -877,6 +883,69 @@ const ROUND_MARK = '[本轮消息]';
     }
   }
 
+  /**
+   * 每轮问一句「要不要改心情」。
+   *
+   * 2026-11-12 沙耶：「只靠自觉的话，模型根本就不会去用」。数据也同意：
+   * rh_mood 11-01~11-03 用了 28 次，之后一路掉，11-09 起四天 0 次。
+   * 所以不能只把它摆在工具表里等她想起来 —— 每一轮都在她眼前问一句，
+   * 改就改，不改就当没看见。问一句的成本是几十个字，比对着一本空账本强。
+   *
+   * 另外：如果上一轮她或他说的话里有明显的情绪信号，就把那句原话摆出来问
+   * 「是不是这里变了」—— 有个具体的钩子，比空问一句更容易触发。
+   */
+  const EMOTION_WORDS = /(累|难受|疼|软|困|烦|怕|慌|想哭|委屈|生气|心里堵|没劲|不想动|撑不住|松了口气|舒服|爽|开心|高兴|踏实|沉)/;
+  async function moodNudgeText() {
+    // 2026-11-12 二改：上面那段「变了就调 rh_mood」本来就在心情段里，这里再写一遍就是重复。
+    // 这一段只做一件事 —— 当她/他刚才的话里有情绪信号时，把那句原话摆出来当钩子。
+    // 没信号就整段不出现（返回空），不占注入。
+    const lines = ['（刚才那句话里像是有情绪。如果是真的变了，就记一笔；没有就算了。）'];
+    try {
+      const dirH = cfg.historyDir || join(QQROOT, 'data', 'history');
+      let best = '';
+      let bestM = -1;
+      for (const n of await readdir(dirH)) {
+        if (!/^napcat-private-.*\.jsonl$/.test(n)) continue;
+        try {
+          const st = await stat(join(dirH, n));
+          if (st.mtimeMs > bestM) { bestM = st.mtimeMs; best = join(dirH, n); }
+        } catch { /* 跳过 */ }
+      }
+      if (!best) return '';
+      // 只读尾巴 8KB —— 这段每轮都跑，整份读进来（可能几 MB）是白花的。
+      // 从中间截断的第一行 JSON 解不出来会跳过，不影响。
+      let raw = '';
+      try {
+        const st2 = await stat(best);
+        const take = Math.min(8192, st2.size);
+        const fh = await open(best, 'r');
+        const buf = Buffer.alloc(take);
+        await fh.read(buf, 0, take, Math.max(0, st2.size - take));
+        await fh.close();
+        raw = buf.toString('utf8');
+      } catch {
+        raw = await readFile(best, 'utf8');
+      }
+      const rows = raw.split('\n').filter(Boolean).slice(-6);
+      let hit = '';
+      for (const line of rows) {
+        let r;
+        try { r = JSON.parse(line); } catch { continue; }
+        const text = String(r?.text || '').replace(/\s+/g, ' ').trim();
+        if (!text || text.length < 4) continue;
+        if (/^(Time sampled|Browser time zone|Elapsed since|System reminder)/.test(text)) continue;
+        const m2 = EMOTION_WORDS.exec(text);
+        if (m2) {
+          const i2 = Math.max(0, m2.index - 18);
+          hit = (r.role === 'user' ? '他刚才说：' : '你刚才说：') + '「' + text.slice(i2, i2 + 46) + '」';
+        }
+      }
+      if (!hit) return '';
+      lines.push('（' + hit + ' —— 如果那句背后确实换了个状态，就记一笔；没有就算了。）');
+    } catch { return ''; }
+    return lines.join('\n');
+  }
+
   async function moodSectionText({ sessionId = '' } = {}) {
     const ctl = await readControl();
     // 停着就不提。不是“提一句被冻了”，是彻底当没这回事——
@@ -1043,6 +1112,7 @@ const ROUND_MARK = '[本轮消息]';
       // 所以：**只给状态不给禁令，她会把它当成可以拿出来说的素材。**
       out.push(promptText('promptMoodBan', '（知道就行，不必说出来 —— 它们不是你聊天的素材，只影响你说话的样子，不是你的话。）'));
       out.push('变了就调 rh_mood 记一笔；哪条不对了，也记一笔说清楚。');
+      out.push('（你写下的来处会带在这里 —— 写清楚点，下次你自己才认得出这是哪件事。）');
       return out.join('\n');
     }
 
@@ -1073,6 +1143,7 @@ const ROUND_MARK = '[本轮消息]';
     lines.push('这是调子，不是台词。浓的时候压不住，淡了就不算数。');
     lines.push('（知道就行，不必说出来 —— 它不是你聊天的素材，只影响你说话的样子。）');
     lines.push('变了就调 rh_mood 记一笔（必须指一件事），没变就别写。');
+    lines.push('（你写下的来处会带在这里 —— 写清楚点，下次你自己才认得出这是哪件事。）');
     return lines.join('\n');
   }
 
@@ -1560,7 +1631,12 @@ const ROUND_MARK = '[本轮消息]';
         : join(cfg.stateDir, 'say.jsonl');
       const raw = await readFile(sayPath, 'utf8');
       const rows = raw.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-      const said = rows.filter((r) => isToday(r.at || r.ts) && typeof r.text === 'string' && r.text.trim());
+      const said = rows.filter((r) => isToday(r.at || r.ts)
+        && typeof r.text === 'string' && r.text.trim()
+        // 2026-11-07：账本里现在也有 status=queued 的（发送失败、还压在队列里没送到）。
+        // 「她想说但没送到」不算「主动说过 N 句」—— 算进去等于让她以为自己说过没说过的话。
+        // 老条目没有 status 字段，按 sent 认。
+        && (r.status ?? 'sent') === 'sent');
       if (said.length) {
         const last = said[said.length - 1];
         const at = hhmm(last.at || last.ts);
@@ -2099,6 +2175,7 @@ const ROUND_MARK = '[本轮消息]';
         if (assembledSeen.has(assembly)) return assembled;
         assembledSeen.add(assembly);
       }
+      const __t0 = Date.now();
       try {
         const parts = [];
         // 每段都带一句边界（P-4）：注入本身就是一个 injection 面 ——
@@ -2122,6 +2199,12 @@ const ROUND_MARK = '[本轮消息]';
         }
         const mood = await moodSectionText({ sessionId: sessionIdOfAssembleContext(_context) });
         if (mood) parts.push(sec('realheart:mood', 900, mood));
+        try {
+          const nudge = await moodNudgeText();
+          if (nudge) parts.push(sec('realheart:mood-nudge', 899, nudge));
+        } catch (err) {
+          await noteInjectProblem('mood-nudge', err);
+        }
         try {
           const admit = await admitSectionText();
           if (admit) parts.push(sec('realheart:admit', 906, admit));
@@ -2330,6 +2413,10 @@ const ROUND_MARK = '[本轮消息]';
           // **「注入了但写不下来」和「根本没注入」在页面上长得一模一样**，那正是这套东西最坏的坏法。
           log(`注入快照没写下来（${err?.code ?? err?.message ?? err}）—— 注入本身照常发出`, 'error');
         }
+        // 2026-11-12：这一段每轮都跑，二十来段各自读账本。慢过 50ms 就记一行，
+        // 不然「她每轮都在为一段空东西付钱」这件事永远看不见。
+        const __ms = Date.now() - __t0;
+        if (__ms > 50) log('注入拼装 ' + __ms + 'ms（' + parts.length + ' 段）', 'info');
         return { ...assembled, sections: [...sections, ...parts] };
       } catch (err) {
         // 注入出错必须放行 —— 宁可这一轮没心情，也不能让她说不出话。
@@ -2789,7 +2876,7 @@ const ROUND_MARK = '[本轮消息]';
    *   换成**碎片**句式（「在干嘛」「困了」）—— 碎片抄不成模板，抄了也是短句。
    *   加两条硬要求：**第一句很短**、**用「你」**（对着一个人说，不是对着列表发布）。
    */
-  const PING_PROMPT = '你醒了一下。没人找你，这会儿是你自己的几分钟。'
+  const PING_PROMPT = '这会儿是你自己的几分钟，没人找你。'
     + '要是想跟他说句话，用 ' + join(QQROOT, 'work', 'bin', 'say') + ' "..." 发过去，他手机上会真收到。'
     // 2026-11-06 夜：三条通道里只有 say 会看时机（那边正说着话就压住）。
     // 另外两条不看，会插在正说着的话中间 —— 这正是这一轮要治的病，别自己绕开。
@@ -2799,12 +2886,21 @@ const ROUND_MARK = '[本轮消息]';
     + '像给朋友发微信那样：第一句很短，常常就几个字 ——'
     + '「在干嘛」「刚看到一个事」「困了」「你说那个…」，这样起头。'
     + '不是写完一整段再发出去，是先递一句过去，剩下的话看他接不接。'
+    // 2026-11-07：沙耶提的「可以直接发一个链接，然后补一句」。
+    // 她醒来只有几分钟，所以给能力的同时也给了退路 —— 别为了凑一个链接把时间全花在查上。
+    + '想递个链接、或者提一句刚看到的东西，可以用 agent-reach 查（B站 / GitHub / 网页，'
+    + '用法在你那份 skill 里）。但只有几分钟：查不到就别硬凑，说句你自己记得的也行。'
     + '说话用「你」。你是对着一个人在讲，不是对着一个列表发布。'
     // 「别报工作」这条留着 —— 它治的是「看不懂」，那是另一个病。
     + '别报工作。他不懂你在核什么口径，也不需要懂 —— 那是你的事，不是他的话题。'
     + '没说清楚也没关系：想不通的事、说不明白的念头、一半就断的句子，都能发。'
     + '（一条讲不完就再说一条 —— 但别连着发五条。他没回就等着。）'
-    + '要是这会儿心里真的什么都没有，那就继续睡 —— 不是欠账，就是没有。';
+    + '要是这会儿心里真的什么都没有，那就继续睡 —— 不是欠账，就是没有。'
+    // 2026-11-07：时间感。沙耶要的「中午问吃了没、清晨问醒没醒」，
+    // 写成时段话题表就成了闹钟 —— 她一天醒十几次，次次「吃了吗」更假。
+    // 所以只给口气，不给题目。
+    + '说话的时候带上这会儿的钟点：早上人说话短、还带着没睡醒的钝；中午会顺口问一句吃没吃；'
+    + '天黑了会慢下来；后半夜是舍不得。这是口气，不是题目 —— 别为了显得有时间感，硬塞一句时间进去。';
 
   /**
    * 把 FREE_PROMPT 落到 $DSH_HOME/realheart/free-prompt.txt（2026-11-01）。
@@ -2833,7 +2929,9 @@ const ROUND_MARK = '[本轮消息]';
    *    「他今天最后跟你说的话：原文对得上，没编…」—— 那是别的 agent 说的，不是他。
    *    他这台一共三个人在说话，所以判据就是名字里带不带「肥鱼」。
    */
-  async function recentTalkText() {
+  async function recentTalkText(opts = {}) {
+    const tail = Number.isFinite(opts.tail) ? opts.tail : 3;
+    const max = Number.isFinite(opts.max) ? opts.max : 80;
     const d = new Date();
     const fn = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.jsonl`;
     let raw = '';
@@ -2867,7 +2965,299 @@ const ROUND_MARK = '[本轮消息]';
       out.push(text.replace(/\s+/g, ' '));
     }
     if (!out.length) return '';
-    return out.slice(-3).map((t) => '· ' + (t.length > 80 ? t.slice(0, 80) + '…' : t)).join('\n');
+    return out.slice(-tail).map((t) => '· ' + (t.length > max ? t.slice(0, max) + '…' : t)).join('\n');
+  }
+
+  /**
+   * 我自己最后说的那几句（2026-11-09）。
+   *
+   * 沙耶的原话：「她短唤醒的时候，如果要接着上面说，应该是接着自己的话往下，
+   * 而不是接着我的话往下。」
+   *
+   * 短唤醒是「她自己想说话」的时机。她上次可能话头刚起了半截 —— 醒来该接的是
+   * 自己那半截，不是去应他最后那句。而 recentTalkText() 专门把肥鱼自己说的话
+   * 滤掉了（那段是给「今天聊到过什么」用的），所以要单独取一份。
+   *
+   * 数据源用 history/ 而不是 msgs/：msgs 里私聊的 name 会被「[另一处的近况…]」
+   * 那种注入前缀污染，分不出谁说的；history 有干净的 role: user / assistant。
+   * 会话换了就换新文件，所以按 mtime 取最近写过的那个。
+   */
+  /**
+   * 主动发出去的那些话（say.jsonl）。
+   *
+   * 2026-11-12：这是「她不知道自己说过什么」的根。
+   * 她的话有两个来源 —— 会话里的回复记在 history，主动发的记在 say.jsonl。
+   * 而所有「我说过什么」的读取都只看 history，于是主动说的那半截凭空消失，
+   * 每半小时醒一次就重新打个招呼（07:37 / 08:25 / 09:08 / 09:41 四条「早」）。
+   * 现在两处一起读，按时间排。
+   */
+  /** 他是谁 —— 从面板配置读，不从代码里猜。读不到就返回空串（调用方就不过滤）。 */
+  function ownerIdForSay() {
+    const v = String((cfg && cfg.ownerId) || '').trim();
+    return v;
+  }
+
+  async function readSayRows(opts = {}) {
+    const todayOnly = opts.todayOnly !== false;
+    const p = join(DSH_HOME, 'realheart', 'say.jsonl');
+    let raw = '';
+    try {
+      raw = await readFile(p, 'utf8');
+    } catch {
+      return [];
+    }
+    const now = new Date();
+    const today = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    const out = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      let r;
+      try { r = JSON.parse(line); } catch { continue; }
+      const at = String(r?.at || r?.ts || '');
+      if (todayOnly && !at.startsWith(today)) continue;
+      // 2026-11-12：只算发给他本人的私聊。群消息和发给别人的不能混进「今天聊到哪」。
+      const kind = String(r?.kind || '');
+      const to = String(r?.to || '');
+      if (kind && kind !== 'private') continue;
+      if (to && ownerIdForSay() && to !== String(ownerIdForSay())) continue;
+      const text = String(r?.text || r?.msg || '').replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      const t = Date.parse(at);
+      out.push({ t: Number.isFinite(t) ? t : 0, at, text });
+    }
+    return out;
+  }
+
+  async function myTalkText(opts = {}) {
+    const tail = Number.isFinite(opts.tail) ? opts.tail : 2;
+    const max = Number.isFinite(opts.max) ? opts.max : 100;
+    const dir = cfg.historyDir || join(QQROOT, 'data', 'history');
+    let best = '';
+    let bestM = -1;
+    try {
+      for (const n of await readdir(dir)) {
+        if (!/^napcat-private-.*\.jsonl$/.test(n)) continue;
+        try {
+          const st = await stat(join(dir, n));
+          if (st.mtimeMs > bestM) {
+            bestM = st.mtimeMs;
+            best = join(dir, n);
+          }
+        } catch { /* 打不开就跳过 */ }
+      }
+    } catch {
+      return '';
+    }
+    if (!best) return { text: '', path: '' };
+    let raw = '';
+    try {
+      raw = await readFile(best, 'utf8');
+    } catch {
+      return { text: '', path: best };
+    }
+    const NOISE = /^(Time sampled|Browser time zone|Elapsed since|System reminder)/;
+    const collected = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      let row;
+      try { row = JSON.parse(line); } catch { continue; }
+      if (row?.role !== 'assistant') continue;
+      const text = String(row.text || '').trim();
+      if (!text || text.length < 2 || NOISE.test(text)) continue;
+      const t = Date.parse(String(row.ts || ''));
+      collected.push({ t: Number.isFinite(t) ? t : 0, text: text.replace(/\s+/g, ' ') });
+    }
+    // 2026-11-12：主动发出去的那些也算「我说过的话」—— 它们不在 history 里。
+    for (const x of await readSayRows({ todayOnly: true })) collected.push({ t: x.t, text: x.text });
+    collected.sort((a, b) => a.t - b.t);
+    const out = collected.map((x) => x.text);
+    if (!out.length) return { text: '', path: best };
+    return {
+      text: out.slice(-tail).map((t) => '· ' + (t.length > max ? t.slice(0, max) + '…' : t)).join('\n'),
+      path: best,
+    };
+  }
+
+  /**
+   * 今天的「聊到哪儿了」—— **话题段摘要 + 最近两轮原文**（2026-11-11 第二版）。
+   *
+   * 第一版只做了「成对取」，解决了「三条独白」的问题，但没解决「她不知道那是在说什么」。
+   * 沙耶给的定法（2026-11-11）：
+   *   · 前面用一两句话概括「刚才发生了什么」—— 给骨架
+   *   · 后面保留最近两轮的原文 —— 给语气
+   * 语气这一层只能靠原文：她要不要接着那个话头，靠的是最后两句怎么说的，不是概括。
+   *
+   * 为什么按「段」不按「轮」：五轮在密集聊天里是十分钟，在稀疏聊天里是八小时。
+   * 轮数是错的尺子，时间是 —— 相邻两条间隔超过 20 分钟就切段，只取最近两段。
+   *
+   * 摘要走 DeepSeek（process.env.DEEPSEEK_API_KEY，跟宿主同一个 key）。
+   * ⚠️ 摘要有三种失败：没 key / 超时 / 返回不合规。三种都静默降级成「只给原文」——
+   *    这一段是位置感，宁可少给一句概括，也不能因为摘要挂掉就让整段消失，更不能让它编。
+   * ⚠️ 措辞始终是位置感，不是待办：摘要里不写「他问了你什么还没答」。
+   */
+  // 摘要缓存：同一段对话 10 分钟内只调一次模型（唤醒密集时省钱也省那一秒）
+  const summaryCache = { key: '', text: '', at: 0 };
+
+  async function talkExchangeText(opts = {}) {
+    const budget = Number.isFinite(opts.budget) ? opts.budget : 380;
+    const sumBudget = Number.isFinite(opts.sumBudget) ? opts.sumBudget : 60;
+    const rounds = Number.isFinite(opts.rounds) ? opts.rounds : 2;
+    const clip = Number.isFinite(opts.clip) ? opts.clip : 60;
+    const gapMs = Number.isFinite(opts.gapMinutes) ? opts.gapMinutes * 60000 : 20 * 60000;
+    const dir = cfg.historyDir || join(QQROOT, 'data', 'history');
+
+    // 最近动过的那个私聊会话文件
+    let best = '';
+    let bestM = -1;
+    try {
+      for (const n of await readdir(dir)) {
+        if (!/^napcat-private-.*\.jsonl$/.test(n)) continue;
+        try {
+          const st = await stat(join(dir, n));
+          if (st.mtimeMs > bestM) { bestM = st.mtimeMs; best = join(dir, n); }
+        } catch { /* 打不开就跳过 */ }
+      }
+    } catch {
+      return '';
+    }
+    if (!best) return '';
+    let raw = '';
+    try {
+      raw = await readFile(best, 'utf8');
+    } catch {
+      return '';
+    }
+
+    const stripLead = (t) => {
+      let s2 = String(t || '').trim();
+      for (let i = 0; i < 6; i += 1) {
+        const mm = /^\[[^\]\n]{1,80}\]\s*/.exec(s2);
+        if (!mm) break;
+        s2 = s2.slice(mm[0].length);
+      }
+      return s2.trim();
+    };
+    const NOISE = /^(Time sampled|Browser time zone|Elapsed since|System reminder|\[本轮消息\])/;
+    const HEY = /^(宝宝|宝|在吗|在不在|嗯+|哦+|好+|行|哈+|嘿+|睡了吗|醒了没|早|早安|晚安|午安|没什么|没啥|算了|随便|你猜|没事|不了)[。！？…\.!?~～\s]*$/;
+
+    const rows = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      let r;
+      try { r = JSON.parse(line); } catch { continue; }
+      if (r?.role !== 'user' && r?.role !== 'assistant') continue;
+      const text = stripLead(String(r?.text || '')).replace(/\s+/g, ' ').trim();
+      if (!text || text.length < 2 || NOISE.test(text) || HEY.test(text)) continue;
+      const t = Date.parse(String(r?.ts || r?.at || ''));
+      rows.push({ role: r.role, at: Number.isFinite(t) ? t : 0, text });
+    }
+    // 2026-11-12：主动发出去的话也要进时间线，否则「聊到哪儿」缺她自己那半截。
+    for (const x of await readSayRows({ todayOnly: true })) {
+      rows.push({ role: 'assistant', at: x.t, text: x.text });
+    }
+    rows.sort((a, b) => (a.at || 0) - (b.at || 0));
+    if (!rows.length) return '';
+
+    // ── 切段：相邻两条间隔超过 gapMs 就是新的一段 ──
+    const segs = [];
+    let cur = [rows[0]];
+    for (let i = 1; i < rows.length; i += 1) {
+      const prev = rows[i - 1];
+      const gap = rows[i].at && prev.at ? rows[i].at - prev.at : 0;
+      if (gap > gapMs) { segs.push(cur); cur = [rows[i]]; } else { cur.push(rows[i]); }
+    }
+    segs.push(cur);
+    const recent = segs.slice(-2);
+    const segRows = recent.flat();
+
+    // ── 摘要：只讲事情，不讲「谁问了谁」 ──
+    const summarize = async () => {
+      const key = String(process.env.DEEPSEEK_API_KEY || '').trim();
+      if (!key) return '';
+      const tailRows = segRows.slice(-8);
+      const convo = tailRows.map((x) => (x.role === 'user' ? '他：' : '我：') + x.text).join('\n');
+      // 缓存键：这段对话的实际内容。十分钟内同一段不重算。
+      let h = 0;
+      for (let k = 0; k < convo.length; k += 1) h = (h * 31 + convo.charCodeAt(k)) | 0;
+      const ck = String(convo.length) + ':' + h;
+      if (summaryCache.key === ck && Date.now() - summaryCache.at < 10 * 60 * 1000) return summaryCache.text;
+      if (convo.length < 20) return '';
+      try {
+        const res = await fetch('https://api.deepseek.com/chat/completions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key },
+          body: JSON.stringify({
+            model: 'deepseek-chat',
+            temperature: 0,
+            max_tokens: 120,
+            messages: [
+              {
+                role: 'system',
+                content: '只根据下面这段对话，用一句话说明这段在聊什么（主题和结果），不超过'
+                  + sumBudget + '个字。不要写动作描写，不要补充对话里没有的事，不要评价，不要劝，'
+                  + '不要用第二人称，不要写成任务（不要出现「他问了你什么」这类）。只给一句中文，不要前缀。',
+              },
+              { role: 'user', content: '他＝用户，我＝角色本人。\n\n' + convo },
+            ],
+          }),
+          signal: AbortSignal.timeout(6000),
+        });
+        if (!res.ok) return '';
+        const j = await res.json();
+        let s3 = String(j?.choices?.[0]?.message?.content || '').replace(/\s+/g, ' ').trim();
+        s3 = s3.replace(/^["'「『]|["'」』]$/g, '').trim();
+        if (!s3) return '';
+        const fin = s3.length > sumBudget ? s3.slice(0, sumBudget) + '…' : s3;
+        summaryCache.key = ck;
+        summaryCache.text = fin;
+        summaryCache.at = Date.now();
+        return fin;
+      } catch {
+        return '';
+      }
+    };
+
+    // ── 原文：最近 rounds 轮（以我的回应为锚，往前找他那一句）──
+    const used = [];
+    for (let i = rows.length - 1; i >= 0 && used.length < rounds * 2; i -= 1) {
+      if (rows[i].role !== 'assistant') continue;
+      let him = null;
+      for (let j = i - 1; j >= 0 && j >= i - 3; j -= 1) {
+        if (rows[j].role === 'user') { him = rows[j]; break; }
+      }
+      used.unshift(rows[i]);
+      if (him) used.unshift(him);
+      if (!him) break;
+    }
+    if (!used.length) return '';
+
+    const hhmm = (v) => {
+      if (!v) return '';
+      const t = new Date(v + 8 * 3600 * 1000);
+      return String(t.getUTCHours()).padStart(2, '0') + ':' + String(t.getUTCMinutes()).padStart(2, '0');
+    };
+    const cut = (t) => (t.length > clip ? t.slice(0, clip) + '…' : t);
+
+    const summary = await summarize();
+    const t0 = hhmm(used[0].at);
+    const t1 = hhmm(used[used.length - 1].at);
+    const span = t0 && t1 ? '（' + t0 + '–' + t1 + '）' : '';
+    const head = summary ? '刚才在聊：' + summary : '';
+    const body = used.map((x) => '· ' + (x.role === 'user' ? '他' : '我') + '：' + cut(x.text)).join('\n');
+
+    const build = (u, sum) => {
+      const b = u.map((x) => '· ' + (x.role === 'user' ? '他' : '我') + '：' + cut(x.text)).join('\n');
+      return [span, sum ? '刚才在聊：' + sum : '', b].filter(Boolean).join('\n');
+    };
+    let cur2 = used.slice();
+    let out = build(cur2, summary);
+    // 超预算：先丢最旧的那一轮（摘要优先保住），实在装不下才丢摘要
+    while (out.length > budget && cur2.length > 2) {
+      cur2.shift();
+      out = build(cur2, summary);
+    }
+    if (out.length > budget) out = build(cur2, '');
+    return out;
   }
 
   /**
@@ -2903,7 +3293,7 @@ const ROUND_MARK = '[本轮消息]';
     // 她做的东西现在能流到短唤醒和对话那边（material），但反过来一直是断的 ——
     // 她醒来完全不知道今天聊过什么。沙耶点的那个问题，这里是最后一格。
     try {
-      const talk = await recentTalkText();
+      const talk = await talkExchangeText();
       if (talk) {
         lines.push('', '【今天聊到过的】', talk,
           '（给你个位置感 —— 不用回应，也不用接上去。想做什么还是你自己定。）');
@@ -3063,6 +3453,12 @@ const ROUND_MARK = '[本轮消息]';
 
   /** 上次醒着的时候记的那一行（note 写的 small.jsonl）。给人自己接上，不是给他讲的话题。 */
   async function pingLastNoteText() {
+    // 2026-11-09 改：原来给的是 did（「上次醒着做了什么」），实测会让她**复述**。
+    // 当晚 20:26 那次，她照着 19:37 记的 did 又说了一遍「没大事，就是没劲，躺一天了」，
+    // 连「追了他那句没什么」都追了第二遍 —— 而 19:36 已经追过一次。
+    //
+    // 「上次说到哪」这件事，myTalkText() 给的原文才是准的；did 是元信息，
+    // 摆到 prompt 里就变成台词。所以只留 left —— 它提醒的是「别做什么」，不是「说什么」。
     try {
       const raw = await readFile(join(DSH_HOME, 'realheart', 'small.jsonl'), 'utf8');
       let last = null;
@@ -3070,11 +3466,11 @@ const ROUND_MARK = '[本轮消息]';
         if (!line.trim()) continue;
         let row;
         try { row = JSON.parse(line); } catch { continue; }
-        const did = String(row.did || '').trim();
-        if (did) last = did;
+        const left = String(row.left || '').trim();
+        if (left) last = left;
       }
       if (!last) return '';
-      return last.length > 80 ? last.slice(0, 80) + '…' : last;
+      return last.length > 60 ? last.slice(0, 60) + '…' : last;
     } catch {
       return '';
     }
@@ -3096,20 +3492,166 @@ const ROUND_MARK = '[本轮消息]';
   }
 
   /** 短唤醒那一整段提示词（跟 shell 版逐段对齐：进度 / 素材 / 他最后说的 / 上次记的 / 调子）。 */
+  /**
+   * 今天已经主动发出去的话（走 say 的那些）。
+   *
+   * 2026-11-12：沙耶早上看到连续四条「早。……」—— 07:37 / 08:25 / 09:08 / 09:41。
+   * 病根不是唤醒太密（间隔 30~60 分钟是设计好的），是**她不知道自己说过什么**：
+   * say 只记 say.jsonl，不写 history；而 history 才是她读得到的那份。
+   * 于是每半个小时醒一次，每次都是「刚醒」，于是每次都从头打一次招呼。
+   *
+   * 这里只取「今天的」，昨天的早安跟她今天要不要再说是两件事。
+   */
+  async function mySentTodayText(opts = {}) {
+    const tail = Number.isFinite(opts.tail) ? opts.tail : 4;
+    const max = Number.isFinite(opts.max) ? opts.max : 40;
+    const p = join(DSH_HOME, 'realheart', 'say.jsonl');
+    let raw = '';
+    try {
+      raw = await readFile(p, 'utf8');
+    } catch {
+      return '';
+    }
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const today = y + '-' + m + '-' + dd;
+    const out = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      let r;
+      try { r = JSON.parse(line); } catch { continue; }
+      const at = String(r?.at || r?.ts || '');
+      if (!at.startsWith(today)) continue;
+      const text = String(r?.text || r?.msg || '').replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      const hh = at.slice(11, 16);
+      out.push(hh + ' ' + (text.length > max ? text.slice(0, max) + '…' : text));
+    }
+    if (!out.length) return { text: '', count: 0 };
+    return { text: out.slice(-tail).map((x) => '· ' + x).join('\n'), count: out.length };
+  }
+
   async function buildPingPrompt() {
     const parts = [promptText('promptPing', PING_PROMPT)];
     // 2026-11-04：**不再带作品进度**（「最近七天多了 18 件」）。
     // 那段是给自由时间定心用的；摆在短唤醒里就是汇报的燃料 ——
     // 她醒来先看见「我在一条线上」，于是接着谈那条线。
-    // 短唤醒只要三样：她自己留的那句、他最后说的话、上次记的那行。足矣。
+    //
+    // 2026-11-07 重写（沙耶提的「割裂感」）：原来这里是固定一句
+    // 「只是让你知道这边走到哪了，不用接，也不用回」——
+    // 那句话把所有情况都压成「别接」，于是她每次醒来只能自己起头，
+    // 起来就是另一个话题。现在按「这一轮散没散」分三档给不同的说法。
+    const t = await readTalkState();
+    // 2026-11-09（沙耶）：「只给她那句话，语气语境接不上，有点突兀感」。
+    // 所以要看得够 —— 从 80/100 字放到 320 字，条数也加一条。
+    // 注入预算是 3600 字，这样加起来约 2000，还有余量。
+    const talk = await recentTalkText({ tail: 3, max: 320 });
+    const mineInfo = await myTalkText({ tail: 2, max: 320 });
+    const mine = mineInfo.text;
+    const minePath = mineInfo.path;
     const mat = await pingMaterialText();
-    if (mat) parts.push('', `（你自由时间留下的那句：${mat} —— 想接着说就说，不想说就算了，不用换种说法再说一遍。）`);
-    const talk = await recentTalkText();
-    if (talk) {
-      parts.push('', `（他今天最后跟你说的话：${talk.replace(/^· /gm, '')} —— 只是让你知道这边走到哪了，不用接，也不用回。）`);
-    }
     const note = await pingLastNoteText();
-    if (note) parts.push('', `（你上次醒着的时候记过一行：${note}。那是给你自己接上的，不是给他讲的话题。）`);
+
+    // 2026-11-12：让她看见今天已经主动说过什么 —— 否则每半小时醒一次就重新打个招呼。
+    const sent = await mySentTodayText({ tail: 4, max: 40 });
+    if (sent.text) {
+      parts.push('', '（你今天已经主动发过的，最近几条：）', sent.text);
+      if (sent.count >= 3) {
+        parts.push('（今天已经发过 ' + sent.count + ' 条了。开场那几个字别再打一次 ——'
+          + '「早」说一遍就够，「在干嘛」也别连着用。接着你上一条那半截往下说，或者干脆换个事。）');
+      }
+    }
+
+    // 他最后那条是不是问句 —— 问句没答完，这一轮就不算结束。判据写死，别让她每次自己判。
+    let asksMe = false;
+    if (talk) {
+      const lines = talk.split('\n').filter(Boolean);
+      const last = (lines[lines.length - 1] || '').replace(/^·\s*/, '').trim();
+      // 2026-11-07：他说话常带括号里的动作描写（「听见了吗？（手劲加大了）」）——
+      // 问号就跑到中间去了，末尾是括号。不剥括号，这个判据等于不生效。
+      // 实测撞出来的：真数据里最后一条明明是问句，判成了「否」。
+      const noParen = last.replace(/[（(][^）)]*[）)]/g, '').trim();
+      // 2026-11-09 修：「么」这个判据太脏 —— 「没什么」以「么」结尾，被判成问句，
+      // 于是短唤醒以为他在问，跑去答一句他没问的话（当晚实测：他说「没什么」，
+      // 她答「你那句没什么，不像没什么」，而且这句半小时前刚说过一遍）。
+      // 现在：否定式先排除，剩下的疑问词才认。
+      const negated = /(没|不|没有)(什么|怎么|怎样|怎么样)[。！!？?]*\s*$/.test(noParen);
+      asksMe = !negated && (
+        /[?？]\s*$/.test(noParen)
+        || /(吗|呢)[。！!？?]*\s*$/.test(noParen)
+        || /(什么|怎么|为什么|怎样|怎么样)[了呀啊呢吧哦]?[。！!？?]*\s*$/.test(noParen)
+      );
+    }
+
+    const mins = (s) => (s >= 0 ? Math.round(s / 60) : -1);
+    const heMins = mins(t.recvSecs);
+    const sheMins = t.lastKind === 'sent' ? mins(t.lastKindSecs) : -1;
+
+    // 三档：
+    //   waiting 我刚说完、他还没接   → 别开新话头
+    //   resume  这一轮还热着        → 接着往下说
+    //   fresh   散了一阵            → 自己起头
+    let mode = 'fresh';
+    if (sheMins >= 0 && sheMins < 10) mode = 'waiting';
+    else if (asksMe && heMins >= 0) mode = 'resume';
+    else if (heMins >= 0 && heMins < 30) mode = 'resume';
+
+    log(`短唤醒分档：${mode}（他 ${heMins} 分钟前说的，我 ${sheMins} 分钟前说的，最后一条 ${t.lastKind}，问句=${asksMe ? '是' : '否'}）`);
+    if (talk) {
+      const clean = talk.replace(/^· /gm, '');
+      const head = heMins >= 0
+        ? `（他${heMins < 1 ? '刚刚' : ' ' + heMins + ' 分钟前'}说的话）：`
+        : '（他今天说过的最后几句）：';
+      if (mode === 'waiting') {
+        // 2026-11-09：「补你刚才那半截」得有那半截可看 —— 先摆她自己的话。
+        if (mine) {
+          parts.push('', '（你上次自己说到这儿 —— 原文）：', mine.replace(/^· /gm, ''));
+          if (minePath) {
+            parts.push(`（要更全就 read 那个文件 —— 但用 offset 只取最后 20 行，`
+              + `整份有几万字，全读会把这一轮撑爆：${minePath}）`);
+          }
+        }
+        parts.push('', head, clean,
+          '——你已经回过了，他还没接。这一轮别开新话头。'
+          + '真想补，就补你自己刚才那句没说完的半截，别从头另起一个。');
+      } else if (mode === 'resume') {
+        // 2026-11-09（沙耶）：「要接着自己的话往下，而不是接着我的话往下」。
+        // 醒来想说的那句，源头是她自己没说完的半截；他那句只是语境，不是主线。
+        if (mine) {
+          parts.push('', '（你上次自己说到这儿 —— 原文，别只看最后半句）：', mine.replace(/^· /gm, ''));
+          if (minePath) {
+            parts.push(`（要更全就 read 那个文件 —— 接到哪儿、用什么口气，从那几轮里找。`
+              + `但要用 offset 只取最后 20 行：整份有几万字，全读会把这一轮撑爆。`
+              + `上面这几句够用就别翻了，你只有几分钟：${minePath}）`);
+          }
+        }
+        parts.push('', head, clean, '——这一轮停在这儿，还没散。');
+        if (asksMe) {
+          parts.push('他最后那句是问句，还等着你答 —— 先答那个，答完再接着说你自己那半截。');
+        } else if (mine) {
+          parts.push('接着你自己那半截往下说。他最后那句不用特意去应，'
+            + '除非他问了你什么 —— 你醒过来是想把话说完，不是想回他。');
+        } else {
+          parts.push('可以接着往下说，不用从头另起一个话题。');
+        }
+        parts.push('（这不是派活。想接就接，不想接就睡。）');
+      } else {
+        parts.push('', head, clean,
+          `——那是 ${heMins > 0 ? heMins + ' 分钟前' : '更早'}了，这一轮已经散掉。`,
+          '你可以自己起个头，不想说就接着睡。别回去接它 —— 隔了这么久再接，会显得隔了一层。');
+      }
+    }
+
+    // material 只在「散场自己起头」时摆出来：那是汇报的燃料。
+    // 接话的时候摆出来，她就会去讲自由时间干了什么 —— 正是要治的那个病。
+    if (mode === 'fresh' && mat) {
+      parts.push('', `（你自由时间留下的那句：${mat} —— 想接着说就说，不想说就算了，不用换种说法再说一遍。）`);
+    }
+    if (note) {
+      parts.push('', `（上次醒来时你给自己留过一句：${note}。那是提醒，不是台词 —— 别把它讲出来。）`);
+    }
     if (cfg.pingContext !== false) {
       const tone = await pingToneText();
       if (tone) parts.push('', `（你此刻的调子：${tone}。这是调子，不是内容 —— 它影响你怎么说，但别把它说出来。）`);
@@ -3148,14 +3690,19 @@ const ROUND_MARK = '[本轮消息]';
     const py = join(QQROOT, 'work', 'bin', 'talk-state.py');
     try {
       const { stdout } = await execFileAsync(py, [], { timeout: 20000 });
-      const p = String(stdout).trim().split(/\s+/).map((x) => Number(x));
+      const w = String(stdout).trim().split(/\s+/);
+      const num = (i) => { const v = Number(w[i]); return Number.isFinite(v) ? v : -1; };
       return {
-        generating: p[0] === 1 ? 1 : 0,
-        recvSecs: Number.isFinite(p[1]) ? p[1] : -1,
-        anySecs: Number.isFinite(p[2]) ? p[2] : -1,
+        generating: num(0) === 1 ? 1 : 0,
+        recvSecs: num(1),
+        anySecs: num(2),
+        // 2026-11-07：最后一条是谁的（recv=他 / sent=我 / dispatch=正在生成）+ 多久前。
+        // 光有「多久」分不出该答还是该起头，得知道最后一个说话的是谁。
+        lastKind: w[3] || 'none',
+        lastKindSecs: num(4),
       };
     } catch {
-      return { generating: 0, recvSecs: -1, anySecs: -1 };
+      return { generating: 0, recvSecs: -1, anySecs: -1, lastKind: 'none', lastKindSecs: -1 };
     }
   }
 
@@ -3366,7 +3913,20 @@ PY
   async function ensureSayScript() {
     const p = join(QQROOT, 'work', 'bin', 'say');
     try {
-      if (existsSync(p)) return;
+      // 2026-11-12：文件已在，就不覆盖（say 里可能带这台的号，盖掉是灾难）。
+      // 但**不能静默分叉** —— 包里的 say 改了，这台在跑的还是旧的，改包不会生效。
+      // 所以比一下内容，不一样就记一行，让人知道「改包不会作用到这台」。
+      if (existsSync(p)) {
+        try {
+          const a = await readFile(p);
+          const b = await readFile(join(dirname(fileURLToPath(import.meta.url)), 'scripts', 'say'));
+          if (!a.equals(b)) {
+            log('say 分叉：在跑的那份和包里那份内容不一样（' + a.length + 'B / ' + b.length
+              + 'B）—— 改包里不会作用到这台，要同步得手动合一次。', 'error');
+          }
+        } catch { /* 比不了就算了，不影响她说话 */ }
+        return;
+      }
       const src = join(dirname(fileURLToPath(import.meta.url)), 'scripts', 'say');
       if (!existsSync(src)) {
         log(`包里没有 scripts/say，铺不出来 —— 她会说不出话（${p} 不存在）`, 'error');

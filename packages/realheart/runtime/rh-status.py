@@ -63,6 +63,21 @@ MEMES = os.path.join(MEM, 'my-memes')
 RH_STATE = os.path.expanduser(str(_cfg.get('stateDir') or os.path.join(ROOT, 'work', 'realheart')))
 
 
+# 2026-11-07：`say` 是独立脚本，它的账本落在 $DSH_HOME/realheart/say.jsonl，
+# 跟 stateDir（~/qqbot/work/realheart）不是一个地方 —— realheart 插件里有 sayLogPath
+# 专门处理这件事，面板这边一直没跟，于是「她主动说过的」那块永远是「还没有」。
+# 今天核数据才撞出来：账本 97 行，面板显示空。
+def _say_log_path():
+    p = _cfg.get('sayLogPath')
+    if p:
+        return os.path.expanduser(str(p))
+    dsh = os.environ.get('DSH_HOME') or os.path.expanduser('~/.dsh')
+    cand = os.path.join(dsh, 'realheart', 'say.jsonl')
+    if os.path.exists(cand):
+        return cand
+    return os.path.join(RH_STATE, 'say.jsonl')
+
+
 # ---------------------------------------------------------------- 读文件
 
 def read_text(path):
@@ -1523,7 +1538,7 @@ def render_tool_usage():
     used = 0
     empty = []
     for fname, tool, what in SPEC:
-        p = os.path.join(RH_STATE, fname)
+        p = _say_log_path() if fname == 'say.jsonl' else os.path.join(RH_STATE, fname)
         n = 0
         if os.path.exists(p):
             try:
@@ -1559,7 +1574,7 @@ def render_say():
 
     只读、只列最近 20 条。发失败的不在里面（写账本只在发送成功之后）。
     """
-    path = os.path.join(RH_STATE, 'say.jsonl') if RH_STATE else None
+    path = _say_log_path()
     if not path or not os.path.exists(path):
         return ('<div class="card wide"><h2>她主动说过的</h2>'
                 '<p class="note">还没有。这里会记她说出去的话 —— 不是回谁的话，是她自己想说的时候说的。'
@@ -1580,8 +1595,16 @@ def render_say():
     if not rows:
         return ('<div class="card wide"><h2>她主动说过的</h2>'
                 '<p class="muted">账本在，还是空的。</p></div>')
+    # 2026-11-07：账本从这天起也记 status=queued（发送失败、还压在队列里没送到的）。
+    # 老条目没有 status，按 sent 认。同一 id 后来补发成功的，不再算欠。
+    def _is_sent(r):
+        return (r.get('status') or 'sent') == 'sent'
+    sent_rows = [r for r in rows if _is_sent(r)]
+    sent_ids = set(str(r.get('id')) for r in sent_rows if r.get('id'))
+    pending = [r for r in rows
+               if not _is_sent(r) and not (r.get('id') and str(r.get('id')) in sent_ids)]
     out = []
-    for r in rows[-20:][::-1]:
+    for r in sent_rows[-20:][::-1]:
         kind = '群' if r.get('kind') == 'group' else '私聊'
         out.append(
             '<div class="kv"><b>%s</b><span class="mono">%s · %s</span></div>'
@@ -1590,9 +1613,23 @@ def render_say():
                esc(kind), esc(str(r.get('to') or '')),
                esc(str(r.get('text') or ''))))
     note = ('<p class="note">共 %d 条（列最近 20）。这些不是回谁的话 —— 是她自己想说的时候说的。</p>'
-            % len(rows))
-    return ('<div class="card wide"><h2>她主动说过的</h2>' + note
-            + '<div class="say-list">' + ''.join(out) + '</div></div>')
+            % len(sent_rows))
+    block = ('<div class="card wide"><h2>她主动说过的</h2>' + note
+             + '<div class="say-list">' + ''.join(out) + '</div>')
+    if pending:
+        qout = []
+        for r in pending[-20:][::-1]:
+            kind = '群' if r.get('kind') == 'group' else '私聊'
+            qout.append(
+                '<div class="kv"><b>%s</b><span class="mono">%s · %s · 没送到</span></div>'
+                '<div class="say-txt">%s</div>'
+                % (esc(str(r.get('at') or '')[:16]),
+                   esc(kind), esc(str(r.get('to') or '')),
+                   esc(str(r.get('text') or ''))))
+        block += ('<p class="note">另有 %d 句想发但没送出去，还压在队列里 —— 这些不算「说过」：</p>'
+                  % len(pending)
+                  + '<div class="say-list">' + ''.join(qout) + '</div>')
+    return block + '</div>'
 
 
 # ── 「其余十几段文案在哪」（2026-11-04）──
