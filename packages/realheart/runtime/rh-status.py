@@ -2121,7 +2121,20 @@ def apply_config_post(form):
 # 配方和 key 分开放：这里编辑的是「怎么调」（端点/模型/形态/默认参数），
 # key 不在这份文件里 —— 记录里只有 auth.keyRef（env:名字 或 file:路径）。
 # 所以这一整段可以直接复制给别人的机器用。
-CAPS = os.path.join(os.path.dirname(USER_CFG), 'capabilities.json')
+# 注册表的真源跟插件一致：cfg.capsFile（空则 stateDir/capabilities.json）。
+# stateDir 由插件写进 runtime/config.json；拿不到才退回 config.user.json 旁边那份。
+# 2026-11-14 栽过：面板读 A 处、插件读 B 处，面板上「保存了」而工具读不到。
+def _caps_path():
+    p = str(_cfg.get('capsFile') or '').strip()
+    if p:
+        return os.path.expanduser(p)
+    sd = str(_cfg.get('stateDir') or '').strip()
+    if sd:
+        return os.path.join(os.path.expanduser(sd), 'capabilities.json')
+    return os.path.join(os.path.dirname(USER_CFG), 'capabilities.json')
+
+
+CAPS = _caps_path()
 CAPS_BAK = os.path.join(os.path.dirname(USER_CFG), 'caps-bak')
 
 

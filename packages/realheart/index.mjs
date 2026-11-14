@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url';
 import { appendFile, mkdir, readFile, readdir, writeFile, copyFile, chmod, open, stat, unlink, rm } from 'node:fs/promises';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, FORM_LIST, KIND_LIST } from './lib/caps.mjs';
+import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, estimateCost, priceOf, pricingTable, PRICING_ASOF, FORM_LIST, KIND_LIST } from './lib/caps.mjs';
 import { promisify } from 'node:util';
 import {
   fingerprint as pendingFp,
@@ -317,6 +317,16 @@ export function apply(ctx, config = {}) {
   };
   // 配置缺损自愈：挪到这里，是因为它用 log，而 log 在上面才刚定义（TDZ）。
   try { healUserConfig(); } catch (err) { log('补默认配置时出错：' + (err?.message ?? err), 'error'); }
+
+  // 2026-11-14：外部能力那套的导出必须真的可用。
+  // 起因：0.3.3 里 estimateCost 用在了 rh_call 的成功路径上，却没进 import ——
+  // 于是「钱花了、图画出来了、结果没交回去」，而且只有真调到才炸。
+  // 静态检查放在启动，比等调用便宜得多。
+  {
+    const need = { estimateCost, priceOf, pricingTable, PRICING_ASOF };
+    const bad = Object.entries(need).filter(([, v]) => v === undefined || v === null);
+    if (bad.length) log('外部能力自检：这些符号没导进来 —— ' + bad.map(([k]) => k).join('、') + '（rh_call 会在成功之后才炸）', 'error');
+  }
 
   const moodFile = () => join(cfg.stateDir, 'mood.jsonl');
 
@@ -4844,66 +4854,6 @@ PY
           };
         }
 
-        if (action === 'pricing') {
-          // 内置价目表（录入日期 + 来源）。运行时一次网络请求都不用，也不会被过时的网页骗。
-          const rows = pricingTable(items.map((x) => x && x.model).filter(Boolean));
-          const lines = rows.map((r) => '· ' + r.model + ' —— '
-            + (r.value == null ? '没录' : r.value + ' 元/' + (r.unit === 'per_image' ? '张' : r.unit === 'per_second' ? '秒' : '千token'))
-            + (r.note ? '（' + r.note + '）' : ''));
-          return { text: ['内置价目表（录入于 ' + PRICING_ASOF + '，记录里的 price 字段优先）：', ...lines,
-            '', '要覆盖某条的价格：rh_capabilities action=update，record 里写 price:{unit,value}；免费的直接写 free:true。'].join('\n') };
-        }
-
-        if (action === 'plan') {
-          // 2026-11-14 沙耶：三件事
-          //   ① 问题要问全  ② 每条都说清「不说会怎么补」 ③ 最便宜按真价格排，有免费先用免费
-          const cap = String(args?.cap || '').trim();
-          if (!cap) return { text: '（plan 要给 cap：image / video / vision / tts / asr / text）' };
-          const rough = args && typeof args.params === 'object' && args.params ? args.params : {};
-          const rec = cheapestFor(reg, cap, rough);
-          if (!rec) return { text: '（没有可用的 ' + cap + ' 能力，先在设置页加上一条。）' };
-          const d = rec.defaults || {};
-          const pr = priceOf(rec);
-          const money = rec.free === true ? '免费'
-            : pr ? ('约 ' + (estimateCost(rec, rough) == null ? '?' : estimateCost(rec, rough).toFixed(2)) + ' 元/次（' + pr.value + ' 元/' + (pr.unit === 'per_image' ? '张' : pr.unit === 'per_second' ? '秒' : '千token') + '）')
-            : '价格没录入（按未知处理）';
-          const Q = {
-            image: [
-              ['画什么', '主体 + 场景 + 风格。不说的部分我自己补成完整描述'],
-              ['尺寸 / 比例', '按 ' + (d.size || '1024x1024') + ' 出。要竖图/横图现在说'],
-              ['几张', '默认 1 张'],
-              ['不能出现的元素', '不说就不设限制'],
-            ],
-            video: [
-              ['拍什么', '主体 + 动作 + 场景。不说的部分我自己补成完整描述'],
-              ['多长', '按 ' + (d.duration || 5) + ' 秒出，按秒' + (pr && pr.unit === 'per_second' ? '计费' : '计')],
-              ['分辨率', '按 ' + (d.resolution || '默认') + ' 出'],
-              ['要不要声音', '不说就跟着模型默认'],
-              ['首帧图', '有就给（图生视频更稳），没有就纯文字'],
-            ],
-            vision: [
-              ['看哪一点', '整体描述 / 找细节 / 只读文字。不说就整体描述'],
-              ['要不要结论', '不说就只描述、不下判断'],
-            ],
-            tts: [['念什么', '不给我就没法开始'], ['什么声音/语气', '按默认音色'], ['语速', '按默认']],
-            asr: [['录音是什么语言', '不说让模型自己判'], ['要不要整理成段落', '默认只转写']],
-          };
-          const qs = Q[cap] || [['还有什么要求', '不说就按默认']];
-          const lines = [
-            '这条请求信息不够，**先问清楚再动手**。问的时候把这句一并告诉他：不答的会怎么补。',
-            '',
-            '要问的（括号里是「他不说我会怎么办」）：',
-            ...qs.map((q, i) => (i + 1) + '. ' + q[0] + '（' + q[1] + '）'),
-            '',
-            '他答完之后，**不回来问第二遍**，直接这样配：',
-            '· 模型：' + (rec.name || rec.id) + '（id: ' + rec.id + '）—— 按估算成本选出来的，' + money,
-            '· 参数：' + JSON.stringify(d) + '，他自己点明的覆盖它',
-            '· 提示词：你把他说的补成完整描述（主体 + 动作 + 场景 + 风格 + 画质），别只丢原话',
-            '· 然后 rh_call 一次调完，并把用了什么模型、什么参数、最终提示词告诉他',
-          ];
-          if (rec.notes) lines.push('', '（这条的备注：' + rec.notes + '）');
-          return { text: lines.join('\n') };
-        }
 
         if (action === 'add') {
           // 心情检查点（2026-11-02）：只拦「多记一件事」，不拦读、不拦收拾。
@@ -5598,6 +5548,67 @@ PY
           if (!rec) return { text: '（没有这条：' + id + '）' };
           const safe = JSON.parse(JSON.stringify(rec));
           return { text: JSON.stringify(safe, null, 2) };
+        }
+
+        if (action === 'pricing') {
+          // 内置价目表（录入日期 + 来源）。运行时一次网络请求都不用，也不会被过时的网页骗。
+          const rows = pricingTable(items.map((x) => x && x.model).filter(Boolean));
+          const lines = rows.map((r) => '· ' + r.model + ' —— '
+            + (r.value == null ? '没录' : r.value + ' 元/' + (r.unit === 'per_image' ? '张' : r.unit === 'per_second' ? '秒' : '千token'))
+            + (r.note ? '（' + r.note + '）' : ''));
+          return { text: ['内置价目表（录入于 ' + PRICING_ASOF + '，记录里的 price 字段优先）：', ...lines,
+            '', '要覆盖某条的价格：rh_capabilities action=update，record 里写 price:{unit,value}；免费的直接写 free:true。'].join('\n') };
+        }
+
+        if (action === 'plan') {
+          // 2026-11-14 沙耶：三件事
+          //   ① 问题要问全  ② 每条都说清「不说会怎么补」 ③ 最便宜按真价格排，有免费先用免费
+          const cap = String(args?.cap || '').trim();
+          if (!cap) return { text: '（plan 要给 cap：image / video / vision / tts / asr / text）' };
+          const rough = args && typeof args.params === 'object' && args.params ? args.params : {};
+          const rec = cheapestFor(reg, cap, rough);
+          if (!rec) return { text: '（没有可用的 ' + cap + ' 能力，先在设置页加上一条。）' };
+          const d = rec.defaults || {};
+          const pr = priceOf(rec);
+          const money = rec.free === true ? '免费'
+            : pr ? ('约 ' + (estimateCost(rec, rough) == null ? '?' : estimateCost(rec, rough).toFixed(2)) + ' 元/次（' + pr.value + ' 元/' + (pr.unit === 'per_image' ? '张' : pr.unit === 'per_second' ? '秒' : '千token') + '）')
+            : '价格没录入（按未知处理）';
+          const Q = {
+            image: [
+              ['画什么', '主体 + 场景 + 风格。不说的部分我自己补成完整描述'],
+              ['尺寸 / 比例', '按 ' + (d.size || '1024x1024') + ' 出。要竖图/横图现在说'],
+              ['几张', '默认 1 张'],
+              ['不能出现的元素', '不说就不设限制'],
+            ],
+            video: [
+              ['拍什么', '主体 + 动作 + 场景。不说的部分我自己补成完整描述'],
+              ['多长', '按 ' + (d.duration || 5) + ' 秒出，按秒' + (pr && pr.unit === 'per_second' ? '计费' : '计')],
+              ['分辨率', '按 ' + (d.resolution || '默认') + ' 出'],
+              ['要不要声音', '不说就跟着模型默认'],
+              ['首帧图', '有就给（图生视频更稳），没有就纯文字'],
+            ],
+            vision: [
+              ['看哪一点', '整体描述 / 找细节 / 只读文字。不说就整体描述'],
+              ['要不要结论', '不说就只描述、不下判断'],
+            ],
+            tts: [['念什么', '不给我就没法开始'], ['什么声音/语气', '按默认音色'], ['语速', '按默认']],
+            asr: [['录音是什么语言', '不说让模型自己判'], ['要不要整理成段落', '默认只转写']],
+          };
+          const qs = Q[cap] || [['还有什么要求', '不说就按默认']];
+          const lines = [
+            '这条请求信息不够，**先问清楚再动手**。问的时候把这句一并告诉他：不答的会怎么补。',
+            '',
+            '要问的（括号里是「他不说我会怎么办」）：',
+            ...qs.map((q, i) => (i + 1) + '. ' + q[0] + '（' + q[1] + '）'),
+            '',
+            '他答完之后，**不回来问第二遍**，直接这样配：',
+            '· 模型：' + (rec.name || rec.id) + '（id: ' + rec.id + '）—— 按估算成本选出来的，' + money,
+            '· 参数：' + JSON.stringify(d) + '，他自己点明的覆盖它',
+            '· 提示词：你把他说的补成完整描述（主体 + 动作 + 场景 + 风格 + 画质），别只丢原话',
+            '· 然后 rh_call 一次调完，并把用了什么模型、什么参数、最终提示词告诉他',
+          ];
+          if (rec.notes) lines.push('', '（这条的备注：' + rec.notes + '）');
+          return { text: lines.join('\n') };
         }
 
         if (action === 'add') {

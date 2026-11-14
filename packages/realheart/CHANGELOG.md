@@ -1,3 +1,18 @@
+## 0.3.9 — 2026-11-14（按小肥鱼那三处问题的修复）
+
+- **修：`rh_call` 生成成功之后炸在摘要那一步。** `estimateCost` / `priceOf` / `pricingTable` /
+  `PRICING_ASOF` 四个符号用在了 index.mjs，却没进 import —— 于是「钱花了、图画出来了、结果没交回去」，
+  而且只有真调到才炸（list 走 summarize()，不碰这四个，所以「列表能看、一调就废」）。
+  已补齐四个符号。另加启动自检：这四个不可用就记一行 error，不再等到调用。
+- **修：`pricing` / `plan` 两段长在 `rh_pending` 的 execute 里。** 那两段是后来补的，插入时锚点选错，
+  结果 `rh_capabilities` 的 enum 说有、实现里没有（调它回「不认识的 action」），而 `rh_pending`
+  里那两段又因为缺 `items` / `reg` 必然 ReferenceError。已原样搬回 `rh_capabilities`（get 之后）。
+- **修：注册表读的位置和写的位置不是一处。** 插件读 `stateDir/capabilities.json`
+  （= `<root>/work/realheart/`），而文件原先放在 `~/.dsh/realheart/`，所以 `list` 一直是空的。
+  现在统一到 stateDir 那一份（小肥鱼已复制过去），`~/.dsh` 那份重复文件已删；
+  观测页的「外部能力」栏也改成读同一个路径（`runtime/config.json` 的 capsFile / stateDir），
+  不再出现「面板上保存了、工具读不到」。
+
 ## 0.3.8 — 2026-11-14
 
 - **注入拼装改成并发**：原来 15 段（admit / linger / reopen / hold / recall / situation / work / days /
