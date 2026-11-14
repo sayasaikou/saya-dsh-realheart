@@ -115,8 +115,26 @@ def age_of(ts):
     return '%d 天前' % (d // 86400)
 
 
+def _norm_ts(v):
+    """时间戳归一到「秒」。
+    插件写 ping.last / ping.next 用的是**毫秒**，而这里一直当秒用 ——
+    Windows 上 time.localtime(1794299885648) 直接 OSError 22，整页 500；
+    Linux 只是悄悄显示成 58xxx 年，所以这个 bug 只在 Windows 上炸出来（2026-11-14 新机复测）。
+    判据：大于 1e11 的一律当毫秒。两边都兼容，不用改写入侧。"""
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:
+        return None
+    if n > 1e11:
+        n = n / 1000.0
+    return n
+
+
 def stamp(ts):
-    return time.strftime('%m-%d %H:%M', time.localtime(ts)) if ts else ''
+    n = _norm_ts(ts)
+    return time.strftime('%m-%d %H:%M', time.localtime(n)) if n else ''
 
 
 # ---------------------------------------------------------------- 解析
@@ -1444,12 +1462,14 @@ def render_ping():
         try:
             with open(p, encoding='utf-8') as fh:
                 v = int((fh.read() or '0').strip() or 0)
-            return v if v > 0 else None
+            # 插件写的是毫秒 —— 在这里就归一，后面一律按秒算（2026-11-14 修）
+            return _norm_ts(v)
         except Exception:
             return None
 
     def hhmm(ts):
-        return time.strftime('%H:%M', time.localtime(ts)) if ts else '—'
+        n = _norm_ts(ts)
+        return time.strftime('%H:%M', time.localtime(n)) if n else '—'
 
     last = read_ts('ping.last')
     nxt = read_ts('ping.next')

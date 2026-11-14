@@ -400,6 +400,62 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "rows": 22,
           "level": "caution",
           "why": "作用：能力配方（整份 JSON）。留空则用 capabilities.json。\n默认：空。影响：写了就以这里为准；不含密钥，可整段分享。\n修改后需重启。"
+        },
+        {
+          "key": "injectOffSections",
+          "label": "关掉哪几段注入",
+          "kind": "list",
+          "group": "inject",
+          "level": "caution",
+          "why": "作用：按段名关掉注入的某一段，空 = 全开。\n默认：[]。影响：关错会让她缺一块上下文，但不会报错。"
+        },
+        {
+          "key": "moodShowMax",
+          "label": "心情一次摆几条",
+          "kind": "number",
+          "group": "inject",
+          "level": "normal",
+          "why": "作用：同时并存的心情最多摆几条。\n默认：5。影响：调小可能丢掉「又喜又悲」并存的那一半。"
+        },
+        {
+          "key": "capsTimeoutMs",
+          "label": "外部调用超时（毫秒）",
+          "kind": "number",
+          "group": "caps",
+          "level": "normal",
+          "why": "作用：单次外部 API 调用的上限。\n默认：120000。影响：视频类要留够（生成常需数分钟）。"
+        },
+        {
+          "key": "capsPollMs",
+          "label": "异步轮询间隔（毫秒）",
+          "kind": "number",
+          "group": "caps",
+          "level": "normal",
+          "why": "作用：异步任务多久查一次。\n默认：5000。影响：调小更快出结果但请求更多；记录里写了 pollMs 时以记录为准。"
+        },
+        {
+          "key": "capsRetry",
+          "label": "失败重试次数",
+          "kind": "number",
+          "group": "caps",
+          "level": "normal",
+          "why": "作用：网络错误与 5xx 的重试次数。\n默认：1。影响：4xx 不重试（参数错重试也一样错）。"
+        },
+        {
+          "key": "capsConfirmPrompt",
+          "label": "提示词最短长度（先问门槛）",
+          "kind": "number",
+          "group": "caps",
+          "level": "caution",
+          "why": "作用：生图/生视频的提示词少于这么多字就先问、不直接跑。\n默认：6。影响：调 0 = 不再拦截（force 也可绕过）。"
+        },
+        {
+          "key": "capsMediaKeepDays",
+          "label": "媒体文件保留天数",
+          "kind": "number",
+          "group": "caps",
+          "level": "normal",
+          "why": "作用：media 目录下按天分的旧目录多久清一次。\n默认：30。影响：调 0 则不清理，磁盘会一直长。"
         }
       ]
       const GROUP_LABEL = {

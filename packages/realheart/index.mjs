@@ -28,7 +28,7 @@ import { randomBytes } from 'node:crypto';
 import net from 'node:net';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { appendFile, mkdir, readFile, readdir, writeFile, copyFile, chmod, open, stat, unlink } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, writeFile, copyFile, chmod, open, stat, unlink, rm } from 'node:fs/promises';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, FORM_LIST, KIND_LIST } from './lib/caps.mjs';
@@ -960,7 +960,7 @@ const ROUND_MARK = '[本轮消息]';
     // 两种键都要看：行号（老记录）和 at（新记录，不受截断影响）。
     // 本场合记的心情：最近几条都摆出来（2026-11-02 沙耶：「极度悲痛的时候可以和人谈笑风生」——
     // 一条的模型连「同时存在两个情绪」都表示不了）。
-    const MOOD_SHOW_MAX = 5;
+    const MOOD_SHOW_MAX = Math.max(1, Math.min(20, Number(cfg.moodShowMax) || 5));
     const mine = [];
     // 别处的（最多 2 条）—— 2026-11-02 沙耶：情绪可以传染到不同场合，
     // 但会有削弱和取舍。所以不替她筛掉，也不替她带过来：摆出来、标明，她自己定。
@@ -2115,24 +2115,39 @@ const ROUND_MARK = '[本轮消息]';
       pid = 0;
     }
     let cmdOk = false;
+    let pidAlive = false;
+    // 2026-11-14：原来只看 /proc/<pid>/cmdline —— 那是 Linux 专有。
+    // Windows 上没有 /proc，cmdOk 永远 false，于是「页面明明活着、pid 也对」也被说成
+    // 「那个号对不上」（新机复测报告里那条自相矛盾就是这么来的）。
+    // 现在：pid 存活用 process.kill(pid, 0)（跨平台），有 /proc 时再加一道 cmdline 校验。
+    const hasProc = existsSync('/proc');
     if (Number.isInteger(pid) && pid > 0) {
       try {
-        const cmd = (await readFile('/proc/' + pid + '/cmdline', 'utf8')).replace(/\0/g, ' ').trim();
-        cmdOk = cmd.includes('rh-status.py');
+        process.kill(pid, 0);
+        pidAlive = true;
       } catch {
-        cmdOk = false;
+        pidAlive = false;
+      }
+      if (hasProc) {
+        try {
+          const cmd = (await readFile('/proc/' + pid + '/cmdline', 'utf8')).replace(/\0/g, ' ').trim();
+          cmdOk = cmd.includes('rh-status.py');
+        } catch {
+          cmdOk = false;
+        }
       }
     }
+    const pidTrusted = hasProc ? cmdOk : pidAlive;
 
     const listening = await pageAnswers();
     if (listening) {
-      if (cmdOk) return { alive: true, text: `观测页：在（pid ${pid}）` };
+      if (pidTrusted) return { alive: true, text: `观测页：在（pid ${pid}）` };
       return {
         alive: true,
         text: `观测页：在（端口 ${cfg.pagePort} 有响应；pid 文件写的是 ${pid > 0 ? pid : '（空）'}，那个号对不上）`,
       };
     }
-    if (cmdOk) return { alive: false, text: `观测页：不在（pid ${pid} 活着，但端口 ${cfg.pagePort} 没响应）` };
+    if (pidTrusted) return { alive: false, text: `观测页：不在（pid ${pid} 活着，但端口 ${cfg.pagePort} 没响应）` };
     if (pid > 0) return { alive: false, text: `观测页：不在（pid ${pid} 已经不在，端口 ${cfg.pagePort} 也没响应）` };
     return { alive: false, text: `观测页：不在（pid 文件读不到，端口 ${cfg.pagePort} 也没响应）` };
   }
@@ -2416,9 +2431,17 @@ const ROUND_MARK = '[本轮消息]';
         }
         // 2026-11-12：这一段每轮都跑，二十来段各自读账本。慢过 50ms 就记一行，
         // 不然「她每轮都在为一段空东西付钱」这件事永远看不见。
+        // 2026-11-14：按段名关掉注入（injectOffSections）。一段一个名字，全在 FIELD_META 里列着。
+        const offSecs = (Array.isArray(cfg.injectOffSections) ? cfg.injectOffSections : [])
+          .map((s) => String(s || '').trim()).filter(Boolean)
+          .map((s) => (s.startsWith('realheart:') ? s : 'realheart:' + s));
+        let parts2 = parts;
+        if (offSecs.length) {
+          parts2 = parts.filter((p) => !offSecs.some((n) => String(p).includes('--- ' + n + ' ---')));
+        }
         const __ms = Date.now() - __t0;
-        if (__ms > 50) log('注入拼装 ' + __ms + 'ms（' + parts.length + ' 段）', 'info');
-        return { ...assembled, sections: [...sections, ...parts] };
+        if (__ms > 50) log('注入拼装 ' + __ms + 'ms（' + parts2.length + ' 段）', 'info');
+        return { ...assembled, sections: [...sections, ...parts2] };
       } catch (err) {
         // 注入出错必须放行 —— 宁可这一轮没心情，也不能让她说不出话。
         // 但放行不等于装作没发生（M1-11）：日志一行 + 落一份盘，doctor 会去查那份盘。
@@ -5609,7 +5632,8 @@ PY
         const needPrompt = ['image', 'video'].includes(String(rec.cap || ''));
         const rough = String(params.prompt || params.text || '').trim();
         const force = args?.force === true;
-        if (needPrompt && !force && rough.length < 6) {
+        const minPrompt = Number.isFinite(Number(cfg.capsConfirmPrompt)) ? Number(cfg.capsConfirmPrompt) : 6;
+        if (needPrompt && !force && minPrompt > 0 && rough.length < minPrompt) {
           const ASK2 = {
             image: ['画什么（主体、场景、风格）', '尺寸或比例', '要不要一次多张'],
             video: ['拍什么（主体 + 动作 + 场景）', '多长（几秒）', '分辨率、要不要声音'],
@@ -5623,16 +5647,45 @@ PY
           ].join('\n') };
         }
         const taskId = String(args?.taskId || '').trim();
-        const waitMs = Number(args?.waitMs) > 0 ? Number(args.waitMs) : 45000;
+        const defWait = Number(cfg.capsTimeoutMs) > 0 ? Number(cfg.capsTimeoutMs) : 45000;
+        const waitMs = Number(args?.waitMs) > 0 ? Number(args.waitMs) : defWait;
+        // media 清理：按天分的子目录，超过保留天数就删（只在真调用时做，不占后台）
+        const keepDays = Number(cfg.capsMediaKeepDays);
+        if (Number.isFinite(keepDays) && keepDays > 0) {
+          try {
+            const root = capsMediaDir();
+            const cut = Date.now() - keepDays * 86400000;
+            for (const d of await readdir(root)) {
+              const p2 = join(root, d);
+              try {
+                const st2 = await stat(p2);
+                if (st2.isDirectory() && st2.mtimeMs < cut) await rm(p2, { recursive: true, force: true });
+              } catch { /* 单个目录失败不影响调用 */ }
+            }
+          } catch { /* 目录还不存在 */ }
+        }
         const t0 = Date.now();
         try {
           const runParams = taskId ? { ...params, taskId } : params;
-          const r = await runCapability(rec, runParams, {
-            outDir: capsMediaDir(),
-            timeoutMs: waitMs,
-            baseName: id + '-' + Date.now().toString(36),
-            pollTaskId: taskId || undefined,
-          });
+          const retryN = Number.isFinite(Number(cfg.capsRetry)) ? Math.max(0, Number(cfg.capsRetry)) : 0;
+          let r;
+          for (let attempt = 0; ; attempt += 1) {
+            try {
+              r = await runCapability(rec, runParams, {
+                outDir: capsMediaDir(),
+                timeoutMs: waitMs,
+                pollMs: Number(cfg.capsPollMs) > 0 ? Number(cfg.capsPollMs) : undefined,
+                baseName: id + '-' + Date.now().toString(36),
+                pollTaskId: taskId || undefined,
+              });
+              break;
+            } catch (err) {
+              // 4xx 是参数/权限错，重试没意义；只重试网络错误和 5xx
+              const em = String(err?.message ?? err);
+              if (attempt >= retryN || /HTTP 4\d\d/.test(em)) throw err;
+              await new Promise((res) => setTimeout(res, 800));
+            }
+          }
           await logCapsCall({ at: localStamp(), id, cap: rec.cap, model: rec.model, ok: r.ok, ms: r.meta?.ms ?? (Date.now() - t0), taskId: r.meta?.taskId || taskId || null });
           const bits = [];
           if (r.files && r.files.length) bits.push('好了，文件：' + r.files.join('、'));

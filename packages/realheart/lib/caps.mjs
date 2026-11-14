@@ -183,7 +183,8 @@ export async function runCapability(rec, params = {}, opts = {}) {
     const deadline = Date.now() + timeoutMs;
     let last = null;
     while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, Number(rec.pollMs) > 0 ? Number(rec.pollMs) : 4000));
+      const every = Number(rec.pollMs) > 0 ? Number(rec.pollMs) : (Number(opts.pollMs) > 0 ? Number(opts.pollMs) : 4000);
+      await new Promise((r) => setTimeout(r, every));
       const pollUrl = fill(pollUrlTpl, { ...vars, id: taskId });
       const st = await httpJson(pollUrl, { method: 'GET', headers }, Math.min(60000, timeoutMs));
       last = st;

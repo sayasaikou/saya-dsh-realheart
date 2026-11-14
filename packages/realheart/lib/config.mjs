@@ -96,10 +96,19 @@ export const DEFAULTS = {
   // 离天花板只剩 230 —— 再加两段就顶到，会开始按优先级丢段。而这一晚要加的正是
   // 「知道」和「手边一件」这类内容段，它们不该去挤心情和没完的事。
   injectBudgetChars: 2400,
+  // 关掉哪几段注入。空 = 全开。名字见 FIELD_META 的 range。
+  injectOffSections: [],
+  // 心情一次最多摆几条（同时并存的状态）
+  moodShowMax: 5,
   // 2026-11-14：外部能力注册表
   capsOn: true,
   capsFile: '',            // 空 = $DSH_HOME/realheart/capabilities.json
   capsDailyLimit: 30,
+  capsTimeoutMs: 120000,   // 单次外部调用超时
+  capsPollMs: 5000,        // 异步任务轮询间隔（记录里写了就按记录的）
+  capsRetry: 1,            // 网络/5xx 重试次数（4xx 不重试）
+  capsConfirmPrompt: 6,    // 提示词少于这么多字先问再动
+  capsMediaKeepDays: 30,   // media 目录保留天数（0 = 不清理）
   capsJson: '',            // 设置页「外部能力」标签里那份整份 JSON；非空时优先于 capabilities.json      // 每条记录每天最多调几次（生成类按次计费，这是刹车）
   // 注入时只读心情账本的最后 N 条。账本长大了不该整份读进来（M1-4）。
   moodTailLines: 200,
@@ -253,9 +262,16 @@ export const Config = Schema.object({
   sayLogPath: Schema.string().default(DEFAULTS.sayLogPath).volatile(),
   toolsOff: Schema.array(Schema.string()).default(DEFAULTS.toolsOff).volatile(),
   injectBudgetChars: Schema.number().min(200).max(20000).default(DEFAULTS.injectBudgetChars).volatile(),
+  injectOffSections: Schema.array(Schema.string()).default(DEFAULTS.injectOffSections).description('关掉哪几段注入（段名见说明）').volatile(),
+  moodShowMax: Schema.number().min(1).max(20).default(DEFAULTS.moodShowMax).description('心情一次最多摆几条').volatile(),
   capsOn: Schema.boolean().default(DEFAULTS.capsOn).volatile(),
   capsFile: Schema.string().default(DEFAULTS.capsFile).volatile(),
   capsDailyLimit: Schema.number().min(0).max(100000).default(DEFAULTS.capsDailyLimit).volatile(),
+  capsTimeoutMs: Schema.number().min(5000).max(1800000).default(DEFAULTS.capsTimeoutMs).volatile(),
+  capsPollMs: Schema.number().min(500).max(120000).default(DEFAULTS.capsPollMs).volatile(),
+  capsRetry: Schema.number().min(0).max(5).default(DEFAULTS.capsRetry).volatile(),
+  capsConfirmPrompt: Schema.number().min(0).max(200).default(DEFAULTS.capsConfirmPrompt).volatile(),
+  capsMediaKeepDays: Schema.number().min(0).max(3650).default(DEFAULTS.capsMediaKeepDays).volatile(),
   // 注意：这一项**不加 volatile** —— 它要能被设置页写进 profile 并持久。
   moodTailLines: Schema.number().min(0).max(100000).default(DEFAULTS.moodTailLines).volatile(),
   servePage: Schema.boolean().default(DEFAULTS.servePage).volatile(),
@@ -676,6 +692,41 @@ export const FIELD_META = [
     key: 'capsJson', group: 'caps', topic: 'H', alias: '配方 json 模型 端点 形态', label: '能力配方（整份 JSON）', level: 'caution',
     range: '{version, items[]}',
     why: '作用：能力配方（整份 JSON）。留空则用 capabilities.json。\n默认：空。影响：写了就以这里为准；不含密钥，可整段分享。\n修改后需重启。',
+  },
+  {
+    key: 'injectOffSections', group: 'inject', topic: 'C', alias: '', label: '关掉哪几段注入', level: 'caution',
+    range: 'clock / mood / mood-nudge / admit / linger / reopen / hold / recall / situation / work / days / today / voice / own / exp / claim / view / where / style / pending-change / pending / status-page / kept / time',
+    why: '作用：按段名关掉注入的某一段，空 = 全开。\n默认：[]。影响：关错会让她缺一块上下文，但不会报错。',
+  },
+  {
+    key: 'moodShowMax', group: 'inject', topic: 'C', alias: '', label: '心情一次摆几条', level: 'normal',
+    range: '1-20（默认 5）',
+    why: '作用：同时并存的心情最多摆几条。\n默认：5。影响：调小可能丢掉「又喜又悲」并存的那一半。',
+  },
+  {
+    key: 'capsTimeoutMs', group: 'caps', topic: 'H', alias: '', label: '外部调用超时（毫秒）', level: 'normal',
+    range: '5000-1800000（默认 120000）',
+    why: '作用：单次外部 API 调用的上限。\n默认：120000。影响：视频类要留够（生成常需数分钟）。',
+  },
+  {
+    key: 'capsPollMs', group: 'caps', topic: 'H', alias: '', label: '异步轮询间隔（毫秒）', level: 'normal',
+    range: '500-120000（默认 5000）',
+    why: '作用：异步任务多久查一次。\n默认：5000。影响：调小更快出结果但请求更多；记录里写了 pollMs 时以记录为准。',
+  },
+  {
+    key: 'capsRetry', group: 'caps', topic: 'H', alias: '', label: '失败重试次数', level: 'normal',
+    range: '0-5（默认 1）',
+    why: '作用：网络错误与 5xx 的重试次数。\n默认：1。影响：4xx 不重试（参数错重试也一样错）。',
+  },
+  {
+    key: 'capsConfirmPrompt', group: 'caps', topic: 'H', alias: '', label: '提示词最短长度（先问门槛）', level: 'caution',
+    range: '0-200（默认 6）',
+    why: '作用：生图/生视频的提示词少于这么多字就先问、不直接跑。\n默认：6。影响：调 0 = 不再拦截（force 也可绕过）。',
+  },
+  {
+    key: 'capsMediaKeepDays', group: 'caps', topic: 'H', alias: '', label: '媒体文件保留天数', level: 'normal',
+    range: '0-3650（默认 30，0 = 不清理）',
+    why: '作用：media 目录下按天分的旧目录多久清一次。\n默认：30。影响：调 0 则不清理，磁盘会一直长。',
   },
 ];
 

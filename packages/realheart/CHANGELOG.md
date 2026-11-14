@@ -1,3 +1,17 @@
+## 0.3.5 — 2026-11-14
+
+- **修：观测页在 Windows 上整页 500。** ping.last / ping.next 写的是毫秒，而 render_ping 的 hhmm()
+  直接喂给 time.localtime()。Linux 上只是显示成 58xxx 年，Windows 上直接 OSError 22，整页 500。
+  已复现（time.localtime(1794299885648) → [Errno 22] Invalid argument）。
+  修法：读取处统一归一，大于 1e11 的按毫秒除以 1000，写入侧不动。stamp() 同样处理。
+- **修：观测页自相矛盾。**「pid 文件写的是 24784，那个号对不上」—— 24784 其实就是活的。
+  根因：存活判定只读 /proc/<pid>/cmdline（Linux 专有），Windows 上没有 /proc，永远「对不上」。
+  改成 process.kill(pid, 0) 判存活（跨平台），有 /proc 时再加一道 cmdline 校验。
+- **开放更多可调项（53 个字段）**：injectOffSections（按段名关掉任意一段注入，24 段都可关）、
+  moodShowMax、capsTimeoutMs / capsPollMs / capsRetry / capsConfirmPrompt / capsMediaKeepDays。
+  全部接上实际代码路径。
+- 重试只重试网络错误与 5xx；4xx 是参数/权限错，重试无意义。
+
 ## 0.3.3 — 2026-11-14
 
 - **问要问全，并且先说清「不答会怎么补」。** plan 给出的每条问题后面都带括号说明：
