@@ -360,6 +360,15 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "level": "caution",
           "why": "心情那一段的最后一句话，现在写的是「知道就行，不必说出来 —— 它们不是你聊天的素材，只影响你说话的样子，不是你的话」。🔴 **这句是五组对照实验验出来的**：同样的心情，不加这句她会轻描淡写带一句「本鱼今天也有点凉」；加了才真的一个字不提。这可能是整套提示词里最不能删的一句 —— 删了，她就会把…"
         }
+        ,{
+          "key": "capsJson",
+          "label": "外部能力（整份配方 JSON）",
+          "kind": "textarea",
+          "rows": 22,
+          "group": "caps",
+          "level": "caution",
+          "why": "这一栏管的是「怎么调外部 API」：一条记录 = 一个能力 + 一份配方（能力/模型/端点/调用形态/默认参数/价格/备注）。\n\n留空 = 用账本目录下的 capabilities.json。这里一旦写了内容，就以这里为准。\n\n里面不含任何 key —— 记录里只写 auth.keyRef（env:变量名 或 file:路径）。所以这整段可以直接复制给别人用。\n\n四种调用形态：openai-chat / sync-generate / async-task / raw。模板占位只认双花括号 {{prompt}}、{{id}}。\n\n改完要重启。"
+        }
       ]
       const GROUP_LABEL = {
   "switch": "开关",
@@ -369,6 +378,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
   "freetime": "自由时间",
   "boundary": "边界",
   "prompt": "提示词",
+  "caps": "外部能力",
   "other": "其它"
 }
 
@@ -465,7 +475,10 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           })
         } else if (field.kind === 'textarea') {
           control = react.createElement('textarea', {
-            id, style: Object.assign({}, style.input, { minHeight: '96px', fontFamily: 'inherit' }),
+            id, style: Object.assign({}, style.input, {
+              minHeight: field.rows ? (field.rows * 16) + 'px' : '96px',
+              fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '12px',
+            }),
             placeholder: field.placeholder, value: fmtValue(value),
             onChange: (event) => onChange(field.key, event.target.value),
           })
@@ -489,9 +502,11 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           control)
       }
 
-      /** 页面主体。 */
+      /** 页面主体。only = 只显示某一组的字段（用来把一个组单开成一页）。 */
       function RealheartSettingsPage(props) {
         const ctx = props.ctx
+        const only = props.only || ''
+        const shown = only === '' ? FIELDS : FIELDS.filter((field) => field.group === only)
         const [state, setState] = react.useState({ phase: 'loading' })
         const [draft, setDraft] = react.useState({})
         const [revision, setRevision] = react.useState(undefined)
@@ -584,7 +599,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           react.createElement('p', { style: style.hint },
             '保存后写入 profile 的 cordis.patch.yml 并热重载插件。' +
             (revision === undefined ? '' : ' 当前 revision：' + revision)),
-          FIELDS.map((field) => renderField(field, draft[field.key], (key, value) => {
+          shown.map((field) => renderField(field, draft[field.key], (key, value) => {
             setDraft((previous) => {
               const nextDraft = Object.assign({}, previous)
               nextDraft[key] = value
@@ -602,9 +617,11 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
       // （configEditor / ctx.settings 的浏览器半边），读写配置都走它。
       const inject = ['slots', 'remote', 'remote.settings']
 
-      /** 注册成「设置」左侧菜单里的一个独立页面（与「内置插件」同级）。 */
+      /** 注册成「设置」左侧菜单里的独立页面（与「内置插件」同级）。
+       *  2026-11-14：外部能力单开一页 —— 那堆配方塞在二十来项配置中间没人找得到。 */
       function apply(ctx) {
         const Page = (props) => react.createElement(RealheartSettingsPage, Object.assign({}, props, { ctx: ctx }))
+        const CapsPage = (props) => react.createElement(RealheartSettingsPage, Object.assign({}, props, { ctx: ctx, only: 'caps' }))
         // 用 slots.inject 等宿主声明出 settings.section 之后再注册；
         // 直接 register 会在槽还不存在时抛错，导致整条客户端 entry 变成 failed。
         ctx.slots.inject('settings.section', () => ctx.slots.register({
@@ -613,6 +630,12 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           order: 62,
           label: () => 'Realheart',
         }, Page))
+        ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section',
+          id: 'realheart-caps',
+          order: 63,
+          label: () => '外部能力',
+        }, CapsPage))
       }
 
       exports.apply = apply

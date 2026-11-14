@@ -4760,30 +4760,62 @@ PY
           };
         }
 
+        if (action === 'pricing') {
+          // 内置价目表（录入日期 + 来源）。运行时一次网络请求都不用，也不会被过时的网页骗。
+          const rows = pricingTable(items.map((x) => x && x.model).filter(Boolean));
+          const lines = rows.map((r) => '· ' + r.model + ' —— '
+            + (r.value == null ? '没录' : r.value + ' 元/' + (r.unit === 'per_image' ? '张' : r.unit === 'per_second' ? '秒' : '千token'))
+            + (r.note ? '（' + r.note + '）' : ''));
+          return { text: ['内置价目表（录入于 ' + PRICING_ASOF + '，记录里的 price 字段优先）：', ...lines,
+            '', '要覆盖某条的价格：rh_capabilities action=update，record 里写 price:{unit,value}；免费的直接写 free:true。'].join('\n') };
+        }
+
         if (action === 'plan') {
-          // 2026-11-14 沙耶：用户只说「生成一张 xx 图片」这种，别直接开跑。
-          // 先问清楚；他答了之后，还缺的那部分用「最便宜的那条 + 默认参数 + 自己把提示词补完整」补齐。
+          // 2026-11-14 沙耶：三件事
+          //   ① 问题要问全  ② 每条都说清「不说会怎么补」 ③ 最便宜按真价格排，有免费先用免费
           const cap = String(args?.cap || '').trim();
-          if (!cap) return { text: '（plan 要给 cap：image / video / vision / tts / asr）' };
-          const rec = cheapestFor(reg, cap);
-          if (!rec) return { text: '（没有可用的 ' + cap + ' 能力，先在面板上加一条。）' };
-          const ASK = {
-            image: ['画什么（主体、场景、风格）', '尺寸或比例', '要不要一次多张'],
-            video: ['拍什么（主体 + 动作 + 场景）', '多长（几秒）', '分辨率、要不要声音'],
-            vision: ['看图里哪一点（整体描述 / 找细节 / 读文字）'],
-            tts: ['念什么内容', '什么声音、什么语气'],
-            asr: ['这是什么语言的录音', '要不要顺带整理成段落'],
+          if (!cap) return { text: '（plan 要给 cap：image / video / vision / tts / asr / text）' };
+          const rough = args && typeof args.params === 'object' && args.params ? args.params : {};
+          const rec = cheapestFor(reg, cap, rough);
+          if (!rec) return { text: '（没有可用的 ' + cap + ' 能力，先在设置页加上一条。）' };
+          const d = rec.defaults || {};
+          const pr = priceOf(rec);
+          const money = rec.free === true ? '免费'
+            : pr ? ('约 ' + (estimateCost(rec, rough) == null ? '?' : estimateCost(rec, rough).toFixed(2)) + ' 元/次（' + pr.value + ' 元/' + (pr.unit === 'per_image' ? '张' : pr.unit === 'per_second' ? '秒' : '千token') + '）')
+            : '价格没录入（按未知处理）';
+          const Q = {
+            image: [
+              ['画什么', '主体 + 场景 + 风格。不说的部分我自己补成完整描述'],
+              ['尺寸 / 比例', '按 ' + (d.size || '1024x1024') + ' 出。要竖图/横图现在说'],
+              ['几张', '默认 1 张'],
+              ['不能出现的元素', '不说就不设限制'],
+            ],
+            video: [
+              ['拍什么', '主体 + 动作 + 场景。不说的部分我自己补成完整描述'],
+              ['多长', '按 ' + (d.duration || 5) + ' 秒出，按秒' + (pr && pr.unit === 'per_second' ? '计费' : '计')],
+              ['分辨率', '按 ' + (d.resolution || '默认') + ' 出'],
+              ['要不要声音', '不说就跟着模型默认'],
+              ['首帧图', '有就给（图生视频更稳），没有就纯文字'],
+            ],
+            vision: [
+              ['看哪一点', '整体描述 / 找细节 / 只读文字。不说就整体描述'],
+              ['要不要结论', '不说就只描述、不下判断'],
+            ],
+            tts: [['念什么', '不给我就没法开始'], ['什么声音/语气', '按默认音色'], ['语速', '按默认']],
+            asr: [['录音是什么语言', '不说让模型自己判'], ['要不要整理成段落', '默认只转写']],
           };
-          const qs = ASK[cap] || ['还有什么要求'];
+          const qs = Q[cap] || [['还有什么要求', '不说就按默认']];
           const lines = [
-            '这条请求信息不够，**先问再动手**。要问的：',
-            ...qs.map((q, i) => (i + 1) + '. ' + q),
+            '这条请求信息不够，**先问清楚再动手**。问的时候把这句一并告诉他：不答的会怎么补。',
             '',
-            '他答完之后，没提到的部分这样补：',
-            '· 模型：用最便宜的那条 —— ' + (rec.name || rec.id) + '（id: ' + rec.id + '，模型 ' + rec.model + '）',
-            '· 参数：用它的默认值 ' + JSON.stringify(rec.defaults || {}),
-            '· 提示词：你自己把他的话补成完整描述（主体 + 动作 + 场景 + 风格），别只把他的原话丢进去',
-            '· 补完直接 rh_call，别再回来问第二遍',
+            '要问的（括号里是「他不说我会怎么办」）：',
+            ...qs.map((q, i) => (i + 1) + '. ' + q[0] + '（' + q[1] + '）'),
+            '',
+            '他答完之后，**不回来问第二遍**，直接这样配：',
+            '· 模型：' + (rec.name || rec.id) + '（id: ' + rec.id + '）—— 按估算成本选出来的，' + money,
+            '· 参数：' + JSON.stringify(d) + '，他自己点明的覆盖它',
+            '· 提示词：你把他说的补成完整描述（主体 + 动作 + 场景 + 风格 + 画质），别只丢原话',
+            '· 然后 rh_call 一次调完，并把用了什么模型、什么参数、最终提示词告诉他',
           ];
           if (rec.notes) lines.push('', '（这条的备注：' + rec.notes + '）');
           return { text: lines.join('\n') };
@@ -5364,6 +5396,16 @@ PY
     const capsMediaDir = () => join(cfg.stateDir, 'media');
 
     async function capsRegistry() {
+      // 2026-11-14：设置页「外部能力」里那份 JSON 优先（它能被宿主持久化），
+      // 文件只是兜底。两边都有又不一致时，以设置页为准 —— 下面会提示。
+      const fromCfg = String(cfg.capsJson || '').trim();
+      if (fromCfg) {
+        try {
+          const j = JSON.parse(fromCfg);
+          if (Array.isArray(j)) return { items: j };
+          if (j && Array.isArray(j.items)) return j;
+        } catch { /* 设置页那份坏了就退回文件 */ }
+      }
       return loadRegistry(capsPath());
     }
 
@@ -5410,7 +5452,7 @@ PY
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['list', 'get', 'plan', 'add', 'update', 'remove', 'export', 'import'], description: '要做什么' },
+          action: { type: 'string', enum: ['list', 'get', 'plan', 'pricing', 'add', 'update', 'remove', 'export', 'import'], description: '要做什么' },
           cap: { type: 'string', description: 'list 时按能力过滤' },
           id: { type: 'string', description: 'get / update / remove 的记录 id' },
           record: { type: 'object', description: 'add / update 的记录内容' },
@@ -5596,6 +5638,16 @@ PY
           if (r.files && r.files.length) bits.push('好了，文件：' + r.files.join('、'));
           if (r.text) bits.push(r.text);
           if (r.meta?.pending) bits.push('（异步任务还没完，任务号 ' + r.meta.taskId + '，过几分钟带 taskId 再调一次）');
+          // 2026-11-14 沙耶：生成完要告诉他这次用了什么 —— 模型、提示词、参数、花了多少。
+          // 这不是调试信息，是他判断「值不值、要不要换参数重来」的唯一依据。
+          const cost = estimateCost(rec, runParams);
+          bits.push('', '—— 这次用了：');
+          bits.push('· 模型：' + rec.model + '（' + (rec.name || rec.id) + '）');
+          if (runParams.prompt) bits.push('· 最终提示词：' + String(runParams.prompt).slice(0, 200));
+          const usedKeys = Object.keys(runParams).filter((k) => k !== 'prompt' && k !== 'messages' && k !== 'image_url');
+          if (usedKeys.length) bits.push('· 参数：' + usedKeys.map((k) => k + '=' + JSON.stringify(runParams[k])).join('，'));
+          bits.push('· 耗时：' + ((r.meta?.ms ?? (Date.now() - t0)) / 1000).toFixed(1) + ' 秒');
+          bits.push('· 花费：' + (rec.free === true ? '免费' : cost == null ? '没录价格，估算不了' : '约 ' + cost.toFixed(2) + ' 元'));
           return { text: bits.join('\n') || '（调完了，没有返回内容）' };
         } catch (err) {
           await logCapsCall({ at: localStamp(), id, cap: rec.cap, model: rec.model, ok: false, ms: Date.now() - t0, error: String(err?.message ?? err).slice(0, 200) });

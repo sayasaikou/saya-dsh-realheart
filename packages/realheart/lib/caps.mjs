@@ -17,6 +17,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { estimateCost, priceOf, pricingTable, PRICING_ASOF } from './pricing.mjs';
 
 const CAPS_FORMS = ['openai-chat', 'sync-generate', 'async-task', 'raw'];
 const CAPS_KINDS = ['vision', 'image', 'video', 'tts', 'asr', 'text', 'embed'];
@@ -253,12 +254,17 @@ export async function saveRegistry(file, reg) {
   await writeFile(file, JSON.stringify({ version: 1, items: reg.items || [] }, null, 2) + '\n', 'utf8');
 }
 
-/** 按成本挑：cost 小的优先（同成本按列表顺序）。没写 cost 的当 5。 */
-export function cheapestFor(reg, cap) {
+/** 按「这一次要花多少」挑，而不是比单价 —— 单价单位不同的东西没法直接比。
+ *  免费（价格 0 或记录里标 free）永远排最前；价格未知的排最后（但还能用）。 */
+export function cheapestFor(reg, cap, params = {}) {
   const items = (reg.items || []).filter((x) => x && x.enabled !== false && (!cap || String(x.cap) === String(cap)));
   if (!items.length) return null;
-  const cost = (x) => (Number.isFinite(Number(x.cost)) ? Number(x.cost) : 5);
-  return items.slice().sort((a, b) => cost(a) - cost(b))[0];
+  const score = (x) => {
+    if (x.free === true) return -1;
+    const c = estimateCost(x, params);
+    return c === null ? Number.POSITIVE_INFINITY : c;
+  };
+  return items.slice().sort((a, b) => score(a) - score(b))[0];
 }
 
 /** 按能力筛（给 agent 看的摘要用） */
@@ -271,5 +277,6 @@ export function summarize(reg, cap) {
   }));
 }
 
+export { estimateCost, priceOf, pricingTable, PRICING_ASOF };
 export const FORM_LIST = CAPS_FORMS;
 export const KIND_LIST = CAPS_KINDS;
