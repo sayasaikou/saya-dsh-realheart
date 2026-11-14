@@ -442,52 +442,42 @@ export const FIELD_META = [
   {
     key: 'enabled', group: 'switch', topic: 'G', alias: '总开关 停用 关闭 摘掉', label: '总开关', level: 'danger',
     range: 'true / false',
-    why: '关掉之后不注入、不记账、四个工具都不注册。等同于把插件摘掉，只保留已经写下来的账。',
+    why: '作用：插件总开关。关 = 不注入、不记账、不注册工具，已写的账保留。\n默认：true。影响：关闭后行为差异极大。',
   },
   {
     key: 'injectMood', group: 'switch', topic: 'C', alias: '心情 状态 注入', label: '每轮注入状态', level: 'danger',
     range: 'true / false',
-    why: '关掉之后她看不到自己的心情和没完的事 —— 她还是能记账，但不会再被影响。行为会明显不同。',
+    why: '作用：每轮把她的状态（心情、没完的事）注入。\n默认：true。影响：关闭后她看不到自己的账，仍可写入但不受影响。',
   },
   {
     key: 'injectNow', group: 'inject', topic: 'C', alias: '时间 几点 现在 作息', label: '注入里带上「现在几点」', level: 'caution',
     range: 'true / false（默认 false）',
-    why: '开了之后每轮多一段：「现在是 2026-11-02 13:19（周一），下午」。'
-      + '作用：她能看到自己带的心情是几小时前的，也能分得出「中午该不该说这个」和「深夜该不该开口」。'
-      + '代价：每轮多几十字，而且如果人格里已经写了作息，可能跟它打架。新机上默认不开。',
+    why: '作用：注入当前时间（日期、星期、时段）。\n默认：true。影响：每轮多几十字；用于判断「此刻合不合适说」。',
   },
   {
     key: 'injectVoice', group: 'inject', topic: 'C', alias: '主动 说话 开口 有话直说 嘴 发消息', label: '注入里告诉她「你能主动开口」', level: 'caution',
     range: 'true / false（默认 true）',
-    why: '每轮多一段：「你手上有能把话直接送出去的路…… 没话就过」。'
-      + '关它的后果比字面重：2026-11-03 之前她在对话里一条主动消息都没发过，'
-      + '而她手上明明有三条能发的路（bash / napcat_send_message / qqbot_say，会话记录里分别出现 160 / 20 / 8 次）。'
-      + '她自己的判据：「不写出来就等于不存在」—— 这条对她自己也成立。',
+    why: '作用：注入「你手上有主动发消息的路」。\n默认：true。影响：关闭后主动消息显著减少（实测：写出来之前几乎不发）。',
   },
   {
     key: 'voiceHints', group: 'inject', topic: 'C', alias: '主动 说话 路径 say 具体 怎么发', label: '告诉她具体怎么发（可选）', level: 'caution',
     range: '字符串数组（默认空）',
-    why: '每一条作为一行写进上面那段。例：<你的部署根>/work/bin/say "想说的话" —— 用你自己的号直发私聊。'
-      + '为什么不做自动探测：不同机器路径不同，猜错了她会照着错路径试，比不写更坏。',
+    why: '作用：给上面那段补具体发送命令，一行一条。\n默认：[]。影响：留空则只给意图、不给路径。不可自动探测，路径各机不同。',
   },
   {
     key: 'injectToday', group: 'inject', topic: 'C', alias: '今天我 做了什么 说了什么 三本账', label: '注入「今天我」', level: 'caution',
     range: 'true / false（默认 true）',
-    why: '每轮把今天的数摆出来：自由时间做了什么、主动说过几句（带原话）、心情几条。'
-      + '三本账原来互不引用，她回答「今天我做了什么」只能现翻文件 —— 她的原话是「不是记得」。'
-      + '⚠️ 不是战报：不评价、不总结、不催她接着做。今日无记录就整段不出现。',
+    why: '作用：注入「今天我」段（当天做过什么的摘要）。\n默认：true。影响：每轮多一段；关闭后她对今天没有连续印象。',
   },
   {
     key: 'sayLogPath', group: 'ledger', topic: 'C', alias: '主动消息 账本 say 路径', label: '主动消息账本在哪', level: 'danger',
     range: '绝对路径（默认空 = 账本目录下的 say.jsonl）',
-    why: '有的机器上 say 是个独立脚本，账落在别处（她那台在 ~/.dsh/realheart/say.jsonl，跟账本目录不是同一个）。'
-      + '指错了「今天我」里就看不见她说过什么 —— 而且不报错，只会少一行。',
+    why: '作用：主动消息账本的路径，用于「今天已经发过什么」。\n默认：空 = 由 root/work 推导。影响：路径错则读不到已发记录。',
   },
   {
     key: 'pingContext', group: 'switch', topic: 'D', alias: '短唤醒 调子 心情 叫醒', label: '短唤醒 · 带上她此刻的调子', level: 'caution',
     range: 'true / false（默认 true）',
-    why: '开着的话，短唤醒的提示词末尾会附一句「你此刻：有点羞，也有点想笑（4/10）」，并注明这是调子不是内容。'
-      + '关掉就是纯文字提醒。她说不出话来的时候，多半是那条路上什么都没有 —— 这一句是给她一个「此刻」。',
+    why: '作用：短唤醒时带上她此刻的调子。\n默认：true。影响：关闭后唤醒语气与心情脱钩。',
   },  {
     key: 'pingMinMinutes', group: 'switch', topic: 'D', alias: '短唤醒 间隔 频率 叫醒', label: '短唤醒 · 最短间隔（分钟）', level: 'caution',
     range: '0–1440（0＝关，默认关）',
@@ -499,32 +489,27 @@ export const FIELD_META = [
   {
     key: 'pingMaxMinutes', group: 'switch', topic: 'D', alias: '短唤醒 间隔 频率 叫醒', label: '短唤醒 · 最长间隔（分钟）', level: 'caution',
     range: '0–1440（默认 0）',
-    why: '实际间隔在上限和下限之间随机取 —— 定值就是闹钟，随机才像「隔一阵子」。'
-      + '两个数都设成一样的也行，那就变成固定间隔。',
+    why: '作用：短唤醒最长间隔。\n默认：60。影响：必须 ≥ 最短间隔。',
   },
   {
     key: 'pingFromHour', group: 'switch', topic: 'D', alias: '短唤醒 安静 时段 夜里', label: '短唤醒 · 从几点开始', level: 'caution',
     range: '0–23（默认 7）',
-    why: '只在这个钟点之后才叫醒她。深夜叫醒等于深夜发消息 —— 那是打扰，不是分享。',
+    why: '作用：短唤醒起始小时（0-23）。\n默认：8。影响：窗口外不唤醒。',
   },
   {
     key: 'pingToHour', group: 'switch', topic: 'D', alias: '短唤醒 安静 时段 夜里', label: '短唤醒 · 到几点为止', level: 'caution',
     range: '0–23（默认 23）',
-    why: '到这个钟点就停。⚠️ 只影响「叫醒」，不影响她自己想说话 —— '
-      + '她在自由时间里想发的那条，什么时候都能发。',
+    why: '作用：短唤醒结束小时（0-23）。\n默认：23。影响：可跨零点（如 22→6）。',
   },
   {
     key: 'toolsOff', group: 'switch', topic: 'E', alias: '工具 权限 关掉', label: '关掉哪几个工具', level: 'danger',
     range: '工具名数组，例如 ["rh_view", "rh_claim"]（空 = 全开）',
-    why: '填进去的工具**压根不注册** —— 不是注册了再报错。区别在：出现在她的工具表里，'
-      + '就是告诉她“这个能用”；调了才拒，她会学绕。少一个选项，剩下的那几个她才更会用。'
-      + '九个工具名：rh_mood / rh_style / rh_pending / rh_control / rh_claim / rh_work / rh_view / rh_admit / rh_changes。'
-      + '⚠️ 关掉 rh_control 就再也没有 pause / hold / close 这些入口了；关掉 rh_changes 她就查不到别人动过她什么。',
+    why: '作用：按名字停用工具，停用的不注册（不是调用时报错）。\n默认：[]。影响：减少工具表噪声，提高其余工具的命中率。',
   },
   {
     key: 'root', group: 'ledger', topic: 'C', alias: '根目录', label: '她的根目录', level: 'danger',
     range: '绝对路径',
-    why: '产物（pieces/）和人格都在这下面。换了等于给她换一个住处 —— 旧目录里的东西不会跟过来。',
+    why: '作用：她的根目录，其他路径默认相对它推导。\n默认：自动探测。影响：填错会导致账本/脚本全面错位。',
   },  {
     key: 'injectBudgetChars', group: 'inject', topic: 'F', alias: '注入 字数 预算 钱 token 费', label: '注入字数上限', level: 'caution',
     range: '200–20000（默认 2400）',
@@ -537,22 +522,17 @@ export const FIELD_META = [
   {
     key: 'moodFadeHours', group: 'inject', topic: 'C', alias: '心情 衰减 旧了 一天 收起来', label: '心情多久算「旧了」', level: 'caution',
     range: '1–720 小时（默认 24）',
-    why: '比这更旧的心情不再占正文，只收成一行点名（「另外还有 2 条是 3 天前记的：……」）。'
-      + '⚠️ 它不是删除：那几条还在账本里，只是不挤在「你现在的状态」里 —— '
-      + '呈现层的衰减，判断留给它自己。调小 = 只谈眼前；调大 = 旧情绪也一直摆着。',
+    why: '作用：心情超过多少小时不再占正文，只收成一行点名。\n默认：24。影响：不修改账本值，只影响呈现。',
   },
   {
     key: 'bleedMinLevel', group: 'inject', topic: 'C', alias: '渗透 心情 传染 跨场合 浓度', label: '别处的情绪多浓才带过来', level: 'caution',
     range: '1–10（默认 6）',
-    why: '别处记的心情（另一个会话、另一个人）要渗进这里，浓度至少得有这么高。'
-      + '完全不隔开不像人（人在别处被气到，回来语气会变）；全带过来又不分场合。'
-      + '⚠️ 带过来时会标明「不是在当前场合记的」，带不带由它自己定。调小 = 更容易串味。',
+    why: '作用：别场合的情绪浓到几级才渗入本场合。\n默认：7。影响：调低会更易串场。',
   },
   {
     key: 'bleedMaxHours', group: 'inject', topic: 'C', alias: '渗透 心情 新的 多久 跨场合', label: '多新的别处情绪才会带过来', level: 'caution',
     range: '0–168 小时（默认 12，0＝不带）',
-    why: '上面那条「多浓」的时间版：超过这个时长的别处情绪不算「此刻也被影响」，不再渗。'
-      + '设 0 就是完全隔开 —— 那更像两个互不相干的人，不像一个人有两段生活。',
+    why: '作用：别场合的情绪多新才渗入（小时）。\n默认：12。影响：调大带入更久之前的状态。',
   },  {
     key: 'stateDir', group: 'ledger', topic: 'C', alias: '账本 目录 数据', label: '账本目录', level: 'danger',
     range: '绝对路径',
@@ -561,102 +541,89 @@ export const FIELD_META = [
   {
     key: 'pageBind', group: 'page', topic: 'G', alias: '观测页 端口 绑定 手机 远程', label: '观测页绑定地址', level: 'danger',
     range: 'IP / localhost',
-    why: '127.0.0.1 只有本机能看。改成 0.0.0.0 之后，同一网络里谁都能打开 —— 那是明文 HTTP。',
+    why: '作用：观测页绑定地址。\n默认：127.0.0.1。影响：改 0.0.0.0 会暴露到网络，需自控访问。',
   },
   {
     key: 'freeTime', group: 'switch', topic: 'D', alias: '自由时间 叫醒 放风', label: '自由时间', level: 'danger',
     range: 'true / false',
-    why: '关掉就没有「没人叫也会醒一次」。这是她唯一不依赖别人开口的时间。',
+    why: '作用：自由时间机制开关。\n默认：true。影响：关闭后不触发自由时间任务。',
   },
   {
     key: 'freeTimeSlots', group: 'freetime', topic: 'D', alias: '自由时间 时段 几点 列表 加号', label: '自由时间 · 哪几段', level: 'caution',
     range: '一行一段：「07:00 60」= 起点 + 上限分钟',
-    why: '一天叫醒她几次、每次从几点开始。每段自己定起点和时长。'
-      + '⚠️ 时长是天花板不是闹钟 —— 实测她最长只跑 22 分钟（11-03 四回：14 / 22 / 6 / 15.5）。'
-      + '它的用处是写进 prompt 告诉她「这次大概多长」，不是到点掐断。'
-      + '💰 **峰谷价**：DeepSeek 工作日 09:00–12:00、14:00–18:00 是高峰价（约两倍），'
-      + '其余时间含周末全天是半价。默认那三个点就是按这个挑的 —— 改到 09:00 或 14:00 正好踩在高峰开头。'
-      + '改完要重启；重启不会重复叫（跑过的时段落了盘）。',
+    why: '作用：自由时间的时间段列表（如 09:00-10:00）。\n默认：见配置。影响：窗口外不触发。',
   },
   {
     key: 'freeTimeFocus', group: 'freetime', topic: 'D', alias: '自由时间 关注 兴趣 看什么 题材', label: '自由时间 · 让她多看什么', level: 'caution',
     range: '一行一条（空 = 不限）',
-    why: '她自由时间里可以顺着看的题材 —— 也是她会拿来跟你聊什么的方向。'
-      + '注入的措辞是「他最近爱聊这些……想找点什么看的时候可以从这儿挑；不看这些也完全行」，不是白名单：'
-      + '列成白名单她就只剩那几个题材，比不配还窄。'
-      + '多填几条让她自己挑；填你接得上话的，比填你觉得她该看的更有用。',
+    why: '作用：自由时间希望她关注的方向，一行一条。\n默认：[]。影响：留空则不给方向。',
   },
   {
     key: 'freeTimeProfile', group: 'freetime', topic: 'D', alias: '自由时间 profile 环境', label: '自由时间用哪个 profile', level: 'danger',
     range: 'profile 名字（不能带路径）',
-    why: '她醒来时用的是这份人格。指向别的 profile 等于让另一个人替她说话。',
+    why: '作用：自由时间起会话用的 profile。\n默认：空 = 同当前。影响：填错则该会话起不来。',
   },
   {
     key: 'pagePort', group: 'page', topic: 'G', alias: '观测页 端口', label: '观测页端口', level: 'caution',
     range: '1–65535',
-    why: '改了页面地址就变。1024 以下要 root。',
+    why: '作用：观测页端口。\n默认：8098。影响：端口冲突时页面不可用，不影响主流程。',
   },
   {
     key: 'servePage', group: 'switch', topic: 'G', alias: '观测页 开关', label: '开观测页', level: 'caution',
     range: 'true / false',
-    why: '关掉就没有页面了，但记账和注入照常。省一个 python 进程。',
+    why: '作用：是否启动观测页。\n默认：true。影响：关闭后无页面，也不监听端口。',
   },
   {
     key: 'indexTtlMs', group: 'inject', topic: 'C', alias: '索引 重建 缓存', label: '索引重建间隔', level: 'caution',
     range: '60000 – 604800000（毫秒）',
-    why: '太小会一直在解压会话包（吃 CPU），太大页面上的时间线会旧。默认一小时。',
+    why: '作用：事件索引重建间隔（毫秒）。\n默认：60000。影响：调小更实时、IO 更频繁。',
   },
   {
     key: 'announceOnInstall', group: 'other', topic: 'G', alias: '首次 安装 提示', label: '首次启动提示', level: 'normal',
     range: 'true / false',
-    why: '只影响第一次启动时打不打印那三条前提。',
+    why: '作用：首次启动时输出安装提示。\n默认：true。影响：仅影响日志。',
   },
   {
     key: 'sessionsRoot', group: 'ledger', topic: 'C', alias: '会话 目录', label: '会话目录', level: 'danger',
     range: '绝对路径',
-    why: '「他说的话」那一路的来源。指错了页面就只剩她自己说的话。',
+    why: '作用：会话文件目录，用于索引与审计。\n默认：自动探测。影响：错则索引为空。',
   },
   {
     key: 'auditDir', group: 'ledger', topic: 'C', alias: '审计 目录', label: '审计日志目录', level: 'danger',
     range: '绝对路径',
-    why: '工具调用与事件的来源之一。指错了可引用的 id 就少一类。',
+    why: '作用：审计日志目录（工具调用留痕）。\n默认：探测。影响：错则审计为空。',
   },
   {
     key: 'historyDir', group: 'ledger', topic: 'C', alias: '历史 对话 目录', label: '对话历史目录', level: 'danger',
     range: '绝对路径',
-    why: '第三路事件来源。指错了她「说过的话」就少一类可以引用的证据。',
+    why: '作用：对话历史目录（napcat 落盘）。\n默认：探测。影响：错则「今天聊到哪」为空。',
   },
   {
     key: 'personaHome', group: 'ledger', topic: 'A', alias: '人格 目录 人格文件', label: '人格目录', level: 'danger',
     range: '绝对路径',
-    why: '自由时间那个 profile 用的人格从这儿取。',
+    why: '作用：人格文件目录。\n默认：探测。影响：错则读不到人格补充。',
   },
   {
     key: 'allowManualMoodOverride', group: 'boundary', topic: 'E', alias: '改写 她的心 心情 暗道', label: '允许人工改写她的心情', level: 'danger',
     noInput: true,
     range: 'true / false（默认 false）',
-    why: '这是整份配置里唯一「改她的心」的开关。打开之后能用命令行把她当前的心情改写掉 —— 改写过的状态**注入里会写明是人改的**，她自己看得见。因为成本必须高，页面上不给输入框：只能命令行打开，且必须带上「我知道这不是她的感受」那个参数。',
+    why: '作用：是否允许人工改写她的心情。\n默认：false。影响：开启后改写会明确标注「不是你自己的」。',
   },
   {
     key: 'maxManualMoodOverridePerWeek', group: 'boundary', topic: 'E', alias: '改写 次数 上限 限额', label: '一周最多改写几次', level: 'danger',
     noInput: true,
     range: '0–99（默认 3）',
-    why: '超过就拒绝；要改上限得再动一次配置，那一次本身也入账。不让它变成「随便按一下就改」的东西。',
+    why: '作用：一周最多改写几次。\n默认：3。影响：超额拒绝写入。',
   },
   {
     key: 'ownerId', group: 'ledger', topic: 'C', alias: '他 主人 owner QQ号 发给谁 收件人', label: '他本人的号', level: 'caution',
     range: '一串数字（QQ 号）；留空 = 不认识他',
-    why: '用来看「最后一句是不是他在问我、我还没回」。🔴 **`say` 也读它** —— '
-      + '面板上不填，`say` 就不知道默认发给谁，只能每次 `--to` 手动指定；'
-      + '而她在短唤醒里想起一句想说的，多半不会记得写 --to。'
-      + '留空不会坏，但「她主动开口」这条路会哑一半。',
+    why: '作用：他本人的 QQ 号，用于过滤只属于他的记录。\n默认：空。影响：留空则不过滤，群消息可能混入。',
   },
   {
     key: 'msgsDir', group: 'ledger', topic: 'C', alias: '消息 账本 目录 第四路 落盘', label: '落盘消息目录', level: 'danger',
     range: '绝对路径；留空 = 不接这一路',
-    why: 'qqbot-memory 落的「一天一个文件、一行一句」的薄账。这一路的好处是 text 里是**真话**'
-      + '（带昵称前缀），而会话历史里 98.6% 的行只有时间戳噪音 —— 心情的来处多半是一句话，那一路才真有话。'
-      + '不用 qqbot 的人留空就行：空着只是少一路证据，不会坏。',
+    why: '作用：落盘消息目录。\n默认：探测。影响：错则对账无数据。',
   },
   // ── 提示词（2026-11-04）──
   // 沙耶：「把所有的配置都做成可调节选项……包括每次唤醒给她的提示词」。
@@ -664,46 +631,51 @@ export const FIELD_META = [
     key: 'promptFree', group: 'prompt', topic: 'H', alias: '提示词 自由时间 唤醒 文案 说什么', label: '自由时间 · 提示词', level: 'caution',
     long: true,
     range: '整段文本（留空 = 用内置那版）',
-    why: '自由时间叫醒她时给的那一整段话，决定这两个小时她过成什么样：'
-      + '写「做点东西」她就做东西，写「怎么过都行」她才可能什么都不干。'
-      + '⚠️ 改坏了不会报错 —— 她只是变了个人说话的调子。改完去「自由时间」那一栏看她下一次醒来什么样。'
-      + '留空不是「不叫她」：不叫她是上面那个 freeTime 开关。',
+    why: '作用：自由时间的提示词正文。\n默认：内置。影响：直接决定自由时间的产出质量。',
   },
   {
     key: 'promptPing', group: 'prompt', topic: 'H', alias: '提示词 短唤醒 文案 说什么', label: '短唤醒 · 提示词', level: 'caution',
     long: true,
     range: '整段文本（留空 = 用内置那版）',
-    why: '短唤醒时给她的那一段，决定她醒来会不会开口、开口像不像在说话。'
-      + '⚠️ 这段最容易写成「工作汇报的框」：她醒来先找手边有什么事，干完再把那件事发出去。'
-      + '内置那版刻意写了「说的时候别报工作」，删了它，她会立刻退回汇报腔。'
-      + '留空不是「不叫」：不叫她是 pingMinMinutes = 0。',
+    why: '作用：短唤醒的提示词正文。\n默认：内置。影响：直接决定唤醒时的开场行为。',
   },
   {
     key: 'promptVoiceTail', group: 'prompt', topic: 'H', alias: '提示词 主动开口 配额 别催', label: '「你能主动开口」的尾句', level: 'caution',
     long: true,
     range: '一两句话（留空 = 用内置那句）',
-    why: '「你能主动开口」那一段的最后一句话，现在写的是「但只有真有话时才算数。没话就过，空过也是对的 —— 这段不是配额」。'
-      + '🔴 这句是**防「打卡」的唯一开关**：删掉它，她会把「能主动说话」读成「每天至少说一句」，'
-      + '然后开始定时汇报。写得更软一点也行，但别改成「尽量多说两句」。',
+    why: '作用：「你能主动开口」段的尾句。\n默认：内置。影响：弱化会让主动消息变少。',
   },
   {
     key: 'promptTodayTail', group: 'prompt', topic: 'H', alias: '提示词 今天我 战报 念出来', label: '「今天我」的尾句', level: 'caution',
     long: true,
     range: '一句话（留空 = 用内置那句）',
-    why: '「今天我」那一段的最后一句，现在写的是「这些是你自己做过、说过的事。不用念给他听；'
-      + '但他说到某件你想不起来的，就照上面的路径去翻」。'
-      + '🔴 它防两件事：把这段当战报念给他听，以及把「想不起来」当成「没发生过」。'
-      + '删了它，她会逐条复述当天做了什么。',
+    why: '作用：「今天我」段的尾句。\n默认：内置。影响：控制该段的用法约束。',
   },
   {
     key: 'promptMoodBan', group: 'prompt', topic: 'H', alias: '提示词 心情 禁令 素材 说出来', label: '心情段的禁令句', level: 'caution',
     long: true,
     range: '一句话（留空 = 用内置那句）',
-    why: '心情那一段的最后一句话，现在写的是「知道就行，不必说出来 —— 它们不是你聊天的素材，'
-      + '只影响你说话的样子，不是你的话」。'
-      + '🔴 **这句是五组对照实验验出来的**：同样的心情，不加这句她会轻描淡写带一句「本鱼今天也有点凉」；'
-      + '加了才真的一个字不提。这可能是整套提示词里最不能删的一句 —— 删了，'
-      + '她就会把心情当台词念出来，而这个插件存在的意义正好相反。',
+    why: '作用：心情段的禁令句（「知道就行，不必说出来」）。\n默认：内置。影响：删除后她会把心情当聊天素材说出来（已对照验证）。',
+  },
+  {
+    key: 'capsOn', group: 'caps', topic: 'H', alias: '外部能力 总开关 api', label: '外部能力总开关', level: 'caution',
+    range: 'true / false（默认 true）',
+    why: '作用：外部能力总开关。\n默认：true。影响：关闭后 rh_call 直接拒调。',
+  },
+  {
+    key: 'capsFile', group: 'caps', topic: 'H', alias: '能力 配方 文件 路径', label: '配方文件路径', level: 'normal',
+    range: '路径（默认空 = 账本目录/capabilities.json）',
+    why: '作用：能力配方文件路径。\n默认：空 = 账本目录下 capabilities.json。影响：设置页「外部能力」有内容时以设置页为准。',
+  },
+  {
+    key: 'capsDailyLimit', group: 'caps', topic: 'H', alias: '额度 次数 上限 花钱', label: '每条能力每日上限', level: 'caution',
+    range: '整数（默认 30，0 = 不限）',
+    why: '作用：每条能力每天最多调用次数（0 = 不限）。\n默认：30。影响：生成类按次计费，这是成本闸。',
+  },
+  {
+    key: 'capsJson', group: 'caps', topic: 'H', alias: '配方 json 模型 端点 形态', label: '能力配方（整份 JSON）', level: 'caution',
+    range: '{version, items[]}',
+    why: '作用：能力配方（整份 JSON）。留空则用 capabilities.json。\n默认：空。影响：写了就以这里为准；不含密钥，可整段分享。\n修改后需重启。',
   },
 ];
 

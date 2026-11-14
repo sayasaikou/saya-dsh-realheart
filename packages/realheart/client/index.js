@@ -38,7 +38,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "boolean",
           "group": "switch",
           "level": "danger",
-          "why": "关掉之后不注入、不记账、四个工具都不注册。等同于把插件摘掉，只保留已经写下来的账。"
+          "why": "作用：插件总开关。关 = 不注入、不记账、不注册工具，已写的账保留。\n默认：true。影响：关闭后行为差异极大。"
         },
         {
           "key": "injectMood",
@@ -46,7 +46,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "boolean",
           "group": "switch",
           "level": "danger",
-          "why": "关掉之后她看不到自己的心情和没完的事 —— 她还是能记账，但不会再被影响。行为会明显不同。"
+          "why": "作用：每轮把她的状态（心情、没完的事）注入。\n默认：true。影响：关闭后她看不到自己的账，仍可写入但不受影响。"
         },
         {
           "key": "injectNow",
@@ -54,7 +54,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "boolean",
           "group": "inject",
           "level": "caution",
-          "why": "开了之后每轮多一段：「现在是 2026-11-02 13:19（周一），下午」。作用：她能看到自己带的心情是几小时前的，也能分得出「中午该不该说这个」和「深夜该不该开口」。代价：每轮多几十字，而且如果人格里已经写了作息，可能跟它打架。新机上默认不开。"
+          "why": "作用：注入当前时间（日期、星期、时段）。\n默认：true。影响：每轮多几十字；用于判断「此刻合不合适说」。"
         },
         {
           "key": "injectVoice",
@@ -62,7 +62,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "boolean",
           "group": "inject",
           "level": "caution",
-          "why": "每轮多一段：「你手上有能把话直接送出去的路…… 没话就过」。关它的后果比字面重：2026-11-03 之前她在对话里一条主动消息都没发过，而她手上明明有三条能发的路（bash / napcat_send_message / qqbot_say，会话记录里分别出现 160 / 20 / 8 次）。她自…"
+          "why": "作用：注入「你手上有主动发消息的路」。\n默认：true。影响：关闭后主动消息显著减少（实测：写出来之前几乎不发）。"
         },
         {
           "key": "voiceHints",
@@ -70,7 +70,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "list",
           "group": "inject",
           "level": "caution",
-          "why": "每一条作为一行写进上面那段。例：<你的部署根>/work/bin/say \"想说的话\" —— 用你自己的号直发私聊。为什么不做自动探测：不同机器路径不同，猜错了她会照着错路径试，比不写更坏。"
+          "why": "作用：给上面那段补具体发送命令，一行一条。\n默认：[]。影响：留空则只给意图、不给路径。不可自动探测，路径各机不同。"
         },
         {
           "key": "injectToday",
@@ -78,7 +78,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "boolean",
           "group": "inject",
           "level": "caution",
-          "why": "每轮把今天的数摆出来：自由时间做了什么、主动说过几句（带原话）、心情几条。三本账原来互不引用，她回答「今天我做了什么」只能现翻文件 —— 她的原话是「不是记得」。⚠️ 不是战报：不评价、不总结、不催她接着做。今日无记录就整段不出现。"
+          "why": "作用：注入「今天我」段（当天做过什么的摘要）。\n默认：true。影响：每轮多一段；关闭后她对今天没有连续印象。"
         },
         {
           "key": "sayLogPath",
@@ -86,7 +86,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "text",
           "group": "ledger",
           "level": "danger",
-          "why": "有的机器上 say 是个独立脚本，账落在别处（她那台在 ~/.dsh/realheart/say.jsonl，跟账本目录不是同一个）。指错了「今天我」里就看不见她说过什么 —— 而且不报错，只会少一行。"
+          "why": "作用：主动消息账本的路径，用于「今天已经发过什么」。\n默认：空 = 由 root/work 推导。影响：路径错则读不到已发记录。"
         },
         {
           "key": "pingContext",
@@ -94,7 +94,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "boolean",
           "group": "switch",
           "level": "caution",
-          "why": "开着的话，短唤醒的提示词末尾会附一句「你此刻：有点羞，也有点想笑（4/10）」，并注明这是调子不是内容。关掉就是纯文字提醒。她说不出话来的时候，多半是那条路上什么都没有 —— 这一句是给她一个「此刻」。"
+          "why": "作用：短唤醒时带上她此刻的调子。\n默认：true。影响：关闭后唤醒语气与心情脱钩。"
         },
         {
           "key": "pingMinMinutes",
@@ -110,7 +110,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "number",
           "group": "switch",
           "level": "caution",
-          "why": "实际间隔在上限和下限之间随机取 —— 定值就是闹钟，随机才像「隔一阵子」。两个数都设成一样的也行，那就变成固定间隔。"
+          "why": "作用：短唤醒最长间隔。\n默认：60。影响：必须 ≥ 最短间隔。"
         },
         {
           "key": "pingFromHour",
@@ -118,7 +118,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "number",
           "group": "switch",
           "level": "caution",
-          "why": "只在这个钟点之后才叫醒她。深夜叫醒等于深夜发消息 —— 那是打扰，不是分享。"
+          "why": "作用：短唤醒起始小时（0-23）。\n默认：8。影响：窗口外不唤醒。"
         },
         {
           "key": "pingToHour",
@@ -126,7 +126,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "number",
           "group": "switch",
           "level": "caution",
-          "why": "到这个钟点就停。⚠️ 只影响「叫醒」，不影响她自己想说话 —— 她在自由时间里想发的那条，什么时候都能发。"
+          "why": "作用：短唤醒结束小时（0-23）。\n默认：23。影响：可跨零点（如 22→6）。"
         },
         {
           "key": "toolsOff",
@@ -134,7 +134,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "list",
           "group": "switch",
           "level": "danger",
-          "why": "填进去的工具**压根不注册** —— 不是注册了再报错。区别在：出现在她的工具表里，就是告诉她“这个能用”；调了才拒，她会学绕。少一个选项，剩下的那几个她才更会用。九个工具名：rh_mood / rh_style / rh_pending / rh_control / rh_claim / rh_w…"
+          "why": "作用：按名字停用工具，停用的不注册（不是调用时报错）。\n默认：[]。影响：减少工具表噪声，提高其余工具的命中率。"
         },
         {
           "key": "root",
@@ -142,7 +142,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "text",
           "group": "ledger",
           "level": "danger",
-          "why": "产物（pieces/）和人格都在这下面。换了等于给她换一个住处 —— 旧目录里的东西不会跟过来。"
+          "why": "作用：她的根目录，其他路径默认相对它推导。\n默认：自动探测。影响：填错会导致账本/脚本全面错位。"
         },
         {
           "key": "injectBudgetChars",
@@ -166,7 +166,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "number",
           "group": "inject",
           "level": "caution",
-          "why": "比这更旧的心情不再占正文，只收成一行点名（「另外还有 2 条是 3 天前记的：……」）。⚠️ 它不是删除：那几条还在账本里，只是不挤在「你现在的状态」里 —— 呈现层的衰减，判断留给它自己。调小 = 只谈眼前；调大 = 旧情绪也一直摆着。"
+          "why": "作用：心情超过多少小时不再占正文，只收成一行点名。\n默认：24。影响：不修改账本值，只影响呈现。"
         },
         {
           "key": "bleedMinLevel",
@@ -174,7 +174,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "number",
           "group": "inject",
           "level": "caution",
-          "why": "别处记的心情（另一个会话、另一个人）要渗进这里，浓度至少得有这么高。完全不隔开不像人（人在别处被气到，回来语气会变）；全带过来又不分场合。⚠️ 带过来时会标明「不是在当前场合记的」，带不带由它自己定。调小 = 更容易串味。"
+          "why": "作用：别场合的情绪浓到几级才渗入本场合。\n默认：7。影响：调低会更易串场。"
         },
         {
           "key": "bleedMaxHours",
@@ -182,7 +182,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "number",
           "group": "inject",
           "level": "caution",
-          "why": "上面那条「多浓」的时间版：超过这个时长的别处情绪不算「此刻也被影响」，不再渗。设 0 就是完全隔开 —— 那更像两个互不相干的人，不像一个人有两段生活。"
+          "why": "作用：别场合的情绪多新才渗入（小时）。\n默认：12。影响：调大带入更久之前的状态。"
         },
         {
           "key": "stateDir",
@@ -198,7 +198,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "text",
           "group": "page",
           "level": "danger",
-          "why": "127.0.0.1 只有本机能看。改成 0.0.0.0 之后，同一网络里谁都能打开 —— 那是明文 HTTP。"
+          "why": "作用：观测页绑定地址。\n默认：127.0.0.1。影响：改 0.0.0.0 会暴露到网络，需自控访问。"
         },
         {
           "key": "freeTime",
@@ -206,7 +206,15 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "boolean",
           "group": "switch",
           "level": "danger",
-          "why": "关掉就没有「没人叫也会醒一次」。这是她唯一不依赖别人开口的时间。"
+          "why": "作用：自由时间机制开关。\n默认：true。影响：关闭后不触发自由时间任务。"
+        },
+        {
+          "key": "freeTimeSlots",
+          "label": "自由时间 · 哪几段",
+          "kind": "list",
+          "group": "freetime",
+          "level": "caution",
+          "why": "作用：自由时间的时间段列表（如 09:00-10:00）。\n默认：见配置。影响：窗口外不触发。"
         },
         {
           "key": "freeTimeFocus",
@@ -214,7 +222,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "list",
           "group": "freetime",
           "level": "caution",
-          "why": "她自由时间里可以顺着看的题材 —— 也是她会拿来跟你聊什么的方向。注入的措辞是「他最近爱聊这些……想找点什么看的时候可以从这儿挑；不看这些也完全行」，不是白名单：列成白名单她就只剩那几个题材，比不配还窄。多填几条让她自己挑；填你接得上话的，比填你觉得她该看的更有用。"
+          "why": "作用：自由时间希望她关注的方向，一行一条。\n默认：[]。影响：留空则不给方向。"
         },
         {
           "key": "freeTimeProfile",
@@ -222,7 +230,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "text",
           "group": "freetime",
           "level": "danger",
-          "why": "她醒来时用的是这份人格。指向别的 profile 等于让另一个人替她说话。"
+          "why": "作用：自由时间起会话用的 profile。\n默认：空 = 同当前。影响：填错则该会话起不来。"
         },
         {
           "key": "pagePort",
@@ -230,7 +238,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "number",
           "group": "page",
           "level": "caution",
-          "why": "改了页面地址就变。1024 以下要 root。"
+          "why": "作用：观测页端口。\n默认：8098。影响：端口冲突时页面不可用，不影响主流程。"
         },
         {
           "key": "servePage",
@@ -238,7 +246,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "boolean",
           "group": "switch",
           "level": "caution",
-          "why": "关掉就没有页面了，但记账和注入照常。省一个 python 进程。"
+          "why": "作用：是否启动观测页。\n默认：true。影响：关闭后无页面，也不监听端口。"
         },
         {
           "key": "indexTtlMs",
@@ -246,7 +254,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "number",
           "group": "inject",
           "level": "caution",
-          "why": "太小会一直在解压会话包（吃 CPU），太大页面上的时间线会旧。默认一小时。"
+          "why": "作用：事件索引重建间隔（毫秒）。\n默认：60000。影响：调小更实时、IO 更频繁。"
         },
         {
           "key": "announceOnInstall",
@@ -254,7 +262,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "boolean",
           "group": "other",
           "level": "normal",
-          "why": "只影响第一次启动时打不打印那三条前提。"
+          "why": "作用：首次启动时输出安装提示。\n默认：true。影响：仅影响日志。"
         },
         {
           "key": "sessionsRoot",
@@ -262,7 +270,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "text",
           "group": "ledger",
           "level": "danger",
-          "why": "「他说的话」那一路的来源。指错了页面就只剩她自己说的话。"
+          "why": "作用：会话文件目录，用于索引与审计。\n默认：自动探测。影响：错则索引为空。"
         },
         {
           "key": "auditDir",
@@ -270,7 +278,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "text",
           "group": "ledger",
           "level": "danger",
-          "why": "工具调用与事件的来源之一。指错了可引用的 id 就少一类。"
+          "why": "作用：审计日志目录（工具调用留痕）。\n默认：探测。影响：错则审计为空。"
         },
         {
           "key": "historyDir",
@@ -278,7 +286,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "text",
           "group": "ledger",
           "level": "danger",
-          "why": "第三路事件来源。指错了她「说过的话」就少一类可以引用的证据。"
+          "why": "作用：对话历史目录（napcat 落盘）。\n默认：探测。影响：错则「今天聊到哪」为空。"
         },
         {
           "key": "personaHome",
@@ -286,7 +294,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "text",
           "group": "ledger",
           "level": "danger",
-          "why": "自由时间那个 profile 用的人格从这儿取。"
+          "why": "作用：人格文件目录。\n默认：探测。影响：错则读不到人格补充。"
         },
         {
           "key": "allowManualMoodOverride",
@@ -294,7 +302,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "boolean",
           "group": "boundary",
           "level": "danger",
-          "why": "这是整份配置里唯一「改她的心」的开关。打开之后能用命令行把她当前的心情改写掉 —— 改写过的状态**注入里会写明是人改的**，她自己看得见。因为成本必须高，页面上不给输入框：只能命令行打开，且必须带上「我知道这不是她的感受」那个参数。"
+          "why": "作用：是否允许人工改写她的心情。\n默认：false。影响：开启后改写会明确标注「不是你自己的」。"
         },
         {
           "key": "maxManualMoodOverridePerWeek",
@@ -302,7 +310,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "number",
           "group": "boundary",
           "level": "danger",
-          "why": "超过就拒绝；要改上限得再动一次配置，那一次本身也入账。不让它变成「随便按一下就改」的东西。"
+          "why": "作用：一周最多改写几次。\n默认：3。影响：超额拒绝写入。"
         },
         {
           "key": "ownerId",
@@ -310,7 +318,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "text",
           "group": "ledger",
           "level": "caution",
-          "why": "用来看「最后一句是不是他在问我、我还没回」。🔴 **`say` 也读它** —— 面板上不填，`say` 就不知道默认发给谁，只能每次 `--to` 手动指定；而她在短唤醒里想起一句想说的，多半不会记得写 --to。留空不会坏，但「她主动开口」这条路会哑一半。"
+          "why": "作用：他本人的 QQ 号，用于过滤只属于他的记录。\n默认：空。影响：留空则不过滤，群消息可能混入。"
         },
         {
           "key": "msgsDir",
@@ -318,7 +326,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "text",
           "group": "ledger",
           "level": "danger",
-          "why": "qqbot-memory 落的「一天一个文件、一行一句」的薄账。这一路的好处是 text 里是**真话**（带昵称前缀），而会话历史里 98.6% 的行只有时间戳噪音 —— 心情的来处多半是一句话，那一路才真有话。不用 qqbot 的人留空就行：空着只是少一路证据，不会坏。"
+          "why": "作用：落盘消息目录。\n默认：探测。影响：错则对账无数据。"
         },
         {
           "key": "promptFree",
@@ -326,7 +334,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "textarea",
           "group": "prompt",
           "level": "caution",
-          "why": "自由时间叫醒她时给的那一整段话，决定这两个小时她过成什么样：写「做点东西」她就做东西，写「怎么过都行」她才可能什么都不干。⚠️ 改坏了不会报错 —— 她只是变了个人说话的调子。改完去「自由时间」那一栏看她下一次醒来什么样。留空不是「不叫她」：不叫她是上面那个 freeTime 开关。"
+          "why": "作用：自由时间的提示词正文。\n默认：内置。影响：直接决定自由时间的产出质量。"
         },
         {
           "key": "promptPing",
@@ -334,7 +342,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "textarea",
           "group": "prompt",
           "level": "caution",
-          "why": "短唤醒时给她的那一段，决定她醒来会不会开口、开口像不像在说话。⚠️ 这段最容易写成「工作汇报的框」：她醒来先找手边有什么事，干完再把那件事发出去。内置那版刻意写了「说的时候别报工作」，删了它，她会立刻退回汇报腔。留空不是「不叫」：不叫她是 pingMinMinutes = 0。"
+          "why": "作用：短唤醒的提示词正文。\n默认：内置。影响：直接决定唤醒时的开场行为。"
         },
         {
           "key": "promptVoiceTail",
@@ -342,7 +350,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "textarea",
           "group": "prompt",
           "level": "caution",
-          "why": "「你能主动开口」那一段的最后一句话，现在写的是「但只有真有话时才算数。没话就过，空过也是对的 —— 这段不是配额」。🔴 这句是**防「打卡」的唯一开关**：删掉它，她会把「能主动说话」读成「每天至少说一句」，然后开始定时汇报。写得更软一点也行，但别改成「尽量多说两句」。"
+          "why": "作用：「你能主动开口」段的尾句。\n默认：内置。影响：弱化会让主动消息变少。"
         },
         {
           "key": "promptTodayTail",
@@ -350,7 +358,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "textarea",
           "group": "prompt",
           "level": "caution",
-          "why": "「今天我」那一段的最后一句，现在写的是「这些是你自己做过、说过的事。不用念给他听；但他说到某件你想不起来的，就照上面的路径去翻」。🔴 它防两件事：把这段当战报念给他听，以及把「想不起来」当成「没发生过」。删了它，她会逐条复述当天做了什么。"
+          "why": "作用：「今天我」段的尾句。\n默认：内置。影响：控制该段的用法约束。"
         },
         {
           "key": "promptMoodBan",
@@ -358,33 +366,60 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "kind": "textarea",
           "group": "prompt",
           "level": "caution",
-          "why": "心情那一段的最后一句话，现在写的是「知道就行，不必说出来 —— 它们不是你聊天的素材，只影响你说话的样子，不是你的话」。🔴 **这句是五组对照实验验出来的**：同样的心情，不加这句她会轻描淡写带一句「本鱼今天也有点凉」；加了才真的一个字不提。这可能是整套提示词里最不能删的一句 —— 删了，她就会把…"
-        }
-        ,{
-          "key": "capsJson",
-          "label": "外部能力（整份配方 JSON）",
-          "kind": "textarea",
-          "rows": 22,
+          "why": "作用：心情段的禁令句（「知道就行，不必说出来」）。\n默认：内置。影响：删除后她会把心情当聊天素材说出来（已对照验证）。"
+        },
+        {
+          "key": "capsOn",
+          "label": "外部能力总开关",
+          "kind": "boolean",
           "group": "caps",
           "level": "caution",
-          "why": "这一栏管的是「怎么调外部 API」：一条记录 = 一个能力 + 一份配方（能力/模型/端点/调用形态/默认参数/价格/备注）。\n\n留空 = 用账本目录下的 capabilities.json。这里一旦写了内容，就以这里为准。\n\n里面不含任何 key —— 记录里只写 auth.keyRef（env:变量名 或 file:路径）。所以这整段可以直接复制给别人用。\n\n四种调用形态：openai-chat / sync-generate / async-task / raw。模板占位只认双花括号 {{prompt}}、{{id}}。\n\n改完要重启。"
+          "why": "作用：外部能力总开关。\n默认：true。影响：关闭后 rh_call 直接拒调。"
+        },
+        {
+          "key": "capsFile",
+          "label": "配方文件路径",
+          "kind": "text",
+          "group": "caps",
+          "level": "normal",
+          "why": "作用：能力配方文件路径。\n默认：空 = 账本目录下 capabilities.json。影响：设置页「外部能力」有内容时以设置页为准。"
+        },
+        {
+          "key": "capsDailyLimit",
+          "label": "每条能力每日上限",
+          "kind": "number",
+          "group": "caps",
+          "level": "caution",
+          "why": "作用：每条能力每天最多调用次数（0 = 不限）。\n默认：30。影响：生成类按次计费，这是成本闸。"
+        },
+        {
+          "key": "capsJson",
+          "label": "能力配方（整份 JSON）",
+          "kind": "textarea",
+          "group": "caps",
+          "rows": 22,
+          "level": "caution",
+          "why": "作用：能力配方（整份 JSON）。留空则用 capabilities.json。\n默认：空。影响：写了就以这里为准；不含密钥，可整段分享。\n修改后需重启。"
         }
       ]
       const GROUP_LABEL = {
-  "switch": "开关",
-  "inject": "注入",
-  "ledger": "账本与目录",
-  "page": "观测页",
-  "freetime": "自由时间",
-  "boundary": "边界",
-  "prompt": "提示词",
-  "caps": "外部能力",
-  "other": "其它"
-}
+            "switch": "开关",
+            "inject": "注入",
+            "ledger": "路径与账本",
+            "page": "观测页",
+            "freetime": "自由时间",
+            "boundary": "边界",
+            "prompt": "提示词",
+            "caps": "外部能力",
+            "other": "其它"
+      }
 
       const NS = 'realheart'
       const style = {
         wrap: { display: 'flex', flexDirection: 'column', gap: '14px', maxWidth: '620px' },
+        tabs: { display: 'flex', flexWrap: 'wrap', gap: '6px', borderBottom: '1px solid var(--dsw-alias-border-l2, #d0d0d0)', paddingBottom: '10px' },
+        tabOn: { font: 'inherit', fontSize: '12px', padding: '5px 11px', borderRadius: '6px', border: '1px solid var(--dsw-alias-border-l2, #d0d0d0)', background: 'var(--dsw-alias-bg-l1, #fff)', color: 'inherit', cursor: 'pointer', fontWeight: 600 },
+        tabOff: { font: 'inherit', fontSize: '12px', padding: '5px 11px', borderRadius: '6px', border: '1px solid transparent', background: 'transparent', color: 'var(--dsw-alias-label-tertiary, #888)', cursor: 'pointer' },
         hint: { color: 'var(--dsw-alias-label-tertiary, #888)', fontSize: '12px', margin: 0, lineHeight: 1.6, whiteSpace: 'pre-wrap' },
         row: { display: 'flex', flexDirection: 'column', gap: '4px' },
         label: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #555)' },
@@ -506,7 +541,12 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
       function RealheartSettingsPage(props) {
         const ctx = props.ctx
         const only = props.only || ''
-        const shown = only === '' ? FIELDS : FIELDS.filter((field) => field.group === only)
+        // 页内标签：组当标签页，一次只看一组。默认落第一组。
+        const groups = []
+        for (const field of FIELDS) if (groups.indexOf(field.group) < 0) groups.push(field.group)
+        const [tab, setTab] = react.useState('')
+        const activeTab = tab !== '' && groups.indexOf(tab) >= 0 ? tab : groups[0]
+        const shown = FIELDS.filter((field) => field.group === activeTab)
         const [state, setState] = react.useState({ phase: 'loading' })
         const [draft, setDraft] = react.useState({})
         const [revision, setRevision] = react.useState(undefined)
@@ -595,7 +635,15 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
             react.createElement('button', { style: style.btn, onClick: () => void load() }, '重试'))
         }
 
+        const tabBar = react.createElement('div', { style: style.tabs },
+          groups.map((g) => react.createElement('button', {
+            key: g,
+            onClick: () => setTab(g),
+            style: g === activeTab ? style.tabOn : style.tabOff,
+          }, GROUP_LABEL[g] || g)))
+
         return react.createElement('div', { style: style.wrap },
+          tabBar,
           react.createElement('p', { style: style.hint },
             '保存后写入 profile 的 cordis.patch.yml 并热重载插件。' +
             (revision === undefined ? '' : ' 当前 revision：' + revision)),
@@ -621,7 +669,6 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
        *  2026-11-14：外部能力单开一页 —— 那堆配方塞在二十来项配置中间没人找得到。 */
       function apply(ctx) {
         const Page = (props) => react.createElement(RealheartSettingsPage, Object.assign({}, props, { ctx: ctx }))
-        const CapsPage = (props) => react.createElement(RealheartSettingsPage, Object.assign({}, props, { ctx: ctx, only: 'caps' }))
         // 用 slots.inject 等宿主声明出 settings.section 之后再注册；
         // 直接 register 会在槽还不存在时抛错，导致整条客户端 entry 变成 failed。
         ctx.slots.inject('settings.section', () => ctx.slots.register({
@@ -630,12 +677,6 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           order: 62,
           label: () => 'Realheart',
         }, Page))
-        ctx.slots.inject('settings.section', () => ctx.slots.register({
-          name: 'settings.section',
-          id: 'realheart-caps',
-          order: 63,
-          label: () => '外部能力',
-        }, CapsPage))
       }
 
       exports.apply = apply
