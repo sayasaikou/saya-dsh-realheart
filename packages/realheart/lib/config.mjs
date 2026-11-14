@@ -96,6 +96,10 @@ export const DEFAULTS = {
   // 离天花板只剩 230 —— 再加两段就顶到，会开始按优先级丢段。而这一晚要加的正是
   // 「知道」和「手边一件」这类内容段，它们不该去挤心情和没完的事。
   injectBudgetChars: 2400,
+  // 2026-11-14：外部能力注册表
+  capsOn: true,
+  capsFile: '',            // 空 = $DSH_HOME/realheart/capabilities.json
+  capsDailyLimit: 30,      // 每条记录每天最多调几次（生成类按次计费，这是刹车）
   // 注入时只读心情账本的最后 N 条。账本长大了不该整份读进来（M1-4）。
   moodTailLines: 200,
   // 观测页：默认只在 127.0.0.1 上开，手机想看自己去反代或改 pageBind
@@ -248,6 +252,9 @@ export const Config = Schema.object({
   sayLogPath: Schema.string().default(DEFAULTS.sayLogPath).volatile(),
   toolsOff: Schema.array(Schema.string()).default(DEFAULTS.toolsOff).volatile(),
   injectBudgetChars: Schema.number().min(200).max(20000).default(DEFAULTS.injectBudgetChars).volatile(),
+  capsOn: Schema.boolean().default(DEFAULTS.capsOn).volatile(),
+  capsFile: Schema.string().default(DEFAULTS.capsFile).volatile(),
+  capsDailyLimit: Schema.number().min(0).max(100000).default(DEFAULTS.capsDailyLimit).volatile(),
   moodTailLines: Schema.number().min(0).max(100000).default(DEFAULTS.moodTailLines).volatile(),
   servePage: Schema.boolean().default(DEFAULTS.servePage).volatile(),
   pagePort: Schema.number().min(RANGES.pagePort.min).max(RANGES.pagePort.max).default(DEFAULTS.pagePort).volatile(),

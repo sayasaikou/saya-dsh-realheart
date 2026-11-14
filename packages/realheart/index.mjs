@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 import { appendFile, mkdir, readFile, readdir, writeFile, copyFile, chmod, open, stat, unlink } from 'node:fs/promises';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { loadRegistry, saveRegistry, runCapability, summarize, FORM_LIST, KIND_LIST } from './lib/caps.mjs';
 import { promisify } from 'node:util';
 import {
   fingerprint as pendingFp,
@@ -5319,6 +5320,234 @@ PY
           return { text: (action === 'done' ? '记下了，这件完了：' : '撂下了：') + target.what };
         }
         return { text: '（action 只有 add / step / done / drop / list。）' };
+      },
+    });
+
+    // ── 外部能力注册表（2026-11-14）
+    //
+    // 为什么要有：每接一个外部 API 都要人去读一遍文档、拼一遍请求。
+    // 这里把「怎么调」写成数据（一条记录 = 一个能力 + 一份配方），
+    // agent 读配方就能用，不用看任何平台的 readme。换机器时导出配方、各填各的 key。
+    const capsPath = () => (String(cfg.capsFile || '').trim() || join(cfg.stateDir, 'capabilities.json'));
+    const capsCallLog = () => join(cfg.stateDir, 'caps-calls.jsonl');
+    const capsMediaDir = () => join(cfg.stateDir, 'media');
+
+    async function capsRegistry() {
+      return loadRegistry(capsPath());
+    }
+
+    /** 今天这条记录被调了几次（日限额用） */
+    async function capsUsedToday(id) {
+      let raw = '';
+      try { raw = await readFile(capsCallLog(), 'utf8'); } catch { return 0; }
+      const today = new Date();
+      const stamp = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+      let n = 0;
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        let r;
+        try { r = JSON.parse(line); } catch { continue; }
+        if (r && r.id === id && String(r.at || '').startsWith(stamp) && r.ok) n += 1;
+      }
+      return n;
+    }
+
+    async function logCapsCall(row) {
+      try { await appendLedger(capsCallLog(), JSON.stringify(row) + String.fromCharCode(10), 'utf8'); } catch { /* 记账失败不影响调用 */ }
+    }
+
+    registerTool({
+      name: 'rh_capabilities',
+      description: [
+        '看/改「外部能力」那张表 —— 谁家能做什么、怎么调。',
+        '',
+        '用户让你生成图、做视频、识别图片、转语音时，**先来这里看有什么可用**，别自己猜接口。',
+        '每条记录写着：能力、模型、端点、调用形态、默认参数、备注。',
+        '',
+        'action：',
+        '  list   —— 列出来（可带 cap 过滤：image / video / vision / tts / asr / text）',
+        '  get    —— 看一条的完整配方（id）',
+        '  add    —— 加一条（record 是完整对象）',
+        '  update —— 改一条（id + record 只写要改的字段）',
+        '  remove —— 删一条（id）',
+        '  export —— 导出全部配方（不含 key）',
+        '  import —— 导入配方数组（records）',
+        '',
+        '调用形态只有四种：openai-chat / sync-generate / async-task / raw。',
+        '凭据不写在这里，写 keyRef：env:变量名 或 file:路径。',
+      ].join('\n'),
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'get', 'add', 'update', 'remove', 'export', 'import'], description: '要做什么' },
+          cap: { type: 'string', description: 'list 时按能力过滤' },
+          id: { type: 'string', description: 'get / update / remove 的记录 id' },
+          record: { type: 'object', description: 'add / update 的记录内容' },
+          records: { type: 'array', items: { type: 'object' }, description: 'import 的配方数组' },
+        },
+        required: ['action'],
+        additionalProperties: true,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: { text: { type: 'string' } },
+          required: ['text'],
+          additionalProperties: false,
+        },
+        render: (_a, v) => [{ type: 'text', text: v.text }],
+      },
+      async execute(args) {
+        const action = String(args?.action || 'list');
+        let reg;
+        try { reg = await capsRegistry(); } catch (err) { return { text: '（读不到注册表：' + (err?.message ?? err) + '）' }; }
+        const items = Array.isArray(reg.items) ? reg.items : [];
+
+        if (action === 'list') {
+          const cap = String(args?.cap || '').trim();
+          const rows = summarize(reg, cap);
+          if (!rows.length) {
+            return { text: '（还没有可用的外部能力。要加的话用 action=add，或者让沙耶在配置里填。）' };
+          }
+          const lines = rows.map((r) => '· [' + r.cap + '] ' + r.name + '（id: ' + r.id + '，模型 ' + r.model + '，形态 ' + r.form + '）' + (r.notes ? ' —— ' + r.notes : ''));
+          return { text: ['可用的外部能力：', ...lines, '', '要调就 rh_call，先看配方用 action=get。'].join('\n') };
+        }
+
+        if (action === 'get') {
+          const id = String(args?.id || '').trim();
+          const rec = items.find((x) => x && x.id === id);
+          if (!rec) return { text: '（没有这条：' + id + '）' };
+          const safe = JSON.parse(JSON.stringify(rec));
+          return { text: JSON.stringify(safe, null, 2) };
+        }
+
+        if (action === 'add') {
+          const rec = args?.record;
+          if (!rec || !rec.id) return { text: '（record 里要有 id）' };
+          if (items.some((x) => x && x.id === rec.id)) return { text: '（id 已存在：' + rec.id + '。要改用 update。）' };
+          if (rec.form && !FORM_LIST.includes(rec.form)) return { text: '（form 只能是：' + FORM_LIST.join(' / ') + '）' };
+          if (rec.cap && !KIND_LIST.includes(rec.cap)) return { text: '（cap 只能是：' + KIND_LIST.join(' / ') + '）' };
+          items.push(rec);
+          reg.items = items;
+          await saveRegistry(capsPath(), reg);
+          return { text: '加好了：' + rec.id };
+        }
+
+        if (action === 'update') {
+          const id = String(args?.id || '').trim();
+          const i = items.findIndex((x) => x && x.id === id);
+          if (i < 0) return { text: '（没有这条：' + id + '）' };
+          items[i] = { ...items[i], ...(args?.record || {}), id };
+          reg.items = items;
+          await saveRegistry(capsPath(), reg);
+          return { text: '改好了：' + id };
+        }
+
+        if (action === 'remove') {
+          const id = String(args?.id || '').trim();
+          const before = items.length;
+          reg.items = items.filter((x) => !x || x.id !== id);
+          await saveRegistry(capsPath(), reg);
+          return { text: before === reg.items.length ? '（没有这条：' + id + '）' : '删掉了：' + id };
+        }
+
+        if (action === 'export') {
+          // 导出不带 key —— 配方可以给别人的机器用，key 各填各的
+          const safe = items.map((x) => {
+            const c = JSON.parse(JSON.stringify(x));
+            if (c.auth) c.auth = { ...c.auth, keyRef: c.auth.keyRef || '' };
+            return c;
+          });
+          return { text: JSON.stringify(safe, null, 2) };
+        }
+
+        if (action === 'import') {
+          const recs = Array.isArray(args?.records) ? args.records : [];
+          if (!recs.length) return { text: '（records 是空的）' };
+          let added = 0;
+          let replaced = 0;
+          for (const r of recs) {
+            if (!r || !r.id) continue;
+            const i = items.findIndex((x) => x && x.id === r.id);
+            if (i >= 0) { items[i] = r; replaced += 1; } else { items.push(r); added += 1; }
+          }
+          reg.items = items;
+          await saveRegistry(capsPath(), reg);
+          return { text: '导入完成：新增 ' + added + '，覆盖 ' + replaced + '。key 要各机器自己填。' };
+        }
+
+        return { text: '（不认识的 action：' + action + '）' };
+      },
+    });
+
+    registerTool({
+      name: 'rh_call',
+      description: [
+        '按配方调一个外部能力：识图、生成图/视频、转语音……',
+        '',
+        '先 rh_capabilities action=list 看有什么，action=get 看那条的配方（参数名就在 defaults 里）。',
+        'params 里放这次要传的东西（prompt、size、messages…），会盖掉配方里的默认值。',
+        '',
+        '生成视频这类是异步的：第一次调会返回任务号；过几分钟带 taskId 再调一次取结果。',
+        '结果文件落在账本目录的 media/ 下，返回绝对路径 —— 想发出去就用 say --piece。',
+      ].join('\n'),
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '记录 id（rh_capabilities list 里看到的）' },
+          params: { type: 'object', description: '这次要传的参数，覆盖配方默认值' },
+          taskId: { type: 'string', description: '异步任务号：带上它就只取结果，不重新提交' },
+          waitMs: { type: 'number', description: '异步任务最多等多久（默认 45000）' },
+        },
+        required: ['id'],
+        additionalProperties: true,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: { text: { type: 'string' } },
+          required: ['text'],
+          additionalProperties: false,
+        },
+        render: (_a, v) => [{ type: 'text', text: v.text }],
+      },
+      async execute(args) {
+        if (cfg.capsOn === false) return { text: '（外部能力开关关着：capsOn=false）' };
+        const id = String(args?.id || '').trim();
+        let reg;
+        try { reg = await capsRegistry(); } catch (err) { return { text: '（读不到注册表：' + (err?.message ?? err) + '）' }; }
+        const rec = (reg.items || []).find((x) => x && x.id === id);
+        if (!rec) return { text: '（没有这条：' + id + '。用 rh_capabilities list 看有哪些。）' };
+        if (rec.enabled === false) return { text: '（这条关着：' + id + '）' };
+
+        const limit = Number(cfg.capsDailyLimit);
+        if (Number.isFinite(limit) && limit > 0) {
+          const used = await capsUsedToday(id);
+          if (used >= limit) return { text: '（今天的额度用完了：' + id + ' 已经调了 ' + used + ' 次，上限 ' + limit + '。要放宽改 capsDailyLimit。）' };
+        }
+
+        const params = (args && typeof args.params === 'object' && args.params) ? args.params : {};
+        const taskId = String(args?.taskId || '').trim();
+        const waitMs = Number(args?.waitMs) > 0 ? Number(args.waitMs) : 45000;
+        const t0 = Date.now();
+        try {
+          const runParams = taskId ? { ...params, taskId } : params;
+          const r = await runCapability(rec, runParams, {
+            outDir: capsMediaDir(),
+            timeoutMs: waitMs,
+            baseName: id + '-' + Date.now().toString(36),
+            pollTaskId: taskId || undefined,
+          });
+          await logCapsCall({ at: localStamp(), id, cap: rec.cap, model: rec.model, ok: r.ok, ms: r.meta?.ms ?? (Date.now() - t0), taskId: r.meta?.taskId || taskId || null });
+          const bits = [];
+          if (r.files && r.files.length) bits.push('好了，文件：' + r.files.join('、'));
+          if (r.text) bits.push(r.text);
+          if (r.meta?.pending) bits.push('（异步任务还没完，任务号 ' + r.meta.taskId + '，过几分钟带 taskId 再调一次）');
+          return { text: bits.join('\n') || '（调完了，没有返回内容）' };
+        } catch (err) {
+          await logCapsCall({ at: localStamp(), id, cap: rec.cap, model: rec.model, ok: false, ms: Date.now() - t0, error: String(err?.message ?? err).slice(0, 200) });
+          return { text: '（没调通：' + (err?.message ?? err) + '）' };
+        }
       },
     });
 
