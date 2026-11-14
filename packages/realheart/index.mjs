@@ -5788,23 +5788,35 @@ PY
           }
           await logCapsCall({ at: localStamp(), id, cap: rec.cap, model: rec.model, ok: r.ok, ms: r.meta?.ms ?? (Date.now() - t0), taskId: r.meta?.taskId || taskId || null });
           const bits = [];
-          if (r.files && r.files.length) bits.push('好了，文件：' + r.files.join('、'));
-          if (r.text) bits.push(r.text);
-          if (r.meta?.pending) bits.push('（异步任务还没完，任务号 ' + r.meta.taskId + '，过几分钟带 taskId 再调一次）');
-          // 2026-11-14 沙耶：生成完要告诉他这次用了什么 —— 模型、提示词、参数、花了多少。
-          // 这不是调试信息，是他判断「值不值、要不要换参数重来」的唯一依据。
-          const cost = estimateCost(rec, runParams);
-          bits.push('', '—— 这次用了：');
-          bits.push('· 模型：' + rec.model + '（' + (rec.name || rec.id) + '）');
-          if (runParams.prompt) bits.push('· 最终提示词：' + String(runParams.prompt).slice(0, 200));
-          const usedKeys = Object.keys(runParams).filter((k) => k !== 'prompt' && k !== 'messages' && k !== 'image_url');
-          if (usedKeys.length) bits.push('· 参数：' + usedKeys.map((k) => k + '=' + JSON.stringify(runParams[k])).join('，'));
-          bits.push('· 耗时：' + ((r.meta?.ms ?? (Date.now() - t0)) / 1000).toFixed(1) + ' 秒');
-          bits.push('· 花费：' + (rec.free === true ? '免费' : cost == null ? '没录价格，估算不了' : '约 ' + cost.toFixed(2) + ' 元'));
-          return { text: bits.join('\n') || '（调完了，没有返回内容）' };
+          // 2026-11-14：摘要这一段单独兜住。
+          // 起因：estimateCost 漏了 import，导致「图已经生成、文件也落盘了，但结果没交回去」，
+          // 而文案写的是「没调通」—— 对方照文案判断，又用 curl 补画了一张，白付一次钱。
+          // 所以：**结果本身永远先交回去**，摘要失败只降级成一句附注。
+          try {
+            if (r.files && r.files.length) bits.push('好了，文件：' + r.files.join('、'));
+            if (r.text) bits.push(r.text);
+            if (r.meta?.pending) bits.push('（异步任务还没完，任务号 ' + r.meta.taskId + '，过几分钟带 taskId 再调一次）');
+            // 2026-11-14 沙耶：生成完要告诉他这次用了什么 —— 模型、提示词、参数、花了多少。
+            // 这不是调试信息，是他判断「值不值、要不要换参数重来」的唯一依据。
+            const cost = estimateCost(rec, runParams);
+            bits.push('', '—— 这次用了：');
+            bits.push('· 模型：' + rec.model + '（' + (rec.name || rec.id) + '）');
+            if (runParams.prompt) bits.push('· 最终提示词：' + String(runParams.prompt).slice(0, 200));
+            const usedKeys = Object.keys(runParams).filter((k) => k !== 'prompt' && k !== 'messages' && k !== 'image_url');
+            if (usedKeys.length) bits.push('· 参数：' + usedKeys.map((k) => k + '=' + JSON.stringify(runParams[k])).join('，'));
+            bits.push('· 耗时：' + ((r.meta?.ms ?? (Date.now() - t0)) / 1000).toFixed(1) + ' 秒');
+            bits.push('· 花费：' + (rec.free === true ? '免费' : cost == null ? '没录价格，估算不了' : '约 ' + cost.toFixed(2) + ' 元'));
+            return { text: bits.join('\n') || '（调完了，没有返回内容）' };
+          } catch (sumErr) {
+            const plain = [];
+            if (r.files && r.files.length) plain.push('好了，文件：' + r.files.join('、'));
+            if (r.text) plain.push(r.text);
+            plain.push('（这次用了：' + rec.model + '；摘要没生成出来：' + String(sumErr?.message ?? sumErr).slice(0, 120) + '）');
+            return { text: plain.join('\n') };
+          }
         } catch (err) {
           await logCapsCall({ at: localStamp(), id, cap: rec.cap, model: rec.model, ok: false, ms: Date.now() - t0, error: String(err?.message ?? err).slice(0, 200) });
-          return { text: '（没调通：' + (err?.message ?? err) + '）' };
+          return { text: '（没调通：' + (err?.message ?? err) + '。如果这行提到 estimateCost / is not defined 之类，说明是插件自己的 bug，不是网络或 key 的问题。）' };
         }
       },
     });
@@ -5941,7 +5953,6 @@ PY
       + (offTools.length ? `；按配置关掉了：${offTools.join(' / ')}` : ''));
   })();
 }
-
 
 
 
