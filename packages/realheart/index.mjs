@@ -29,7 +29,7 @@ import net from 'node:net';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { appendFile, mkdir, readFile, readdir, writeFile, copyFile, chmod, open, stat, unlink, rm } from 'node:fs/promises';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, FORM_LIST, KIND_LIST } from './lib/caps.mjs';
 import { promisify } from 'node:util';
@@ -204,6 +204,37 @@ export function apply(ctx, config = {}) {
   // 所以它写自己的文件，插件启动时读进来合并。代价：必须重启才生效。
   const user = loadUserConfig(DSH_HOME);
   const cfg = { ...DEFAULTS, ...plainConfig(config), ...plainConfig(user.config) };
+
+  /**
+   * 配置缺损自愈（2026-11-14 沙耶：「某一个配置没了，自己生成一个默认值填进去」）。
+   *
+   * 只补**缺失的键**，不动已有值 —— 补错的代价比他手填一个还大。
+   * 补之前留备份，补了什么写日志。文件不存在就不建（那等于替他做决定要不要用面板）。
+   */
+  const healUserConfig = () => {
+    try {
+      if (!user.path || !existsSync(user.path)) return;
+      // 读原始文件，不用 loadUserConfig 过滤后的结果 —— 那样写回去会把不认识的键抹掉
+      let raw = {};
+      try {
+        raw = JSON.parse(readFileSync(user.path, 'utf8')) || {};
+      } catch {
+        return; // 文件本身坏了就别动它，等他自己看
+      }
+      if (typeof raw !== 'object' || Array.isArray(raw)) return;
+      const missing = Object.keys(DEFAULTS).filter((k) => !(k in raw));
+      if (!missing.length) return;
+      copyFileSync(user.path, user.path + '.bak-' + new Date().toISOString().slice(0, 16).replace(/[:T-]/g, ''));
+      const merged = { ...raw };
+      for (const k of missing) merged[k] = DEFAULTS[k];
+      writeFileSync(user.path, JSON.stringify(merged, null, 2) + '\n', 'utf8');
+      log(`配置缺损已补：少了 ${missing.length} 项（${missing.slice(0, 6).join('、')}${missing.length > 6 ? '…' : ''}），已写默认值回 config.user.json`, 'info');
+    } catch (err) {
+      log(`补默认配置没成功：${err?.message ?? err}`, 'error');
+    }
+  };
+  healUserConfig();
+
   if (cfg.enabled === false) return;
 
   // 2026-11-04：提示词也能在面板上改（沙耶：「包括每次唤醒给她的提示词」）。
@@ -895,7 +926,7 @@ const ROUND_MARK = '[本轮消息]';
    * 另外：如果上一轮她或他说的话里有明显的情绪信号，就把那句原话摆出来问
    * 「是不是这里变了」—— 有个具体的钩子，比空问一句更容易触发。
    */
-  const EMOTION_WORDS = /(累|难受|疼|软|困|烦|怕|慌|想哭|委屈|生气|心里堵|没劲|不想动|撑不住|松了口气|舒服|爽|开心|高兴|踏实|沉)/;
+  const EMOTION_WORDS = new RegExp('(' + ((Array.isArray(cfg.moodNudgeWords) && cfg.moodNudgeWords.length ? cfg.moodNudgeWords : ['累', '难受', '困', '烦']).join('|')) + ')');
   async function moodNudgeText() {
     // 2026-11-12 二改：上面那段「变了就调 rh_mood」本来就在心情段里，这里再写一遍就是重复。
     // 这一段只做一件事 —— 当她/他刚才的话里有情绪信号时，把那句原话摆出来当钩子。
@@ -3125,11 +3156,11 @@ const ROUND_MARK = '[本轮消息]';
   const summaryCache = { key: '', text: '', at: 0 };
 
   async function talkExchangeText(opts = {}) {
-    const budget = Number.isFinite(opts.budget) ? opts.budget : 380;
-    const sumBudget = Number.isFinite(opts.sumBudget) ? opts.sumBudget : 60;
+    const budget = Number.isFinite(opts.budget) ? opts.budget : (Number(cfg.talkBudgetChars) > 0 ? Number(cfg.talkBudgetChars) : 380);
+    const sumBudget = Number.isFinite(opts.sumBudget) ? opts.sumBudget : (Number(cfg.talkSummaryChars) > 0 ? Number(cfg.talkSummaryChars) : 60);
     const rounds = Number.isFinite(opts.rounds) ? opts.rounds : 2;
     const clip = Number.isFinite(opts.clip) ? opts.clip : 60;
-    const gapMs = Number.isFinite(opts.gapMinutes) ? opts.gapMinutes * 60000 : 20 * 60000;
+    const gapMs = Number.isFinite(opts.gapMinutes) ? opts.gapMinutes * 60000 : (Number(cfg.talkGapMinutes) > 0 ? Number(cfg.talkGapMinutes) : 20) * 60000;
     const dir = cfg.historyDir || join(QQROOT, 'data', 'history');
 
     // 最近动过的那个私聊会话文件
@@ -3219,9 +3250,11 @@ const ROUND_MARK = '[本轮消息]';
             messages: [
               {
                 role: 'system',
-                content: '只根据下面这段对话，用一句话说明这段在聊什么（主题和结果），不超过'
-                  + sumBudget + '个字。不要写动作描写，不要补充对话里没有的事，不要评价，不要劝，'
-                  + '不要用第二人称，不要写成任务（不要出现「他问了你什么」这类）。只给一句中文，不要前缀。',
+                content: (String(cfg.promptTalkSummary || '').trim()
+                  ? String(cfg.promptTalkSummary).replace('{字数}', String(sumBudget))
+                  : ('只根据下面这段对话，用一句话说明这段在聊什么（主题和结果），不超过'
+                    + sumBudget + '个字。不要写动作描写，不要补充对话里没有的事，不要评价，不要劝，'
+                    + '不要用第二人称，不要写成任务（不要出现「他问了你什么」这类）。只给一句中文，不要前缀。')),
               },
               { role: 'user', content: '他＝用户，我＝角色本人。\n\n' + convo },
             ],

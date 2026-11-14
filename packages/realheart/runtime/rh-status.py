@@ -1144,7 +1144,7 @@ def render_timeline():
     return '<div class="card wide"><h2>时间线</h2>%s%s</div>' % (''.join(out), note)
 
 
-PAGE = """<!doctype html><html lang="zh"><meta charset="utf-8">
+PAGE = """<!doctype html><html lang="zh"><meta charset="utf-8">%(refreshmeta)s
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
@@ -2284,7 +2284,15 @@ def build_page(flash=''):
         render_config_edit(flash),
         render_machine(),
     ])
+    # 自动刷新：配置里 pageRefreshSec，0 = 不刷新（2026-11-14）
+    _refresh = 5
+    try:
+        _refresh = int(float((_user_cfg() or {}).get('pageRefreshSec', 5)))
+    except Exception:
+        _refresh = 5
+    _refreshmeta = ('<meta http-equiv="refresh" content="%d">' % _refresh) if _refresh > 0 else ''
     return PAGE % {
+        'refreshmeta': _refreshmeta,
         'css': CSS,
         'version': esc(info['version']),
         'now': time.strftime('%m-%d %H:%M:%S'),

@@ -1,3 +1,18 @@
+## 0.3.6 — 2026-11-14
+
+- **配置页重做输入与说明**（沙耶 2026-11-14 提的整套）：
+  · 控件按类型给：开关用勾选+「开/关」文字、数值右侧带单位、数组按逗号分隔、JSON 用等宽多行。
+  · **默认只读**，进页面先看；点右上「编辑」才能改，保存按钮也只在编辑态出现。
+  · 字段下方一行小灰字 = 核心说明；右侧 ⓘ 的 tooltip = 大段来历（原生 title，悬停约 1 秒）。
+  · 数值项带**推荐值**提示（「推荐 30~60」）。
+- **FIELD_META 升级**：每条多 ui:{ unit, recommend, brief, detail }。说明拆成「核心一句 + 其余」，
+  数据源仍是一份，面板与设置页共用。
+- **配置缺损自愈**：启动时对比 config.user.json 与 DEFAULTS，缺哪个键就写回默认值（先备份 `*.bak-<时间>`），
+  只补缺的、不动已有值、不认的键原样保留。
+- **又开放 6 项**：talkGapMinutes / talkSummaryChars / talkBudgetChars / promptTalkSummary /
+  moodNudgeWords / pageRefreshSec（观测页自动刷新，0 = 不刷新）。字段总数 59。
+- 观测页按 pageRefreshSec 自动刷新。
+
 ## 0.3.5 — 2026-11-14
 
 - **修：观测页在 Windows 上整页 500。** ping.last / ping.next 写的是毫秒，而 render_ping 的 hhmm()
