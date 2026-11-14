@@ -29,7 +29,7 @@ import net from 'node:net';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { appendFile, mkdir, readFile, readdir, writeFile, copyFile, chmod, open, stat, unlink, rm } from 'node:fs/promises';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, appendFileSync, statSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, estimateCost, priceOf, pricingTable, PRICING_ASOF, FORM_LIST, KIND_LIST } from './lib/caps.mjs';
 import { promisify } from 'node:util';
@@ -213,7 +213,12 @@ export function apply(ctx, config = {}) {
    */
   const healUserConfig = () => {
     try {
-      if (!user.path || !existsSync(user.path)) return;
+      if (!user.path || !existsSync(user.path)) {
+        // 没这个文件 = 这台机器没走面板，配置在 profile 的 YAML 里 —— 不是坏事，跳过即可。
+        // 但要**说出来**：不然验收时只看到「没补也没日志」，会当成功能坏了。
+        log('config.user.json 不存在（这台用 profile 的 YAML 管配置）—— 跳过配置自愈');
+        return;
+      }
       // 读原始文件，不用 loadUserConfig 过滤后的结果 —— 那样写回去会把不认识的键抹掉
       let raw = {};
       try {
@@ -224,7 +229,9 @@ export function apply(ctx, config = {}) {
       if (typeof raw !== 'object' || Array.isArray(raw)) return;
       const missing = Object.keys(DEFAULTS).filter((k) => !(k in raw));
       if (!missing.length) return;
-      copyFileSync(user.path, user.path + '.bak-' + new Date().toISOString().slice(0, 16).replace(/[:T-]/g, ''));
+      // 备份名带来源标记：heal- 开头的是自愈写的，跟面板保存的 .bak-<时间> 分开，
+      // 免得事后分不清「这份备份是谁动的」。
+      copyFileSync(user.path, user.path + '.bak-heal-' + new Date().toISOString().slice(0, 16).replace(/[:T-]/g, ''));
       const merged = { ...raw };
       for (const k of missing) merged[k] = DEFAULTS[k];
       writeFileSync(user.path, JSON.stringify(merged, null, 2) + '\n', 'utf8');
@@ -305,6 +312,11 @@ export function apply(ctx, config = {}) {
     throw new Error(`realheart 配置有 ${problems.length} 处不对（详见日志），拒绝启动`);
   }
 
+  // 2026-11-14：日志落盘。
+  // 起因：新机验收时判据写的是「日志里出现 xxx 已注册」，而 ctx.logger 不落盘 ——
+  // 那条日志在文件里根本找不到，判据失效，只能靠猜。
+  // 现在每次 log 除了交给 ctx.logger，也追加一份到 realheart/plugin.log（超 1MB 轮转一次）。
+  const logFile = () => join(DSH_HOME, 'realheart', 'plugin.log');
   const log = (msg, level = 'info') => {
     const line = `[realheart] ${msg}`;
     try {
@@ -314,6 +326,14 @@ export function apply(ctx, config = {}) {
     } catch {
       /* 日志不许把主流程弄崩 */
     }
+    try {
+      const p = logFile();
+      mkdirSync(dirname(p), { recursive: true });
+      try {
+        if (statSync(p).size > 1024 * 1024) renameSync(p, p + '.1');
+      } catch { /* 文件还不存在，正常 */ }
+      appendFileSync(p, new Date().toISOString() + ' [' + level + '] ' + msg + String.fromCharCode(10), 'utf8');
+    } catch { /* 写不进就算了，不能因为日志把主流程弄崩 */ }
   };
   // 配置缺损自愈：挪到这里，是因为它用 log，而 log 在上面才刚定义（TDZ）。
   try { healUserConfig(); } catch (err) { log('补默认配置时出错：' + (err?.message ?? err), 'error'); }
@@ -2705,6 +2725,21 @@ const ROUND_MARK = '[本轮消息]';
           /* pkill 没匹配到会返回 1：这就是「上次没有在跑的」，正常 */
         }
       }
+
+      // 2026-11-14：先看「是不是自己已经在跑了」。
+      // 起因：新机上同时有 23828 和 2948 两个 rh-status.py。
+      // Windows 上没有 pkill，上面那段清理根本不执行，于是每次启动都可能再起一个。
+      // 判据：pid 文件里的号还活着 + 端口有人听 → 那就是我们的，直接复用，不再 spawn。
+      try {
+        const pidFile0 = join(DSH_HOME, 'realheart', 'rh-status.pid');
+        let oldPid = 0;
+        try { oldPid = Number(String(await readFile(pidFile0, 'utf8')).trim()); } catch { oldPid = 0; }
+        let oldAlive = false;
+        if (oldPid > 0) { try { process.kill(oldPid, 0); oldAlive = true; } catch { oldAlive = false; } }
+        if (oldAlive && (await portBusy(cfg.pagePort))) {
+          return `http://127.0.0.1:${cfg.pagePort}/${secret}/`;
+        }
+      } catch { /* 查不了就按原路走 */ }
 
       // 端口上已经有别的东西在听 —— 那是冲突，不是“我们的服务没起”
       if (await portBusy(cfg.pagePort)) {
