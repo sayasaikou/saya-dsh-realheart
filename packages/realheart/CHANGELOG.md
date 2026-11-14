@@ -1,3 +1,12 @@
+## 0.3.8 — 2026-11-14
+
+- **注入拼装改成并发**：原来 15 段（admit / linger / reopen / hold / recall / situation / work / days /
+  today / own / exp / claim / view / where / mood-nudge）是一次一次 `await` 的顺序 IO，
+  实测整段 112~223ms，大头都在这串等待上。现在一次 `Promise.all` 并发取，取完按原代码顺序摆回去
+  （顺序不能按完成先后，否则注入里段落顺序每轮都在变）。
+- 并发耗时超过 30ms 记一行，便于继续观察。
+- 语义没变：每段的取数、失败处理（noteInjectProblem）、裁剪优先级、边界句都没动。
+
 ## 0.3.7 — 2026-11-14
 
 - **短唤醒加了一层「额外抖动」**：`pingJitterMinutes`（±分钟，默认 0）。原有的 min~max 均匀随机**没动**，

@@ -2249,104 +2249,113 @@ const ROUND_MARK = '[本轮消息]';
         }
         const mood = await moodSectionText({ sessionId: sessionIdOfAssembleContext(_context) });
         if (mood) parts.push(sec('realheart:mood', 900, mood));
-        try {
+        // 2026-11-14：这十几段彼此不依赖，改成并发取 —— 原来一次一次 await，
+        // 实测整段拼装 112~223ms，其中大头就耗在这串顺序 IO 上。
+        const __seq = [];
+        __seq.push((async (i) => { try {
           const nudge = await moodNudgeText();
-          if (nudge) parts.push(sec('realheart:mood-nudge', 899, nudge));
+          if (nudge) return { i, part: sec('realheart:mood-nudge', 899, nudge) };
         } catch (err) {
-          await noteInjectProblem('mood-nudge', err);
-        }
-        try {
+          await noteInjectProblem('realheart:mood-nudge', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const admit = await admitSectionText();
-          if (admit) parts.push(sec('realheart:admit', 906, admit));
+          if (admit) return { i, part: sec('realheart:admit', 906, admit) };
         } catch (err) {
-          await noteInjectProblem('admit', err);
-        }
-        try {
+          await noteInjectProblem('realheart:admit', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const linger = await lingerSectionText();
-          if (linger) parts.push(sec('realheart:linger', 912, linger));
+          if (linger) return { i, part: sec('realheart:linger', 912, linger) };
         } catch (err) {
-          await noteInjectProblem('linger', err);
-        }
-        try {
+          await noteInjectProblem('realheart:linger', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const reopen = await reopenSectionText();
-          if (reopen) parts.push(sec('realheart:reopen', 913, reopen));
+          if (reopen) return { i, part: sec('realheart:reopen', 913, reopen) };
         } catch (err) {
-          await noteInjectProblem('reopen', err);
-        }
-        try {
+          await noteInjectProblem('realheart:reopen', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const hold = await holdSectionText();
-          if (hold) parts.push(sec('realheart:hold', 911, hold));
+          if (hold) return { i, part: sec('realheart:hold', 911, hold) };
         } catch (err) {
-          await noteInjectProblem('hold', err);
-        }
-        try {
+          await noteInjectProblem('realheart:hold', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const recall = await recallSectionText();
-          if (recall) parts.push(sec('realheart:recall', 910, recall));
+          if (recall) return { i, part: sec('realheart:recall', 910, recall) };
         } catch (err) {
-          await noteInjectProblem('recall', err);
-        }
-        try {
+          await noteInjectProblem('realheart:recall', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const situ = await situationSectionText();
-          if (situ) parts.push(sec('realheart:situation', 909, situ));
+          if (situ) return { i, part: sec('realheart:situation', 909, situ) };
         } catch (err) {
-          await noteInjectProblem('situation', err);
-        }
-        try {
+          await noteInjectProblem('realheart:situation', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const work = await workSectionText();
-          if (work) parts.push(sec('realheart:work', 908, work));
+          if (work) return { i, part: sec('realheart:work', 908, work) };
         } catch (err) {
-          await noteInjectProblem('work', err);
-        }
-        try {
+          await noteInjectProblem('realheart:work', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const days = await recentDaysText();
-          if (days) parts.push(sec('realheart:days', 909, days));
+          if (days) return { i, part: sec('realheart:days', 909, days) };
         } catch (err) {
-          await noteInjectProblem('days', err);
-        }
-        try {
+          await noteInjectProblem('realheart:days', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const today = await todaySectionText();
-          if (today) parts.push(sec('realheart:today', 905, today));
+          if (today) return { i, part: sec('realheart:today', 905, today) };
         } catch (err) {
-          await noteInjectProblem('today', err);
-        }
+          await noteInjectProblem('realheart:today', err);
+        } return null; })(__seq.length));
         try {
           const voice = voiceSectionText();
           if (voice) parts.push(sec('realheart:voice', 894, voice));
         } catch (err) {
           await noteInjectProblem('voice', err);
         }
-        try {
+        __seq.push((async (i) => { try {
           const own = await ownJudgementText();
-          if (own) parts.push(sec('realheart:own', 914, own));
+          if (own) return { i, part: sec('realheart:own', 914, own) };
         } catch (err) {
-          await noteInjectProblem('own', err);
-        }
-        try {
+          await noteInjectProblem('realheart:own', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const exp = await recentExperienceText();
-          if (exp) parts.push(sec('realheart:exp', 916, exp));
+          if (exp) return { i, part: sec('realheart:exp', 916, exp) };
         } catch (err) {
-          await noteInjectProblem('exp', err);
-        }
-        try {
+          await noteInjectProblem('realheart:exp', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const claim = await claimSectionText();
-          if (claim) parts.push(sec('realheart:claim', 915, claim));
+          if (claim) return { i, part: sec('realheart:claim', 915, claim) };
         } catch (err) {
-          await noteInjectProblem('claim', err);
-        }
-        try {
+          await noteInjectProblem('realheart:claim', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const view = await viewSectionText();
-          if (view) parts.push(sec('realheart:view', 908, view));
+          if (view) return { i, part: sec('realheart:view', 908, view) };
         } catch (err) {
-          await noteInjectProblem('view', err);
-        }
-        try {
+          await noteInjectProblem('realheart:view', err);
+        } return null; })(__seq.length));
+        __seq.push((async (i) => { try {
           const where = await whereSectionText();
-          if (where) parts.push(sec('realheart:where', 907, where));
+          if (where) return { i, part: sec('realheart:where', 907, where) };
         } catch (err) {
-          await noteInjectProblem('where', err);
-        }
+          await noteInjectProblem('realheart:where', err);
+        } return null; })(__seq.length));
         // 顺序（2026-11-02 沙耶）：先「怎么说」（style），再「因为什么」（mood）。
         // 以前是反的 —— 状态先出现，风格变成补充，读起来像“顺便提一句”。
+        // 并发取完，按原来的代码顺序摆回去（不是按完成先后 —— 顺序会变）
+        const __secT0 = Date.now();
+        for (const r of (await Promise.all(__seq)).filter(Boolean).sort((a, b) => a.i - b.i)) parts.push(r.part);
+        const __secMs = Date.now() - __secT0;
+        if (__secMs > 30) log('注入：15 段并发取了 ' + __secMs + 'ms', 'info');
+
         const style = await styleSectionText();
         if (style) parts.push(sec('realheart:style', 895, style));
         const pending = await pendingChangeText();
