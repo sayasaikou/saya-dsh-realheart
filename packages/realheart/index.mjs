@@ -233,7 +233,8 @@ export function apply(ctx, config = {}) {
       log(`补默认配置没成功：${err?.message ?? err}`, 'error');
     }
   };
-  healUserConfig();
+  // 2026-11-14：这里原来直接调 healUserConfig()，但它里面用 log —— 而 log 是后面才定义的 const，
+  // 于是整个 apply 抛 ReferenceError、插件根本没加载（19:46 那次事故）。挪到 log 定义之后去调。
 
   if (cfg.enabled === false) return;
 
@@ -314,6 +315,8 @@ export function apply(ctx, config = {}) {
       /* 日志不许把主流程弄崩 */
     }
   };
+  // 配置缺损自愈：挪到这里，是因为它用 log，而 log 在上面才刚定义（TDZ）。
+  try { healUserConfig(); } catch (err) { log('补默认配置时出错：' + (err?.message ?? err), 'error'); }
 
   const moodFile = () => join(cfg.stateDir, 'mood.jsonl');
 
@@ -2372,7 +2375,16 @@ const ROUND_MARK = '[本轮消息]';
         }
         try {
           const ttext = await timeSenseText();
-          if (ttext) parts.push(sec('realheart:time', 906, ttext));
+          try {
+          const openTasks = await openCapsTasks();
+          if (openTasks.length) {
+            const lines = openTasks.slice(-3).map((t) => '· ' + t.id + '（任务号 ' + t.taskId + '）'
+              + (t.prompt ? '：' + String(t.prompt).slice(0, 40) : ''));
+            parts.push(sec('realheart:caps-tasks', 917, ['【还没取回来的生成任务】',
+              ...lines, '（要就带 taskId 再调一次 rh_call；不要了就不用管。）'].join('\n')));
+          }
+        } catch { /* 读不到账本就不提 */ }
+        if (ttext) parts.push(sec('realheart:time', 906, ttext));
         } catch (err) {
           await noteInjectProblem('time', err);
         }
@@ -3776,6 +3788,13 @@ const ROUND_MARK = '[本轮消息]';
     const max = maxRaw > 0 ? Math.max(maxRaw, min) : min;
     const { from, to } = pingWindow();
     const gapMs = (a, b) => (Math.floor(Math.random() * (b - a + 1)) + a) * 60000;
+    // 2026-11-14：额外抖动。**不改 min~max 那段均匀随机**，只在结果上叠 ±N 分钟。
+    const withJitter = (ms) => {
+      const j = Number(cfg.pingJitterMinutes);
+      if (!Number.isFinite(j) || j <= 0) return ms;
+      const d = (Math.random() * 2 - 1) * j * 60000;
+      return Math.max(60000, Math.round(ms + d));
+    };
 
     const arm = (at) => {
       if (pingTimer) clearTimeout(pingTimer);
@@ -3836,7 +3855,7 @@ const ROUND_MARK = '[本轮消息]';
           if (m2 > 0) {
             const x2 = Math.max(Number(cfg.pingMaxMinutes) || 0, m2);
             const w = pingWindow();
-            arm(snapIntoPingWindow(Date.now() + gapMs(m2, x2), w.from, w.to));
+            arm(snapIntoPingWindow(withJitter(Date.now() + gapMs(m2, x2)), w.from, w.to));
           }
         }
       }
@@ -3851,8 +3870,8 @@ const ROUND_MARK = '[本轮消息]';
       let last = await readPingLast();
       // last 将来时（时钟被调过）就当没有 —— 不能因此一直不叫。
       if (!last || last > now) last = now;
-      nextAt = snapIntoPingWindow(last + gapMs(min, max), from, to);
-      if (nextAt <= now) nextAt = snapIntoPingWindow(now + gapMs(min, max), from, to);
+      nextAt = snapIntoPingWindow(withJitter(last + gapMs(min, max)), from, to);
+      if (nextAt <= now) nextAt = snapIntoPingWindow(withJitter(now + gapMs(min, max)), from, to);
     }
     arm(nextAt);
   }
@@ -5450,6 +5469,28 @@ PY
     const capsPath = () => (String(cfg.capsFile || '').trim() || join(cfg.stateDir, 'capabilities.json'));
     const capsCallLog = () => join(cfg.stateDir, 'caps-calls.jsonl');
     const capsMediaDir = () => join(cfg.stateDir, 'media');
+    const capsTasksFile = () => join(cfg.stateDir, 'caps-tasks.jsonl');
+
+    /** 异步任务账本：提交时记一行，取回成功/失败时记一行 done。 */
+    async function logCapsTask(row) {
+      try { await appendLedger(capsTasksFile(), JSON.stringify(row) + String.fromCharCode(10), 'utf8'); } catch { /* 记账失败不影响调用 */ }
+    }
+
+    /** 还没取回的任务（按 taskId 去重，后写的 done 覆盖前的 open）。 */
+    async function openCapsTasks() {
+      let raw = '';
+      try { raw = await readFile(capsTasksFile(), 'utf8'); } catch { return []; }
+      const map = new Map();
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        let r;
+        try { r = JSON.parse(line); } catch { continue; }
+        if (!r || !r.taskId) continue;
+        if (r.done) map.delete(r.taskId);
+        else map.set(r.taskId, r);
+      }
+      return [...map.values()];
+    }
 
     async function capsRegistry() {
       // 2026-11-14：设置页「外部能力」里那份 JSON 优先（它能被宿主持久化），
@@ -5686,6 +5727,7 @@ PY
         const keepDays = Number(cfg.capsMediaKeepDays);
         if (Number.isFinite(keepDays) && keepDays > 0) {
           try {
+            // 注意：产物写在按天分的子目录里，所以这里能真的扫到东西（之前写在同一层，清理永远无效）
             const root = capsMediaDir();
             const cut = Date.now() - keepDays * 86400000;
             for (const d of await readdir(root)) {
@@ -5705,7 +5747,7 @@ PY
           for (let attempt = 0; ; attempt += 1) {
             try {
               r = await runCapability(rec, runParams, {
-                outDir: capsMediaDir(),
+                outDir: join(capsMediaDir(), new Date().toISOString().slice(0, 10)),
                 timeoutMs: waitMs,
                 pollMs: Number(cfg.capsPollMs) > 0 ? Number(cfg.capsPollMs) : undefined,
                 baseName: id + '-' + Date.now().toString(36),
@@ -5718,6 +5760,11 @@ PY
               if (attempt >= retryN || /HTTP 4\d\d/.test(em)) throw err;
               await new Promise((res) => setTimeout(res, 800));
             }
+          }
+          if (r.meta?.pending && r.meta.taskId) {
+            await logCapsTask({ at: localStamp(), id, taskId: r.meta.taskId, prompt: String(runParams.prompt || '').slice(0, 120) });
+          } else if (taskId) {
+            await logCapsTask({ at: localStamp(), id, taskId, done: true, ok: r.ok });
           }
           await logCapsCall({ at: localStamp(), id, cap: rec.cap, model: rec.model, ok: r.ok, ms: r.meta?.ms ?? (Date.now() - t0), taskId: r.meta?.taskId || taskId || null });
           const bits = [];

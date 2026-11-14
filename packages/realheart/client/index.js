@@ -208,7 +208,10 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           "brief": "短唤醒时拿这些词去最近几条消息里找「状态是不是变了」。", "detail": "默认：22 个常用词。影响：词太少抓不到钩子，太多会误报。" },
         { "key": "pageRefreshSec", "label": "观测页自动刷新（秒）", "kind": "number", "group": "page",
           "level": "normal", "unit": "秒", "recommend": "推荐 5",
-          "brief": "观测页多久自动刷一次。", "detail": "默认：5 秒。影响：调 0 就静止，得手动刷。" }
+          "brief": "观测页多久自动刷一次。", "detail": "默认：5 秒。影响：调 0 就静止，得手动刷。" },
+        { "key": "pingJitterMinutes", "label": "短唤醒 · 额外抖动（±分钟）", "kind": "number", "group": "switch",
+          "level": "normal", "unit": "分钟", "recommend": "推荐 0~10",
+          "brief": "在 min~max 随机的间隔上再叠一层 ±N 分钟。", "detail": "min~max 的随机决定「这次多久以后」；抖动是防止同样的配置长期形成可预期的节奏。默认 0 = 只用 min~max。" }
       ]
       const GROUP_LABEL = {
             "switch": "开关",

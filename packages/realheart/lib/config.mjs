@@ -188,6 +188,10 @@ export const DEFAULTS = {
   // 装插件的人第一次开，一天二十来次模型调用会先把他吓一跳 —— 而「她偶尔主动找你」
   // 和「她一小时来一次」在读的人眼里完全是两种东西。默认宁可稀一点：稀了才好往密调。
   // ⚠️ 成本照旧写在面板上：一次完整的模型调用带注入。
+  // 每次唤醒在 min~max 之间随机之后再叠一层小抖动（±N 分钟）。0 = 不叠。
+  // 为什么还要这一层：min~max 的随机是「这一次多久以后」，而抖动是让同样的配置
+  // 不要形成固定节奏 —— 30~60 均匀随机会在整点上扎堆（取整到分钟），长时间看仍有谱。
+  pingJitterMinutes: 0,
   pingMinMinutes: 60,
   pingMaxMinutes: 120,
   pingFromHour: 9,
@@ -302,6 +306,7 @@ export const Config = Schema.object({
   })).default(DEFAULTS.freeTimeSlots),
   freeTimeFocus: Schema.array(Schema.string()).default(DEFAULTS.freeTimeFocus).volatile(),
   pingContext: Schema.boolean().default(DEFAULTS.pingContext).volatile(),
+  pingJitterMinutes: Schema.number().min(0).max(60).default(DEFAULTS.pingJitterMinutes).volatile(),
   pingMinMinutes: Schema.number().min(0).max(1440).default(DEFAULTS.pingMinMinutes).volatile(),
   pingMaxMinutes: Schema.number().min(0).max(1440).default(DEFAULTS.pingMaxMinutes).volatile(),
   pingFromHour: Schema.number().min(0).max(23).default(DEFAULTS.pingFromHour).volatile(),
@@ -824,6 +829,12 @@ export const FIELD_META = [
     range: '0-600（默认 5，0 = 不刷新）',
     why: '作用：观测页多久自动刷一次。\n默认：5 秒。影响：调 0 就静止，得手动刷。',
     ui: { unit: '秒', recommend: '推荐 5', brief: '观测页多久自动刷一次。', detail: '默认：5 秒。影响：调 0 就静止，得手动刷。' },
+  },
+  {
+    key: 'pingJitterMinutes', group: 'switch', topic: 'D', alias: '抖动 随机 偏移', label: '短唤醒 · 额外抖动（±分钟）', level: 'normal',
+    range: '0-60（默认 0）',
+    why: '作用：在 min~max 随机出的间隔上再叠一层 ±N 分钟的抖动。\n默认：0（不叠）。影响：0 时仍是 min~max 均匀随机；设了小值可以让节奏更不成形。',
+    ui: { unit: '分钟', recommend: '推荐 0~10', brief: '在 min~max 随机的间隔上再叠一层 ±N 分钟。', detail: 'min~max 的随机决定「这次多久以后」；抖动是防止同样的配置长期形成可预期的节奏。默认 0 = 只用 min~max。' },
   },
 ];
 
