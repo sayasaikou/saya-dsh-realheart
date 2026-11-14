@@ -253,6 +253,14 @@ export async function saveRegistry(file, reg) {
   await writeFile(file, JSON.stringify({ version: 1, items: reg.items || [] }, null, 2) + '\n', 'utf8');
 }
 
+/** 按成本挑：cost 小的优先（同成本按列表顺序）。没写 cost 的当 5。 */
+export function cheapestFor(reg, cap) {
+  const items = (reg.items || []).filter((x) => x && x.enabled !== false && (!cap || String(x.cap) === String(cap)));
+  if (!items.length) return null;
+  const cost = (x) => (Number.isFinite(Number(x.cost)) ? Number(x.cost) : 5);
+  return items.slice().sort((a, b) => cost(a) - cost(b))[0];
+}
+
 /** 按能力筛（给 agent 看的摘要用） */
 export function summarize(reg, cap) {
   const items = (reg.items || []).filter((x) => x && x.enabled !== false);

@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url';
 import { appendFile, mkdir, readFile, readdir, writeFile, copyFile, chmod, open, stat, unlink } from 'node:fs/promises';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { loadRegistry, saveRegistry, runCapability, summarize, FORM_LIST, KIND_LIST } from './lib/caps.mjs';
+import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, FORM_LIST, KIND_LIST } from './lib/caps.mjs';
 import { promisify } from 'node:util';
 import {
   fingerprint as pendingFp,
@@ -2569,6 +2569,8 @@ const ROUND_MARK = '[本轮消息]';
         // 面板要写的那个文件 —— 由插件指定路径，别让 Python 自己猜。
         // 之前两边各写一份路径，面板写进 runtime/、插件读 realheart/，改了永远不生效。
         userConfig: join(DSH_HOME, 'realheart', 'config.user.json'),
+        // 2026-11-14：面板要能找到插件目录（它自己是从 stateDir/runtime 跑的，"lib" 不在那儿）
+        pluginRoot: dirname(fileURLToPath(import.meta.url)),
       }, null, 2), 'utf8');
       await chmod(cfgPath, 0o600);
     } catch (err) {
@@ -4758,6 +4760,35 @@ PY
           };
         }
 
+        if (action === 'plan') {
+          // 2026-11-14 沙耶：用户只说「生成一张 xx 图片」这种，别直接开跑。
+          // 先问清楚；他答了之后，还缺的那部分用「最便宜的那条 + 默认参数 + 自己把提示词补完整」补齐。
+          const cap = String(args?.cap || '').trim();
+          if (!cap) return { text: '（plan 要给 cap：image / video / vision / tts / asr）' };
+          const rec = cheapestFor(reg, cap);
+          if (!rec) return { text: '（没有可用的 ' + cap + ' 能力，先在面板上加一条。）' };
+          const ASK = {
+            image: ['画什么（主体、场景、风格）', '尺寸或比例', '要不要一次多张'],
+            video: ['拍什么（主体 + 动作 + 场景）', '多长（几秒）', '分辨率、要不要声音'],
+            vision: ['看图里哪一点（整体描述 / 找细节 / 读文字）'],
+            tts: ['念什么内容', '什么声音、什么语气'],
+            asr: ['这是什么语言的录音', '要不要顺带整理成段落'],
+          };
+          const qs = ASK[cap] || ['还有什么要求'];
+          const lines = [
+            '这条请求信息不够，**先问再动手**。要问的：',
+            ...qs.map((q, i) => (i + 1) + '. ' + q),
+            '',
+            '他答完之后，没提到的部分这样补：',
+            '· 模型：用最便宜的那条 —— ' + (rec.name || rec.id) + '（id: ' + rec.id + '，模型 ' + rec.model + '）',
+            '· 参数：用它的默认值 ' + JSON.stringify(rec.defaults || {}),
+            '· 提示词：你自己把他的话补成完整描述（主体 + 动作 + 场景 + 风格），别只把他的原话丢进去',
+            '· 补完直接 rh_call，别再回来问第二遍',
+          ];
+          if (rec.notes) lines.push('', '（这条的备注：' + rec.notes + '）');
+          return { text: lines.join('\n') };
+        }
+
         if (action === 'add') {
           // 心情检查点（2026-11-02）：只拦「多记一件事」，不拦读、不拦收拾。
           const gate = await moodCheckGate();
@@ -5379,7 +5410,7 @@ PY
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['list', 'get', 'add', 'update', 'remove', 'export', 'import'], description: '要做什么' },
+          action: { type: 'string', enum: ['list', 'get', 'plan', 'add', 'update', 'remove', 'export', 'import'], description: '要做什么' },
           cap: { type: 'string', description: 'list 时按能力过滤' },
           id: { type: 'string', description: 'get / update / remove 的记录 id' },
           record: { type: 'object', description: 'add / update 的记录内容' },
@@ -5489,6 +5520,10 @@ PY
         'params 里放这次要传的东西（prompt、size、messages…），会盖掉配方里的默认值。',
         '',
         '生成视频这类是异步的：第一次调会返回任务号；过几分钟带 taskId 再调一次取结果。',
+        '',
+        '**用户的话很含糊时（「生成一张猫的图片」），别直接跑。** 先用 rh_capabilities action=plan 拿问题清单，',
+        '问清楚再动手。他答完，剩下没说到的用「最便宜的那条 + 默认参数 + 你自己把提示词补成完整描述」来配，',
+        '然后一次调完，别回来问第二遍。',
         '结果文件落在账本目录的 media/ 下，返回绝对路径 —— 想发出去就用 say --piece。',
       ].join('\n'),
       parameters: {
@@ -5527,6 +5562,24 @@ PY
         }
 
         const params = (args && typeof args.params === 'object' && args.params) ? args.params : {};
+
+        // 2026-11-14：模糊请求不硬跑。生图/生视频没给够提示词（<6 字）就先问，除非显式 force。
+        const needPrompt = ['image', 'video'].includes(String(rec.cap || ''));
+        const rough = String(params.prompt || params.text || '').trim();
+        const force = args?.force === true;
+        if (needPrompt && !force && rough.length < 6) {
+          const ASK2 = {
+            image: ['画什么（主体、场景、风格）', '尺寸或比例', '要不要一次多张'],
+            video: ['拍什么（主体 + 动作 + 场景）', '多长（几秒）', '分辨率、要不要声音'],
+          };
+          const qs = ASK2[String(rec.cap)] || ['具体要什么'];
+          return { text: [
+            '（这条请求太模糊，先别跑。问清楚这几件：',
+            ...qs.map((q, i) => '  ' + (i + 1) + '. ' + q),
+            '', '他答完，缺的自己补：最便宜的模型 + 默认参数 + 把他的话润色成完整描述，然后一次调完。',
+            '（确定要按现在这样跑，加 force: true。）',
+          ].join('\n') };
+        }
         const taskId = String(args?.taskId || '').trim();
         const waitMs = Number(args?.waitMs) > 0 ? Number(args.waitMs) : 45000;
         const t0 = Date.now();

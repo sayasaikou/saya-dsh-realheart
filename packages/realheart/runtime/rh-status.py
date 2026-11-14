@@ -21,6 +21,7 @@ import html
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -1647,7 +1648,7 @@ INJECT_MAP = [
     ('【今天我】', 'todaySectionText', '今天做了什么、说过什么、心情几条。尾句已经上配置页（promptTodayTail）。'),
     ('【你能主动开口】', 'voiceSectionText', '三条能主动发话的路。尾句已经上配置页（promptVoiceTail）。'),
     ('【上次没弄完的一件事】', 'buildFreePrompt', '自由时间开头摆出来的那件没完的事。'),
-    ('【今天聊到过的】', 'recentTalkText', '他今天最后说的三句 —— 让自由时间的她知道这边走到哪了。'),
+    ('【今天聊到过的】', 'recentTalkText', '今天最后几轮来回（他一句我一句，带时间跨度）—— 让自由时间的她知道这边走到哪了。'),
     ('【你留下的话】', 'keptList', '她自己写下来、想留着的句子。'),
     ('【你手边的事】', 'workSectionText', '她手上没做完的活。'),
     ('【这几天的样子】', 'recentDaysText', '最近几天的流水，按天折起来。'),
@@ -2094,6 +2095,153 @@ def apply_config_post(form):
     return True, '已保存 %d 项，重启后生效' % len(changed)
 
 
+
+# ---------------------------------------------------------------- 外部能力（2026-11-14）
+#
+# 配方和 key 分开放：这里编辑的是「怎么调」（端点/模型/形态/默认参数），
+# key 不在这份文件里 —— 记录里只有 auth.keyRef（env:名字 或 file:路径）。
+# 所以这一整段可以直接复制给别人的机器用。
+CAPS = os.path.join(os.path.dirname(USER_CFG), 'capabilities.json')
+CAPS_BAK = os.path.join(os.path.dirname(USER_CFG), 'caps-bak')
+
+
+def _caps_read():
+    return _load_json(CAPS, {'version': 1, 'items': []})
+
+
+def _caps_raw():
+    try:
+        with open(CAPS, encoding='utf-8') as fh:
+            return fh.read()
+    except Exception:
+        return json.dumps({'version': 1, 'items': []}, ensure_ascii=False, indent=2)
+
+
+def _caps_save_text(text):
+    """整份替换。先校验 JSON、再备份旧文件，最后写。"""
+    try:
+        data = json.loads(text)
+    except Exception as e:
+        return False, '不是合法 JSON：%s' % e
+    if isinstance(data, list):
+        data = {'version': 1, 'items': data}
+    if not isinstance(data, dict) or not isinstance(data.get('items'), list):
+        return False, '这份东西得是 {"version":1,"items":[...]}'
+    ids = []
+    for it in data['items']:
+        if not isinstance(it, dict) or not it.get('id'):
+            return False, '有一条没有 id'
+        if it['id'] in ids:
+            return False, 'id 重复：%s' % it['id']
+        ids.append(it['id'])
+        if it.get('form') and it['form'] not in ('openai-chat', 'sync-generate', 'async-task', 'raw'):
+            return False, '%s 的 form 不认识：%s' % (it['id'], it['form'])
+    try:
+        os.makedirs(CAPS_BAK, exist_ok=True)
+        if os.path.exists(CAPS):
+            shutil.copy2(CAPS, os.path.join(CAPS_BAK, 'capabilities-%s.json' % time.strftime('%Y%m%d-%H%M%S')))
+        with open(CAPS, 'w', encoding='utf-8') as fh:
+            fh.write(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+        os.chmod(CAPS, 0o600)
+    except Exception as e:
+        return False, '写不进去：%s' % e
+    return True, '存好了（%d 条）。重启插件才会生效。' % len(ids)
+
+
+def _caps_plugin_root():
+    """插件目录。面板自己是从 stateDir/runtime 跑的，`lib/` 不在那儿 —— 所以按顺序找：
+    插件写进 runtime/config.json 的 pluginRoot → 同级上一层的 lib → profiles 下扫一遍。"""
+    root = _cfg.get('pluginRoot')
+    if root and os.path.isdir(os.path.join(str(root), 'lib')):
+        return str(root)
+    cand = os.path.dirname(HERE)
+    if os.path.isdir(os.path.join(cand, 'lib')):
+        return cand
+    import glob as _glob
+    for p in _glob.glob(os.path.expanduser('~/.dsh/profiles/*/node_modules/realheart')):
+        if os.path.isdir(os.path.join(p, 'lib')):
+            return p
+    return ''
+
+
+def _caps_test(rec_id):
+    """真跑一次。跑的是插件里那份 caps.mjs，跟工具调用走同一条路。"""
+    rec = None
+    for it in _caps_read().get('items', []):
+        if it.get('id') == rec_id:
+            rec = it
+            break
+    if rec is None:
+        return False, '没有这条：%s' % rec_id
+    caps_mjs = os.path.join(_caps_plugin_root(), 'lib', 'caps.mjs')
+    if not _caps_plugin_root() or not os.path.exists(caps_mjs):
+        return False, '找不到 lib/caps.mjs（插件目录没定位到）'
+    code = (
+        "import {rel} from 'file:///__CAPS__';"
+        "const rec=JSON.parse(process.env.REC);"
+        "const cap=String(rec.cap||'');"
+        "const p={prompt:'测试：一只橘猫坐在窗台上'};\n"
+        "if(cap==='vision'){p.prompt='一句话说清这张图是什么';}\n"
+        "try{const r=await runCapability(rec,p,{outDir:'/tmp/rh-cap-test',timeoutMs:60000,baseName:'t'+Date.now()});"
+        "console.log('OK',r.files&&r.files.length?('文件 '+r.files.join(',')):(r.text||'').slice(0,300));}"
+        "catch(e){console.log('FAIL '+String(e&&e.message||e).slice(0,400));}"
+    )
+    code = code.replace('__CAPS__', caps_mjs.replace('\\', '/'))
+    code = code.replace("import {rel} from 'file:///", "import {runCapability} from 'file:///")
+    try:
+        env = dict(os.environ)
+        env['REC'] = json.dumps(rec, ensure_ascii=False)
+        r = subprocess.run(['node', '--input-type=module', '-e', code],
+                           capture_output=True, text=True, timeout=120, env=env)
+        out = (r.stdout or '').strip() or (r.stderr or '').strip()
+        return out.startswith('OK'), out[:600] or '（没有任何输出）'
+    except subprocess.TimeoutExpired:
+        return False, '超时（120 秒）'
+    except Exception as e:
+        return False, '跑不起来：%s' % e
+
+
+def render_caps(flash=''):
+    data = _caps_read()
+    items = [x for x in data.get('items', []) if isinstance(x, dict)]
+    if items:
+        rows = ''.join(
+            '<tr>'
+            '<td>%s<br><span class=dim>%s</span></td>'
+            '<td>%s</td><td>%s<br><span class=dim>%s</span></td>'
+            '<td>%s</td>'
+            '<td>%s</td>'
+            '<td><form method=post action=/%s/caps style=margin:0>'
+            '<input type=hidden name=__caps_test value="%s">'
+            '<button class=mini type=submit>测一次</button></form></td>'
+            '</tr>' % (
+                esc(x.get('name') or '(没名字)'), esc(x.get('id') or ''),
+                esc(x.get('cap') or ''), esc(x.get('model') or ''),
+                esc(x.get('form') or ''),
+                esc(json.dumps(x.get('defaults') or {}, ensure_ascii=False).strip('{}') or '—'),
+                '开' if x.get('enabled', True) else '<b>关</b>',
+                SECRET.decode('utf-8', 'surrogateescape'), esc(x.get('id') or ''),
+            ) for x in items)
+        table = ('<table class=grid><tr><th>名字 / id</th><th>能力</th><th>模型 / 形态</th>'
+                 '<th>默认参数</th><th>状态</th><th></th></tr>%s</table>' % rows)
+    else:
+        table = '<p class=note>还没有配任何外部能力。</p>'
+    tip = ('<p class=note>这一栏是「怎么调」，不含 key。记录里的 auth.keyRef 只写 '
+           '<code>env:变量名</code> 或 <code>file:路径</code>。'
+           '所以整段可以直接复制到别的机器。</p>')
+    return ('<div class="card wide"><h2>外部能力</h2>%s%s'
+            '<details><summary>编辑整份配方（JSON）</summary>'
+            '<form method=post action=/%s/caps>'
+            '<textarea name=__caps_text rows=26 spellcheck=false>%s</textarea>'
+            '<button type=submit name=__caps_save value=1>保存（会先备份）</button>'
+            '</form>'
+            '<p class=note>四种形态：openai-chat（对话/识图）· sync-generate（一次出图）· '
+            'async-task（提交→轮询→下载）· raw（模板兜底）。'
+            '模板占位只认双花括号 <code>{{prompt}}</code> <code>{{id}}</code>。</p>'
+            '</details></div>') % (
+        tip, table, SECRET.decode('utf-8', 'surrogateescape'), esc(_caps_raw()))
+
+
 def build_page(flash=''):
     info = sysinfo()
     cards = ''.join([
@@ -2112,6 +2260,7 @@ def build_page(flash=''):
         render_say(),
         render_tool_usage(),
         render_recommend(),
+        render_caps(flash),
         render_config_edit(flash),
         render_machine(),
     ])
@@ -2283,6 +2432,29 @@ class Handler(BaseHTTPRequestHandler):
         rest = self._ok_path(self.path)
         if rest is None:
             self._send(404, b'not found', 'text/plain; charset=utf-8')
+            return
+        if rest.startswith(b'/caps'):
+            try:
+                n2 = int(self.headers.get('Content-Length') or 0)
+            except ValueError:
+                n2 = 0
+            if n2 <= 0 or n2 > 262144:
+                self._send(400, b'bad body', 'text/plain; charset=utf-8')
+                return
+            from urllib.parse import parse_qs, quote as _q
+            form2 = parse_qs(self.rfile.read(n2).decode('utf-8', 'replace'), keep_blank_values=True)
+            if '__caps_test' in form2:
+                ok2, msg2 = _caps_test(form2.get('__caps_test', [''])[0])
+            else:
+                ok2, msg2 = _caps_save_text(form2.get('__caps_text', [''])[0])
+            loc2 = '/%s/config?%s=%s' % (
+                SECRET.decode('utf-8', 'surrogateescape'),
+                'saved' if ok2 else 'err', _q(msg2))
+            self.send_response(303)
+            self.send_header('Location', loc2)
+            self.send_header('Content-Length', '0')
+            self.send_header('Cache-Control', 'no-store, max-age=0')
+            self.end_headers()
             return
         if not rest.startswith(b'/config'):
             self._reject()
