@@ -2218,14 +2218,13 @@ const ROUND_MARK = '[本轮消息]';
 
     const listening = await pageAnswers();
     if (listening) {
-      if (pidTrusted) return { alive: true, text: `观测页：在（pid ${pid}）` };
-      return {
-        alive: true,
-        text: `观测页：在（端口 ${cfg.pagePort} 有响应；pid 文件写的是 ${pid > 0 ? pid : '（空）'}，那个号对不上）`,
-      };
+      // 2026-11-15：不再报 pid。pid 每次页面重启都变，而这行字在 system prompt 里 ——
+      // 变一次就是一次全量缓存失效。她需要知道的是「页在不在」，不是进程号。
+      if (pidTrusted) return { alive: true, text: '观测页：在' };
+      return { alive: true, text: '观测页：在（端口有响应，但进程号对不上 —— 面板那边的 pid 可能过期了）' };
     }
-    if (pidTrusted) return { alive: false, text: `观测页：不在（pid ${pid} 活着，但端口 ${cfg.pagePort} 没响应）` };
-    if (pid > 0) return { alive: false, text: `观测页：不在（pid ${pid} 已经不在，端口 ${cfg.pagePort} 也没响应）` };
+    if (pidTrusted) return { alive: false, text: '观测页：不在（进程还在，但端口没响应）' };
+    if (pid > 0) return { alive: false, text: '观测页：不在（进程没了，端口也没响应）' };
     return { alive: false, text: `观测页：不在（pid 文件读不到，端口 ${cfg.pagePort} 也没响应）` };
   }
 
@@ -2280,16 +2279,6 @@ const ROUND_MARK = '[本轮消息]';
         // 那就分不出「中午该不该说这个」和「深夜该不该开口」。人也一样：不看表就不懂分寸。
         // 为什么不做成“时间感”那段的一部分：那段说的是“距你上次开口多久”，是相对；
         // 这个说的是“现在几点”，是绝对。两件事，分开开关。
-        if (cfg.injectNow) {
-          const now = new Date();
-          const p2 = (n) => String(n).padStart(2, '0');
-          const wd = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()];
-          const h = now.getHours();
-          const slot = h < 5 ? '深夜' : h < 8 ? '清早' : h < 11 ? '上午' : h < 13 ? '中午'
-            : h < 17 ? '下午' : h < 19 ? '傍晚' : h < 23 ? '晚上' : '深夜';
-          parts.push(sec('realheart:clock', 890,
-            `现在是 ${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())} ${p2(h)}:${p2(now.getMinutes())}（${wd}），${slot}。`));
-        }
         const mood = await moodSectionText({ sessionId: sessionIdOfAssembleContext(_context) });
         if (mood) parts.push(sec('realheart:mood', 900, mood));
         // 2026-11-14：这十几段彼此不依赖，改成并发取 —— 原来一次一次 await，
@@ -2413,12 +2402,6 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('pending', err);
         }
         try {
-          const sp = await statusPageState();
-          parts.push(sec('realheart:status-page', 904, sp.text));
-        } catch (err) {
-          await noteInjectProblem('status-page', err);
-        }
-        try {
           const kept = await readKept();
           // 原样呈现，不加「这是为了提醒你」之类的话 —— 她要求的就是这个
           if (kept.length) parts.push(sec('realheart:kept', 903, ['【你留下的话】', ...kept.map((k) => `· ${k.text}`)].join('\n')));
@@ -2439,6 +2422,32 @@ const ROUND_MARK = '[本轮消息]';
         if (ttext) parts.push(sec('realheart:time', 906, ttext));
         } catch (err) {
           await noteInjectProblem('time', err);
+        }
+        // ── 为什么这两段必须排在最后（2026-11-15 实测，代价 798 万 token）──
+        // 前缀缓存是从头匹配的：system prompt 里任何一处变了，**它之后的所有 token**
+        // （剩下的注入段 + 全部历史）都要重算。
+        // 之前 clock 是第一个 push 的，它后面还挂着 24 段注入和 15 万 token 的历史 ——
+        // 于是「现在是 20:30」翻成「20:31」这一下，整段上下文全部失效。
+        // 实测 209 步里 31 次全量 miss、命中率从 99% 掉到 81.6%，全由这一行造成。
+        // 现在把它和观测页状态放到最后：它们变化时，后面只剩那句边界提示（约 30 token）。
+        try {
+          const sp = await statusPageState();
+          parts.push(sec('realheart:status-page', 998, sp.text));
+        } catch (err) {
+          await noteInjectProblem('status-page', err);
+        }
+        if (cfg.injectNow) {
+          const now = new Date();
+          const p2 = (n) => String(n).padStart(2, '0');
+          const wd = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()];
+          const h = now.getHours();
+          const slot = h < 5 ? '深夜' : h < 8 ? '清早' : h < 11 ? '上午' : h < 13 ? '中午'
+            : h < 17 ? '下午' : h < 19 ? '傍晚' : h < 23 ? '晚上' : '深夜';
+          // 只到小时。原来是 HH:MM —— 每跨一个分钟翻点就重算一次整段上下文，
+          // 而「知道现在几点」这个用途本来就是小时级别的：「晚上」比「20:31」更有用。
+          // 一天最多变 7 次（时段切换），原来一天最多变 1440 次。
+          parts.push(sec('realheart:clock', 999,
+            `现在是 ${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())} ${p2(h)} 点（${wd}），${slot}。`));
         }
         if (!parts.length) return assembled;
         // ── 预算（M1-6）──
@@ -2501,7 +2510,32 @@ const ROUND_MARK = '[本轮消息]';
         // 反过来写的话，「全裁光」那一轮就是静默的 —— 而那恰恰是最该被看见的一轮。
         if (dropped.length) await noteInjectProblem('budget', `超出 ${budget} 字，裁掉了 ${dropped.join(' / ')}`);
         if (!parts.length) return assembled;
-        const sections = Array.isArray(assembled?.sections) ? assembled.sections : [];
+        // ── 注入指纹监控（2026-11-15）──
+        // 起因：clock 每分钟改写 system prompt，209 步里打碎 31 次前缀缓存，烧掉 798 万 token，
+        // 而这件事在日志里**一个字都没有** —— 只有 usage 里能看出来。
+        // 现在每次装配都记一份各段指纹：内容变了就记一行，并区分「预期内」和「不该变」。
+        // 判据：变化段如果在末尾（clock / status-page / time），损失只是一句边界提示；
+        //       别的段变了才是警报 —— 它在中间，一变就是整段上下文重算。
+        try {
+          if (!globalThis.__rhInjectFp) globalThis.__rhInjectFp = new Map();
+          const fp = globalThis.__rhInjectFp;
+          const EXPECTED_LATE = new Set(['realheart:clock', 'realheart:status-page', 'realheart:time', 'realheart:caps-tasks']);
+          const changed = [];
+          for (const p of parts) {
+            const text = String(p && p.text != null ? p.text : '');
+            const h = createHash('sha1').update(text).digest('hex').slice(0, 12);
+            const prev = fp.get(p.name);
+            if (prev !== undefined && prev !== h) changed.push(p.name);
+            fp.set(p.name, h);
+          }
+          const late = changed.filter((n) => EXPECTED_LATE.has(n));
+          const early = changed.filter((n) => !EXPECTED_LATE.has(n));
+          if (late.length) log('注入变化（末尾段，代价小）：' + late.join(' / '));
+          if (early.length) {
+            log('⚠️ 注入变化打碎了前缀缓存：' + early.join(' / ')
+              + ' —— 这些段不在末尾，一变就是整段上下文重算（2026-11-15 那次 798 万 token 就是这么烧的）', 'error');
+          }
+        } catch { /* 监控是附带的，不能因为它挡住注入 */ }        const sections = Array.isArray(assembled?.sections) ? assembled.sections : [];
         const payload = parts.map((x) => `--- ${x.name} ---\n${x.text}`).join('\n\n');
         // 把她这一轮看到的原文落一份 —— debug 页和“她自己查”都靠它。
         // 写失败不能影响注入，所以单独包一层。
