@@ -1,3 +1,20 @@
+# 0.4.2 — 2026-11-15（按新机 0.3.11 验收反馈）
+
+- **修：`npx realheart doctor` 起不来（Cannot find package `@deepseek-ai/schemastery`）。**
+  `@deepseek-ai/schemastery` 是 peerDependencies，pnpm 不会装进插件目录，只有宿主进程里解析得到；
+  而 `lib/config.mjs` 原来**静态 import** 它 —— 于是命令行那条路一进门就抛，
+  连它自带的「缺就自动补 peer」都跑不到（还没来得及执行就先炸了）。
+  现在把 Schema 拆到 `lib/schema.mjs`：默认值/字段表/分区/校验/面板描述留在 config.mjs（不依赖宿主），
+  只有 schema.mjs 需要 schemastery，而只有宿主会 import 它。
+  验法：本机 node_modules 里的 schemastery 本身是坏的（缺 cosmokit），在这个环境里跑
+  `node bin/realheart.mjs help` 能正常出用法 —— 说明 CLI 不再碰它。
+- **修：观测页页脚版本号显示 `v?`。** 面板去读包根目录的 `VERSION` 文件，而包里从来没有这个文件。
+  改成读 `runtime/config-schema.json` 的 `version`（插件启动时写的），回落 `package.json`。
+- **修：`say` 旧版本永远留着。** 原规则「文件在就不覆盖」是对的（say 里可能带这台的号），
+  但代价是旧版永远不会被换掉：新机实测在跑 10321B、包里 18823B，每次启动记一条 error 而没人知道。
+  现在铺的时候在旁边写一个指纹 `.realheart-say.sha256`：
+  · 指纹对得上在跑的那份 = 没人动过（只是旧）→ **安全升级**成包里那版，记一行「say 升级了」
+  · 指纹对不上 / 没有指纹 = 本机改过 → 仍然不覆盖，只记分叉
 # 0.4.1 — 2026-11-15
 
 - **修：`freeTimeSlots` 按 JSON 编辑。** 它的 schema 是 `Schema.array(Schema.object({start,minutes}))`，
@@ -2202,5 +2219,6 @@ h-status.pid | 不停，打出是谁在用 |
 
 补记录不是为了补齐历史，是为了从这一版起，每一次「装的步骤变了 / 行为变了 / 格式变了」
 都有地方可查 —— 尤其是**怎么退**。
+
 
 

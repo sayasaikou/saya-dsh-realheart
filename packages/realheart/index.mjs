@@ -19,12 +19,14 @@
  * 那件事机器判定不了，硬判就是另一种演。先把门立起来，真假留给时间看。
  */
 
-import { Config, DEFAULTS, DSH_HOME, QQROOT, validateConfig, loadUserConfig, describeConfig, plainConfig, FIELD_META, REGIONS } from './lib/config.mjs';
+import { DEFAULTS, DSH_HOME, QQROOT, validateConfig, loadUserConfig, describeConfig, plainConfig, FIELD_META, REGIONS } from './lib/config.mjs';
+// Config 要 schemastery（peer），只有宿主环境有 —— 单独一份，别拖累 CLI。
+import { Config } from './lib/schema.mjs';
 import { instanceTagFrom, lastInjectPaths } from './lib/instance-tag.mjs';
 import { maskSecret, pageHint, whereSecret } from './lib/secrets.mjs';
 import { sessionIdOfAssembleContext, sessionIdOfExec, moodVisibleIn, moodBleedsIn, sessionLabel } from './lib/session.mjs';
 import { execFile, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import net from 'node:net';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -2697,13 +2699,20 @@ const ROUND_MARK = '[本轮消息]';
     // 写在 Node 这边、由 Python 读 —— 定义只维护一份，两面才不会各说各的。
     // 写不了不算失败：面板会退化成「没有编辑区」，别的照常。
     try {
-      await writeFile(join(dir, 'config-schema.json'), JSON.stringify(describeConfig(cfg, {
+      // 2026-11-15：把版本号一并写进去。面板页脚原来读包根的 VERSION 文件（从来不存在）→ 一直显示 v?。
+      let __ver = '';
+      try {
+        __ver = String(JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf8')).version || '');
+      } catch { __ver = ''; }
+      await writeFile(join(dir, 'config-schema.json'), JSON.stringify(Object.assign({
+        version: __ver,
+      }, describeConfig(cfg, {
         promptFree: FREE_PROMPT,
         promptPing: PING_PROMPT,
         promptVoiceTail: '但只有真有话时才算数。没话就过，空过也是对的 —— 这段不是配额。',
         promptTodayTail: '（这些是你自己做过、说过的事。不用念给他听；但他说到某件你想不起来的，就照上面的路径去翻 —— 那不是别人的事。）',
         promptMoodBan: '（知道就行，不必说出来 —— 它们不是你聊天的素材，只影响你说话的样子，不是你的话。）',
-      }), null, 2), 'utf8');
+      })), null, 2), 'utf8');
     } catch (err) {
       log(`写 config-schema.json 失败（面板会没有编辑区）：${err?.message ?? err}`, 'error');
     }
@@ -4055,26 +4064,53 @@ PY
    */
   async function ensureSayScript() {
     const p = join(QQROOT, 'work', 'bin', 'say');
+    // 2026-11-15：版本戳。
+    // 原来的规则是「文件在就不覆盖」—— 对（say 里可能带这台的号），但代价是：
+    // **旧版的 say 会永远留在那儿**。新机实测：在跑 10321B（早期那份），包里 18823B，
+    // 每次启动记一条 error，而她自己完全不知道——那条 say 缺补发队列、缺安静判据。
+    // 现在铺的时候写一个指纹在旁边；下次启动：
+    //   指纹对得上「在跑的那份」= 没人动过它（只是旧）→ 可以安全升级
+    //   指纹对不上 / 没有指纹       = 本地改过 → 坚决不覆盖，只记分叉
+    const stampPath = join(QQROOT, 'work', 'bin', '.realheart-say.sha256');
+    const shaOf = (buf) => createHash('sha256').update(buf).digest('hex');
     try {
-      // 2026-11-12：文件已在，就不覆盖（say 里可能带这台的号，盖掉是灾难）。
-      // 但**不能静默分叉** —— 包里的 say 改了，这台在跑的还是旧的，改包不会生效。
-      // 所以比一下内容，不一样就记一行，让人知道「改包不会作用到这台」。
-      if (existsSync(p)) {
-        try {
-          const a = await readFile(p);
-          const b = await readFile(join(dirname(fileURLToPath(import.meta.url)), 'scripts', 'say'));
-          if (!a.equals(b)) {
-            log('say 分叉：在跑的那份和包里那份内容不一样（' + a.length + 'B / ' + b.length
-              + 'B）—— 改包里不会作用到这台，要同步得手动合一次。', 'error');
-          }
-        } catch { /* 比不了就算了，不影响她说话 */ }
-        return;
-      }
       const src = join(dirname(fileURLToPath(import.meta.url)), 'scripts', 'say');
       if (!existsSync(src)) {
         log(`包里没有 scripts/say，铺不出来 —— 她会说不出话（${p} 不存在）`, 'error');
         return;
       }
+      const packaged = await readFile(src);
+      const packagedSha = shaOf(packaged);
+
+      if (existsSync(p)) {
+        let running = null;
+        try { running = await readFile(p); } catch { running = null; }
+        if (running) {
+          const runningSha = shaOf(running);
+          let stamped = '';
+          try { stamped = String(await readFile(stampPath, 'utf8')).trim(); } catch { stamped = ''; }
+          const untouched = stamped && stamped === runningSha;
+          if (runningSha !== packagedSha && untouched) {
+            await copyFile(src, p);
+            try { await chmod(p, 0o755); } catch { /* 权限不影响能不能跑 */ }
+            await writeFile(stampPath, packagedSha + '\n', 'utf8');
+            log(`say 升级了：${p}（原来那份是本插件铺的、没人动过，已换成包里这版 ${packaged.length}B）`);
+            return;
+          }
+          if (runningSha !== packagedSha) {
+            log('say 分叉：在跑的那份和包里那份内容不一样（' + running.length + 'B / ' + packaged.length
+              + 'B）—— 那份被本机改过，不覆盖；要同步得手动合一次。', 'error');
+            return;
+          }
+          // 内容一致：把指纹补上（老机器第一次跑到这里会走这条）
+          if (stamped !== packagedSha) {
+            try { await writeFile(stampPath, packagedSha + '\n', 'utf8'); } catch { /* 写不进就算了 */ }
+          }
+          return;
+        }
+        return;
+      }
+
       await mkdir(dirname(p), { recursive: true });
       await copyFile(src, p);
       try {
@@ -4082,6 +4118,7 @@ PY
       } catch {
         /* 权限收不上来不影响它能不能跑 */
       }
+      try { await writeFile(stampPath, packagedSha + '\n', 'utf8'); } catch { /* 指纹写不进也不影响说话 */ }
       log(`say 补上了：${p}（原来不在，从包里拷了一份）`);
     } catch (err) {
       log(`say 没铺下来（${err?.code ?? err?.message ?? err}）—— 她没有嘴`, 'error');

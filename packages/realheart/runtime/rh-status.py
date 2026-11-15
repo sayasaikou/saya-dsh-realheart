@@ -359,8 +359,33 @@ def sysinfo():
         out['svc'] = r.stdout.strip() or '?'
     except Exception:
         out['svc'] = '?'
-    ver, _ = read_text(os.path.join(ROOT, 'VERSION'))
-    out['version'] = (ver or '').strip() or '?'
+    # 版本号：包里没有 VERSION 文件（以前读它，页脚一直显示 v?）。
+    # 顺序：config-schema.json 的 version（插件启动时写）→ runtime/config.json 的 pluginRoot 下 package.json
+    #      → 上一级 package.json。都读不到才显示 ?。
+    ver = ''
+    try:
+        _sch = json.load(open(os.path.join(HERE, 'config-schema.json'), encoding='utf-8'))
+        ver = str((_sch or {}).get('version') or '')
+    except Exception:
+        ver = ''
+    if not ver:
+        cands = []
+        try:
+            _rc = json.load(open(os.path.join(HERE, 'config.json'), encoding='utf-8'))
+            pr = str((_rc or {}).get('pluginRoot') or '').strip()
+            if pr:
+                cands.append(os.path.join(pr, 'package.json'))
+        except Exception:
+            pass
+        cands.append(os.path.join(os.path.dirname(HERE), 'package.json'))
+        for c in cands:
+            try:
+                ver = str((json.load(open(c, encoding='utf-8')) or {}).get('version') or '')
+                if ver:
+                    break
+            except Exception:
+                continue
+    out['version'] = ver.strip() or '?'
     return out
 
 
