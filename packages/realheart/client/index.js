@@ -963,7 +963,11 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
   border-radius:var(--r4-r-sm);border:1px solid var(--r4-line-strong);background:var(--r4-bg1);
   color:inherit;font:inherit;
 }
-@container (max-width: 45rem){ .rh4-shell{display:block} .rh4-nav{display:none} .rh4-select{display:block} }
+/* 宿主设置弹窗 800px 固定、插件容器实测 564px（窗口 700px 时 668px）。
+   原来按 45rem/48rem 断，两个阈值都够不到 —— 左目录和三列在宿主里永远不出现。
+   现在：左目录按整页宽度（34rem=544），列数按右栏自己的宽度（.rh4-main 也是容器）。 */
+@container (max-width: 39.99rem){ .rh4-shell{display:block} .rh4-nav{display:none} .rh4-select{display:block} }
+.rh4-main{container-type:inline-size}
 
 /* 工具条 */
 .rh4-bar{display:flex;align-items:center;gap:var(--r4-sp2);flex-wrap:wrap;margin-bottom:var(--r4-sp5)}
@@ -1026,8 +1030,9 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
 .rh4-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:2px var(--r4-sp3)}
 .rh4-f{grid-column:span 12;min-width:0;padding:var(--r4-sp2) 10px;margin:0 -10px;border-radius:var(--r4-r-sm);display:flex;flex-direction:column}
 .rh4.editing .rh4-f:hover{background:var(--r4-bg2)}
-@container (min-width: 30rem){ .rh4-f.half{grid-column:span 6} }
-@container (min-width: 48rem){ .rh4-f.half{grid-column:span 6} .rh4-f.third{grid-column:span 4} }
+/* 这两条现在查的是 .rh4-main 的宽度（不是整页），因为左目录会吃掉 176px */
+@container (min-width: 22rem){ .rh4-f.half,.rh4-f.third{grid-column:span 6} }
+@container (min-width: 37.5rem){ .rh4-f.half{grid-column:span 6} .rh4-f.third{grid-column:span 4} }
 
 /* 一行三列时，标签折成两行的那个字段会把输入框顶下去 —— 整行看上去犬牙交错。
    用 subgrid 让同一网格行的字段共享「标签行 / 控件行 / 备注行」三行的高度，
@@ -1035,8 +1040,11 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
    （Chromium 117+ / Safari 16+ / Firefox 71+；不支持的浏览器退回上面的 flex 竖排。） */
 @supports (grid-template-rows: subgrid){
   .rh4-f{display:grid;grid-template-rows:subgrid;grid-row:span 3;row-gap:0}
-  .rh4-f > .rh4-lblrow,.rh4-f > div{align-self:start}
 }
+/* 空占位：滑钮没有标签行、多数字段没有备注行 —— 补一个 0 高的子节点占住那一行，
+   这样每个字段都正好三个子节点，三行才对得上。 */
+.rh4-ph{min-height:0}
+.rh4-f > .rh4-lblrow,.rh4-f > .rh4-ph{align-self:start}
 
 .rh4-lblrow{display:flex;align-items:center;gap:var(--r4-sp2);min-height:20px}
 .rh4-lbl{font-size:13px;font-weight:500;line-height:20px;color:var(--r4-fg1)}
@@ -1147,11 +1155,14 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
 .rh4-diffhead{display:flex;align-items:center;gap:var(--r4-sp2);padding-bottom:9px;border-bottom:1px solid var(--r4-line-strong)}
 .rh4-diffhead h4{margin:0;font-size:12px;font-weight:600;color:var(--r4-fg1)}
 .rh4-diffhead .rh4-btn{min-height:28px;padding:2px 10px;font-size:12px}
+/* 每行独立成网格时，旧值那列的宽度随内容变 → 两行的数字对不齐（验收量出差 19.8px）。
+   改成外层一个网格 + 每行 display:contents，四列宽度全表共享。 */
+.rh4-difflist{display:grid;grid-template-columns:minmax(0,1fr) auto 12px auto;gap:0 var(--r4-sp2);align-items:baseline}
 .rh4-diffrow{
-  display:grid;grid-template-columns:minmax(0,1fr) auto 12px auto;gap:var(--r4-sp2);align-items:baseline;
+  display:contents;
   font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:22px;color:var(--r4-fg2);
-  padding:2px 0;
 }
+.rh4-difflist > .rh4-diffrow > span{padding:1px 0}
 .rh4-diffkey{color:var(--r4-fg1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rh4-diffold{color:var(--r4-fg3);text-decoration:line-through;text-decoration-thickness:1.5px;justify-self:end;opacity:.9}
 .rh4-diffarrow{color:var(--r4-fg3);text-align:center}
@@ -1312,6 +1323,10 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
         const kind = field.kind
         const err = errs[field.key]
         const set = (v) => { pendingRef.current[field.key] = v; if (onDirty) onDirty(field.key) }
+        // 重置只改了 pendingRef，非受控输入框的 defaultValue 不会自己跟着变 —— 界面上还显示旧数字，
+        // 内部其实已经回默认了（验收报的就是这个）。加一个自增 key，重置时整块控件重挂载。
+        const [rev, setRev] = react.useState(0)
+        const doReset = () => { set(field.def); setRev((r) => r + 1) }
 
         // 跟读回来那份比：对象/数组用 JSON 比，标量直接比
         const pend = pendingRef.current
@@ -1333,7 +1348,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           (editing && field.def !== undefined && kind !== 'switch')
             ? react.createElement('button', {
                 type: 'button', className: 'rh4-copy', title: '恢复成默认值',
-                onClick: () => set(field.def),
+                onClick: doReset,
               }, '重置')
             : null,
           // capsJson / freeTimeSlots 这类结构型：给一个「校验」，不用等保存才知道错
@@ -1348,17 +1363,17 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
 
         const blank = blankOf(field, value)
 
-        let body
+        let control
         if (kind === 'switch') {
           // 整行可点：标签 + 滑钮同一行，48px
-          body = react.createElement('div', { className: 'rh4-swrow' + (editing ? '' : ' ro') },
+          control = react.createElement('div', { className: 'rh4-swrow' + (editing ? '' : ' ro') },
             react.createElement('div', { className: 'rh4-swtext' },
               react.createElement('label', { className: 'rh4-lbl', htmlFor: id }, field.label),
               field.detail ? react.createElement('span', { className: 'rh4-help', title: field.detail, style: { marginLeft: '6px' }, 'aria-label': '说明' }, '?') : null,
               (editing && field.def !== undefined)
                 ? react.createElement('button', {
                     type: 'button', className: 'rh4-copy', style: { marginLeft: '6px' }, title: '恢复成默认值',
-                    onClick: () => set(field.def),
+                    onClick: doReset,
                   }, '重置')
                 : null),
             react.createElement(Switch, {
@@ -1366,11 +1381,11 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
               onToggle: (nx) => set(nx),
             }))
         } else if (kind === 'number') {
-          body = react.createElement('div', null,
-            head,
+          control = react.createElement('div', null,
             react.createElement('div', { className: 'rh4-numwrap' },
               react.createElement('input', {
                 // 用 text 不用 number：number 在只读态仍带浏览器 spinner，看着像能点。
+                key: 'v' + rev,
                 id, className: 'rh4-in rh4-num', type: 'text', inputMode: 'decimal',
                 defaultValue: blank.bare ? '' : fmtValue(value),
                 placeholder: blank.bare && !editing ? blank.hint : undefined,
@@ -1389,9 +1404,8 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
             const next = picked.indexOf(name) >= 0 ? picked.filter((x) => x !== name) : picked.concat([name])
             set(next)
           }
-          body = editing
+          control = editing
             ? react.createElement('div', null,
-                head,
                 react.createElement('div', { className: 'rh4-chips' },
                   (field.options || []).map((name) => react.createElement('label', {
                     key: name, className: 'rh4-chip' + (picked.indexOf(name) >= 0 ? ' on' : ''),
@@ -1404,15 +1418,14 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
                 react.createElement('p', { className: 'rh4-brief' },
                   picked.length ? ('关掉 ' + picked.length + ' 段：' + picked.join('、')) : '一段都没关（全开）'))
             : react.createElement('div', null,
-                head,
                 react.createElement('div', { className: 'rh4-val' + (picked.length ? '' : ' dim') },
                   picked.length ? picked.join('、') : '（空 —— 全开）'))
         } else if (kind === 'code' || kind === 'tags') {
           const rows = field.key === 'capsJson' ? 22 : 6
-          body = react.createElement('div', null,
-            head,
+          control = react.createElement('div', null,
             kind === 'code'
               ? react.createElement('textarea', {
+                  key: 'v' + rev,
                   id, className: 'rh4-in rh4-code', rows,
                   style: { minHeight: (rows * 18) + 'px' },
                   defaultValue: blank.bare ? '' : (isJsonField(field.key)
@@ -1426,6 +1439,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
                   onChange: (e) => set(e.target.value),
                 })
               : react.createElement('input', {
+                  key: 'v' + rev,
                   id, className: 'rh4-in rh4-short', type: 'text', defaultValue: fmtValue(value), readOnly: !editing,
                   placeholder: '用逗号分隔',
                   onChange: (e) => set(toList(e.target.value)),
@@ -1433,10 +1447,10 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
             err ? react.createElement('span', { className: 'rh4-msg err', id: id + '-err' }, err) : null)
         } else {
           const isPath = /(dir|root|path|Dir)$/.test(field.key) || /路径|目录|在哪儿/.test(field.label)
-          body = react.createElement('div', null,
-            head,
+          control = react.createElement('div', null,
             react.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } },
               react.createElement('input', {
+                key: 'v' + rev,
                 id, className: 'rh4-in', type: 'text',
                 defaultValue: blank.bare ? '' : fmtValue(value),
                 placeholder: blank.bare && !editing ? blank.hint : undefined,
@@ -1460,14 +1474,22 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
             + (dirty ? ' dirty' : ''),
           key: field.key,
         },
-          body,
-          field.brief ? react.createElement('p', { className: 'rh4-brief' }, field.brief) : null)
+          // 三个直接子节点，一一对应 subgrid 的三行（标签 / 控件 / 备注）。
+          // 少一个都不行：之前标签和控件包在同一个 div 里，subgrid 只能对齐「那一整块」，
+          // 标签折两行时控件还是被顶下去（验收用像素量出来的）。
+          head || react.createElement('div', { className: 'rh4-ph', 'aria-hidden': 'true' }),
+          control,
+          field.brief
+            ? react.createElement('p', { className: 'rh4-brief' }, field.brief)
+            : react.createElement('div', { className: 'rh4-ph', 'aria-hidden': 'true' }))
       }
 
       /** 一个分区。总开关关掉时子项隐藏，只留一句说明。 */
       function Section(props) {
         const { region, fields, values, editing, pendingRef, onDirty, errs, forcedOpen, gen } = props
         const [open, setOpen] = react.useState(region.defaultOpen !== false)
+        // 本区重置要让整区的非受控输入重新挂载才回显 —— 用这个计数当 key 的一部分
+        const [regionRev, setRegionRev] = react.useState(0)
         const live = (k) => (k in pendingRef.current ? pendingRef.current[k] : values[k])
 
         let swState = null
@@ -1504,6 +1526,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
                 type: 'button', className: 'rh4-copy', title: '把本区这些项都恢复成默认值（还没保存，可放弃）',
                 onClick: () => {
                   for (const f of fields) if (f.def !== undefined) pendingRef.current[f.key] = f.def;
+                  setRegionRev((r) => r + 1);
                   if (onDirty) onDirty(region.id);
                 },
               }, '本区重置')
@@ -1533,14 +1556,13 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
         const grid = isOpen
           ? react.createElement('div', { className: 'rh4-grid' },
               fields.map((f) => react.createElement(Field, {
-                key: f.key + ':' + gen, field: f,
+                key: f.key + ':' + gen + ':' + regionRev, field: f,
                 value: live(f.key), base: values[f.key], editing, pendingRef, onDirty, errs,
               })))
           : null
 
         return react.createElement('section', { className: 'rh4-sec' },
           head,
-          react.createElement('div', { className: 'rh4-hr', 'aria-hidden': 'true' }),
           offNote,
           grid)
       }
@@ -1596,17 +1618,18 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
 
         react.useEffect(() => { void load() }, [load])
 
-        // Esc：先关确认面板，再退出编辑态（不保存）。挂 window 上，页面切走也会解绑。
-        react.useEffect(() => {
-          if (typeof window === 'undefined' || !window.addEventListener) return undefined
-          const onKey = (ev) => {
-            if (ev.key !== 'Escape') return
-            if (confirm) { setConfirm(null); return }
-            if (editing) { pendingRef.current = {}; setEditing(false); setErrs({}); void load() }
-          }
-          window.addEventListener('keydown', onKey)
-          return () => window.removeEventListener('keydown', onKey)
-        }, [confirm, editing, load])
+        // Esc：先关确认面板，再退出编辑态。
+        // 2026-11-15 验收发现：挂在 window 上根本轮不到 —— 宿主自己在 document 上收 Esc 关设置弹窗，
+        // 按一次 Esc 整个设置层就没了，未保存的改动一起丢。
+        // 现在改成在插件根节点上用 **捕获阶段** 处理并 stopPropagation：事件从 document 往下走到
+        // 插件根时先被我们截住，宿主的冒泡监听收不到。
+        // ⚠️ 如果宿主是在 document 的捕获阶段处理，我们依然拦不住（那次就是它先跑）——
+        // 所以「Esc 关弹窗」这条永远别写进 UI 说明，用户该用的按钮是「返回修改」/「放弃」。
+        const onRootKeyDown = (ev) => {
+          if (ev.key !== 'Escape') return
+          if (confirm) { ev.stopPropagation(); ev.preventDefault(); setConfirm(null); return }
+          if (editing) { ev.stopPropagation(); ev.preventDefault(); pendingRef.current = {}; setEditing(false); setErrs({}); void load() }
+        }
 
         const markDirty = () => setTick((n) => n + 1)
 
@@ -1759,13 +1782,14 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
                   className: 'rh4-btn primary',
                   onClick: () => void doSave(),
                 }, (confirm.danger && confirm.danger.length) ? '确认执行（有风险）' : '确认保存')),
+              react.createElement('div', { className: 'rh4-difflist' },
               confirm.keys.map((k) => react.createElement('div', { className: 'rh4-diffrow', key: k },
                 react.createElement('span', { className: 'rh4-diffkey' }, k),
                 react.createElement('span', { className: 'rh4-diffold' },
                   values[k] === undefined ? '（默认）' : valOf(values[k])),
                 react.createElement('span', { className: 'rh4-diffarrow' }, '→'),
                 react.createElement('span', { className: 'rh4-diffnew' },
-                  pendingRef.current[k] === undefined ? '（默认）' : valOf(pendingRef.current[k])))),
+                  pendingRef.current[k] === undefined ? '（默认）' : valOf(pendingRef.current[k]))))),
               (confirm.danger && confirm.danger.length)
                 ? react.createElement('div', { className: 'rh4-dangerbox' },
                     react.createElement('h4', null, '这几项要再确认一次'),
@@ -1810,7 +1834,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
               values, editing, pendingRef, onDirty: markDirty, errs, gen,
             })
 
-        return react.createElement('div', { className: rootClass(editing) },
+        return react.createElement('div', { className: rootClass(editing), onKeyDownCapture: onRootKeyDown },
           react.createElement('div', { className: 'rh4-shell' },
             nav,
             // 工具条与内容同宽（都在右栏里）：跨过左目录会让"编辑"按钮贴到最右边，
