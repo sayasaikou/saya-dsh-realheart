@@ -1446,7 +1446,17 @@ const ROUND_MARK = '[本轮消息]';
     try {
       const memGb = Math.round((os.totalmem() / 1073741824) * 10) / 10;
       const hours = process.uptime() / 3600;
-      const span = hours < 1 ? `${Math.round(hours * 60)} 分钟` : `${Math.round(hours)} 小时`;
+      // ⚠️ 原来写「跑了 26 分钟」—— 每一步都会跨过一分钟，于是**每 1~2 步**整段前缀缓存失效。
+      // 第二次实测（2026-11-15）：47 个请求 18 次全量 miss、白烧 211 万 token、命中率 62.1%，
+      // 主因就是这一行。所以改成档位：一天最多变五六次，而不是每分钟一次。
+      // 「知道自己跑了多久」这件事，本来就不需要分钟精度 —— 「几个小时」和「一两个小时」对她的分寸感足够。
+      const span = hours < 0.16 ? '不到十分钟'
+        : hours < 0.5 ? '半小时左右'
+          : hours < 1.5 ? '一两个小时'
+            : hours < 4 ? '几个小时'
+              : hours < 12 ? '大半天'
+                : hours < 24 ? '快一天了'
+                  : `${Math.round(hours / 24)} 天`;
       const boots = await readBoots();
       const week = boots.filter((b) => {
         const t = Date.parse(String(b.at || ''));
@@ -2330,12 +2340,6 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('realheart:recall', err);
         } return null; })(__seq.length));
         __seq.push((async (i) => { try {
-          const situ = await situationSectionText();
-          if (situ) return { i, part: sec('realheart:situation', 909, situ) };
-        } catch (err) {
-          await noteInjectProblem('realheart:situation', err);
-        } return null; })(__seq.length));
-        __seq.push((async (i) => { try {
           const work = await workSectionText();
           if (work) return { i, part: sec('realheart:work', 908, work) };
         } catch (err) {
@@ -2439,6 +2443,14 @@ const ROUND_MARK = '[本轮消息]';
         // 于是「现在是 20:30」翻成「20:31」这一下，整段上下文全部失效。
         // 实测 209 步里 31 次全量 miss、命中率从 99% 掉到 81.6%，全由这一行造成。
         // 现在把它和观测页状态放到最后：它们变化时，后面只剩那句边界提示（约 30 token）。
+        // 【你的处境】也跟着挪到这里：它写着「这一次已经跑了 …」，原来在中间，
+        // 一变就是整段上下文重算。放末尾之后，它变化只影响后面那一句边界提示。
+        try {
+          const situ = await situationSectionText();
+          if (situ) parts.push(sec('realheart:situation', 997, situ));
+        } catch (err) {
+          await noteInjectProblem('realheart:situation', err);
+        }
         try {
           const sp = await statusPageState();
           parts.push(sec('realheart:status-page', 998, sp.text));
@@ -2528,7 +2540,7 @@ const ROUND_MARK = '[本轮消息]';
         try {
           if (!globalThis.__rhInjectFp) globalThis.__rhInjectFp = new Map();
           const fp = globalThis.__rhInjectFp;
-          const EXPECTED_LATE = new Set(['realheart:clock', 'realheart:status-page', 'realheart:time', 'realheart:caps-tasks']);
+          const EXPECTED_LATE = new Set(['realheart:clock', 'realheart:status-page', 'realheart:time', 'realheart:caps-tasks', 'realheart:situation']);
           const changed = [];
           for (const p of parts) {
             const text = String(p && p.text != null ? p.text : '');
@@ -6082,7 +6094,6 @@ PY
       + (offTools.length ? `；按配置关掉了：${offTools.join(' / ')}` : ''));
   })();
 }
-
 
 
 
