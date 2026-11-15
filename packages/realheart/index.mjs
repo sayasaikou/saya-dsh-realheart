@@ -19,7 +19,7 @@
  * 那件事机器判定不了，硬判就是另一种演。先把门立起来，真假留给时间看。
  */
 
-import { Config, DEFAULTS, DSH_HOME, QQROOT, validateConfig, loadUserConfig, describeConfig, plainConfig } from './lib/config.mjs';
+import { Config, DEFAULTS, DSH_HOME, QQROOT, validateConfig, loadUserConfig, describeConfig, plainConfig, FIELD_META, REGIONS } from './lib/config.mjs';
 import { instanceTagFrom, lastInjectPaths } from './lib/instance-tag.mjs';
 import { maskSecret, pageHint, whereSecret } from './lib/secrets.mjs';
 import { sessionIdOfAssembleContext, sessionIdOfExec, moodVisibleIn, moodBleedsIn, sessionLabel } from './lib/session.mjs';
@@ -338,6 +338,17 @@ export function apply(ctx, config = {}) {
   // 配置缺损自愈：挪到这里，是因为它用 log，而 log 在上面才刚定义（TDZ）。
   try { healUserConfig(); } catch (err) { log('补默认配置时出错：' + (err?.message ?? err), 'error'); }
 
+  // 2026-11-15：分区自检。加 region 之前先立好判据 ——
+  // 任何字段没 region、或 region 写错、或没有 brief，都在启动时喊出来。
+  // 少了这条，漏一个字段在界面上就是永远看不见，而没人会去数 60 条。
+  {
+    const ids = new Set(REGIONS.map((r) => r.id));
+    const badRegion = FIELD_META.filter((f) => !f.region || !ids.has(f.region)).map((f) => f.key);
+    const noBrief = FIELD_META.filter((f) => !f.ui || !String(f.ui.brief || '').trim()).map((f) => f.key);
+    if (badRegion.length) log('配置分区自检：这些字段的 region 无效 —— ' + badRegion.join('、'), 'error');
+    if (noBrief.length) log('配置分区自检：这些字段没有 brief（界面上会缺说明）—— ' + noBrief.join('、'), 'error');
+    if (!badRegion.length && !noBrief.length) log('配置分区自检：' + FIELD_META.length + ' 个字段分在 ' + REGIONS.length + ' 个区，全部有 region 与 brief');
+  }
   // 2026-11-14：外部能力那套的导出必须真的可用。
   // 起因：0.3.3 里 estimateCost 用在了 rh_call 的成功路径上，却没进 import ——
   // 于是「钱花了、图画出来了、结果没交回去」，而且只有真调到才炸。
