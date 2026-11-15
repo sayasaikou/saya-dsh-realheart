@@ -1,3 +1,12 @@
+# 0.4.1 — 2026-11-15
+
+- **修：`freeTimeSlots` 按 JSON 编辑。** 它的 schema 是 `Schema.array(Schema.object({start,minutes}))`，
+  而生成器只看了「是不是 array」就把所有数组当逗号分隔的字符串数组 —— 显示成 `[object Object]`，
+  一保存就把自由时间的时段结构写坏。
+  现在它走 JSON 编辑器，保存前 parse，坏 JSON 直接拦住（不写盘）。
+  专项验过：默认值能 parse 出 2 条、坏 JSON 时 update 调用次数为 0。
+- 其余 5 个数组字段（voiceHints / toolsOff / moodNudgeWords / injectOffSections / freeTimeFocus）
+  确实都是字符串数组，逗号分隔是对的，保持不动。
 # 0.4.0 — 2026-11-15
 
 配置页整体重构（按两份调研的规范数字做的，不是凭手感）。
@@ -2193,4 +2202,5 @@ h-status.pid | 不停，打出是谁在用 |
 
 补记录不是为了补齐历史，是为了从这一版起，每一次「装的步骤变了 / 行为变了 / 格式变了」
 都有地方可查 —— 尤其是**怎么退**。
+
 

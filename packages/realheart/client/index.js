@@ -279,7 +279,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "key": "freeTimeSlots",
     "region": "freetime",
     "label": "哪几段",
-    "kind": "tags",
+    "kind": "code",
     "level": "caution",
     "unit": "",
     "recommend": "",
@@ -772,6 +772,11 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
 ]
 
       const NS = 'realheart'
+      /** 这几项的值是「结构」不是「文本」：界面上按 JSON 编辑，保存前要 parse。
+       *  freeTimeSlots 是 Schema.array(Schema.object(...)) —— 早先被当成分隔符数组，
+       *  会显示成 [object Object]，一保存就把它写坏。 */
+      const JSON_FIELDS = ['freeTimeSlots']
+      const isJsonField = (k) => JSON_FIELDS.indexOf(k) >= 0
       const GROUPED = REGIONS.map((r) => ({ region: r, fields: FIELDS.filter((f) => f.region === r.id) }))
                              .filter((g) => g.fields.length > 0)
 
@@ -879,6 +884,14 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
       /** 保存前的一致性校验：返回 [{key, msg}] */
       const validateAll = (v) => {
         const out = []
+        // 结构型字段先归一：界面上是字符串，校验要拿对象
+        const vv = Object.assign({}, v)
+        for (const k of JSON_FIELDS) {
+          if (typeof vv[k] === 'string') {
+            try { vv[k] = JSON.parse(vv[k]) } catch { out.push({ key: k, msg: '不是合法 JSON' }) }
+          }
+        }
+        v = vv
         const num = (k) => Number(v[k])
         if (Number.isFinite(num('pingMinMinutes')) && num('pingMinMinutes') > 0) {
           const a = num('pingMinMinutes')
@@ -970,7 +983,11 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
             kind === 'code'
               ? react.createElement('textarea', {
                   id, className: 'rh4-in rh4-code', rows,
-                  style: { minHeight: (rows * 18) + 'px' }, defaultValue: valOf(value), readOnly: !editing,
+                  style: { minHeight: (rows * 18) + 'px' },
+                  defaultValue: isJsonField(field.key)
+                    ? JSON.stringify(value === undefined ? [] : value, null, 2)
+                    : valOf(value),
+                  readOnly: !editing,
                   spellCheck: false, autoCorrect: 'off', autoCapitalize: 'off',
                   'aria-invalid': err ? 'true' : undefined,
                   'aria-describedby': err ? id + '-err' : undefined,
@@ -1155,7 +1172,19 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
             return
           }
           const patch = {}
-          for (const k of keys) patch[k] = pendingRef.current[k]
+          for (const k of keys) {
+            const raw = pendingRef.current[k]
+            if (isJsonField(k) && typeof raw === 'string') {
+              try { patch[k] = JSON.parse(raw) } catch (err) {
+                setErrs({ [k]: '不是合法 JSON：' + String((err && err.message) || err).slice(0, 60) })
+                setMsg({ ok: false, text: k + ' 不是合法 JSON，改完再存。' })
+                setConfirm(null)
+                return
+              }
+            } else {
+              patch[k] = raw
+            }
+          }
           try {
             await unwrap(await remote.settings.update(NS, patch, revision))
             setMsg({ ok: true, text: '已保存 ' + keys.length + ' 项（写入 profile，插件会热重载）' })
