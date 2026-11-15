@@ -608,12 +608,38 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "key": "injectOffSections",
     "region": "inject",
     "label": "关掉哪几段注入",
-    "kind": "tags",
+    "kind": "multi",
     "level": "caution",
     "unit": "",
     "recommend": "",
     "brief": "按段名关掉注入的某一段，空 = 全开。",
-    "detail": "默认：[]。影响：关错会让她缺一块上下文，但不会报错。"
+    "detail": "默认：[]。影响：关错会让她缺一块上下文，但不会报错。",
+    "options": [
+      "clock",
+      "mood",
+      "mood-nudge",
+      "admit",
+      "linger",
+      "reopen",
+      "hold",
+      "recall",
+      "situation",
+      "work",
+      "days",
+      "today",
+      "voice",
+      "own",
+      "exp",
+      "claim",
+      "view",
+      "where",
+      "style",
+      "pending-change",
+      "pending",
+      "status-page",
+      "kept",
+      "time"
+    ]
   },
   {
     "def": 5,
@@ -878,6 +904,8 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
        *  会显示成 [object Object]，一保存就把它写坏。 */
       const JSON_FIELDS = ['freeTimeSlots']
       const isJsonField = (k) => JSON_FIELDS.indexOf(k) >= 0
+      // 内容本身是 JSON 文本的（不一定需要 parse 回对象），也给「校验」按钮
+      const CHECKABLE = ['freeTimeSlots', 'capsJson']
       const GROUPED = REGIONS.map((r) => ({ region: r, fields: FIELDS.filter((f) => f.region === r.id) }))
                              .filter((g) => g.fields.length > 0)
 
@@ -949,6 +977,9 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
 .rh4-state{font-size:13px;color:var(--dsw-alias-label-primary,#1f2328);flex:0 0 auto}
 .rh4-state.off{color:var(--dsw-alias-label-secondary,#4a5159)}
 
+.rh4-chips{display:flex;flex-wrap:wrap;gap:6px}
+.rh4-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2,#d0d0d0);font-size:12px;line-height:18px;font-family:ui-monospace,Consolas,monospace;cursor:pointer;color:var(--dsw-alias-label-secondary,#4a5159)}
+.rh4-chip.on{background:var(--dsw-alias-bg-l2,#eef2f7);color:var(--dsw-alias-label-primary,#1f2328);border-color:var(--dsw-alias-brand-primary,#3b82f6)}
 .rh4-diff{margin-top:12px;padding:10px 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,#d0d0d0);background:var(--dsw-alias-bg-l2,#f7f8fa)}
 .rh4-diff h4{margin:0 0 6px;font-size:12px;font-weight:600}
 .rh4-diffrow{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:18px}
@@ -1067,6 +1098,32 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           react.createElement('span', { className: 'rh4-knob', 'aria-hidden': 'true' }))
       }
 
+      /** 结构型字段的「校验」按钮：当场 parse 一次，别等保存才知道 JSON 坏了。 */
+      function JsonCheck(props) {
+        const [info, setInfo] = react.useState(null)
+        return react.createElement('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
+          react.createElement('button', {
+            type: 'button', className: 'rh4-copy', title: '校验这份 JSON 能不能解析',
+            onClick: () => {
+              const text = String(props.getText() || '').trim()
+              if (!text) { setInfo({ ok: true, text: '空（等于没设）' }); return }
+              try {
+                const v = JSON.parse(text)
+                const n = Array.isArray(v) ? v.length : (v && typeof v === 'object' ? Object.keys(v).length : 0)
+                setInfo({ ok: true, text: '合法，' + (Array.isArray(v) ? n + ' 条' : n + ' 个键') })
+              } catch (err) {
+                const m = /position (\d+)/.exec(String(err && err.message))
+                const pos = m ? Number(m[1]) : -1
+                const line = pos >= 0 ? text.slice(0, pos).split('\n').length : 0
+                setInfo({ ok: false, text: '不合法' + (line ? '（第 ' + line + ' 行附近）' : '') })
+              }
+            },
+          }, '校验'),
+          info ? react.createElement('span', {
+            className: 'rh4-rec', style: info.ok ? { color: '#1a7f37' } : { color: '#b42318' },
+          }, info.text) : null)
+      }
+
       /** 一个字段。parent 只读 pendingRef，不重渲染。 */
       function Field(props) {
         const { field, value, editing, pendingRef, onDirty, errs } = props
@@ -1084,6 +1141,15 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
                 type: 'button', className: 'rh4-copy', title: '恢复成默认值',
                 onClick: () => set(field.def),
               }, '默认')
+            : null,
+          // capsJson / freeTimeSlots 这类结构型：给一个「校验」，不用等保存才知道错
+          (editing && CHECKABLE.indexOf(field.key) >= 0)
+            ? react.createElement(JsonCheck, {
+                key: 'jc', getText: () => {
+                  const p = pendingRef.current[field.key]
+                  return typeof p === 'string' ? p : valOf(p)
+                },
+              })
             : null)
 
         const blank = blankOf(field, value)
@@ -1122,6 +1188,31 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
               }),
               field.unit ? react.createElement('span', { className: 'rh4-unit' }, field.unit) : null,
               err ? react.createElement('span', { className: 'rh4-msg err' }, err) : null))
+        } else if (kind === 'multi') {
+          // 段名表：勾选而不是手打 24 个名字
+          const picked = Array.isArray(value) ? value : []
+          const toggle = (name) => {
+            const next = picked.indexOf(name) >= 0 ? picked.filter((x) => x !== name) : picked.concat([name])
+            set(next)
+          }
+          body = editing
+            ? react.createElement('div', null,
+                head,
+                react.createElement('div', { className: 'rh4-chips' },
+                  (field.options || []).map((name) => react.createElement('label', {
+                    key: name, className: 'rh4-chip' + (picked.indexOf(name) >= 0 ? ' on' : ''),
+                  },
+                    react.createElement('input', {
+                      type: 'checkbox', checked: picked.indexOf(name) >= 0,
+                      onChange: () => toggle(name),
+                    }),
+                    react.createElement('span', null, name)))),
+                react.createElement('p', { className: 'rh4-brief' },
+                  picked.length ? ('关掉 ' + picked.length + ' 段：' + picked.join('、')) : '一段都没关（全开）'))
+            : react.createElement('div', null,
+                head,
+                react.createElement('div', { className: 'rh4-val' + (picked.length ? '' : ' dim') },
+                  picked.length ? picked.join('、') : '（空 —— 全开）'))
         } else if (kind === 'code' || kind === 'tags') {
           const rows = field.key === 'capsJson' ? 22 : 6
           body = react.createElement('div', null,

@@ -855,12 +855,20 @@ export const FIELD_META = [
  * `builtins`（2026-11-04）：提示词那两项的**内置原文**。它们默认是空串
  * （空 = 用内置），所以面板光看 current 是看不出「留空会发生什么」的 ——
  * 把内置那版一并给出去，页面上就能写「留空时用的是下面这段」。 */
-export function describeConfig(current = {}, builtins = {}) {
+export function describeConfig(current = {}, builtins = {}, origins = {}) {
   const cfg = { ...DEFAULTS, ...plainConfig(current) };
+  // 2026-11-15：每项标「这个值是谁给的」。
+  // 为什么重要：设置页写的是 profile 的 YAML，观测页面板写的是 config.user.json，
+  // 而 **config.user.json 优先级更高** —— 同一个键两边都设过时，在设置页改完是看不到变化的。
+  // 之前界面上一句话都没提，表现就是「我改了怎么没生效」。
+  const hostKeys = Array.isArray(origins.hostKeys) ? origins.hostKeys : [];
+  const userKeys = Array.isArray(origins.userKeys) ? origins.userKeys : [];
+  const srcOf = (k) => (userKeys.includes(k) ? 'user' : (hostKeys.includes(k) ? 'host' : 'default'));
   return {
     regions: REGIONS,
     fields: FIELD_META.map((m) => ({
       ...m,
+      source: srcOf(m.key),
       current: cfg[m.key],
       def: DEFAULTS[m.key],
       builtin: builtins[m.key] || '',

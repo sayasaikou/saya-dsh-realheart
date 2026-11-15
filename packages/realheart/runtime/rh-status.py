@@ -484,6 +484,10 @@ table.cfg input:focus,table.cfg select:focus{outline:none;border-color:#3f5a78}
 /* 2026-11-04：提示词那两项 —— 输入框要够大，内置原文折叠起来不占版面 */
 .bi{margin-top:6px}`n.vault{margin:18px 0 0;border-top:1px solid #232a35;padding-top:12px} .vault h3{margin:0 0 6px;font-size:14px;color:#c9d1e0} .vault .btn{display:inline-block;padding:5px 12px;border-radius:8px;background:#1c2430;border:1px solid #2b3646;color:#9fd0ff;text-decoration:none;font-size:12px} .vault .btn:hover{background:#233046}.imap{margin:14px 0 0;border-top:1px solid #232a35;padding-top:10px} .imap summary{cursor:pointer;color:#8f9bb0;font-size:12px} .imap table{margin-top:10px} .imap td{padding:4px 8px;vertical-align:top}
 /* 2026-11-04: 改过的项 + 恢复默认 */
+.src{font-size:10px;padding:0 4px;border-radius:3px;border:1px solid currentColor;opacity:.85}
+.src.user{color:#0b6bcb}
+.src.host{color:#7a5af8}
+.src.def{color:#8a8f99}
 .mod{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:8px;background:#3b2f16;color:#e6c07a;font-size:11px;vertical-align:middle}
 .rst{margin-left:8px;font-size:11px;color:#8f9bb0;cursor:pointer;white-space:nowrap} .bi summary{cursor:pointer;color:#8f9bb0;font-size:12px} .bi pre{max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:8px 0 0}
 textarea.mono{line-height:1.5;white-space:pre-wrap;width:100%;max-width:640px}
@@ -1808,10 +1812,20 @@ def render_config_edit(flash=''):
             mark = (' <span class="mod">已改</span>'
                     '<label class="rst"><input type="checkbox" name="__reset__%s">恢复默认</label>'
                     % esc(f['key']))
+        # 2026-11-15：标出这个值是谁给的。
+        # 为什么非标不可：设置页（profile YAML）和本面板（config.user.json）都能改同一项，
+        # 而 config.user.json 优先级更高 —— 只在设置页改，被这边盖住时表现就是「改了没生效」。
+        src = f.get('source') or ''
+        src_html = {
+            'user': '<span class="src user" title="来自 config.user.json（本面板），优先级最高">面板</span>',
+            'host': '<span class="src host" title="来自 profile 的 YAML（设置页写入）">设置页</span>',
+            'default': '<span class="src def" title="没设过，用的是内置默认值">默认</span>',
+        }.get(src, '')
         return ('<tr class="lv-%s"><td class="lv">%s</td>'
-                '<td><b>%s</b>%s<br><span class="mono">%s</span>%s</td>'
+                '<td><b>%s</b>%s%s<br><span class="mono">%s</span>%s</td>'
                 '<td>%s</td><td class="mono">%s</td><td class="why">%s</td></tr>'
-                % (lv, LEVEL_TEXT.get(lv, lv), esc(f.get('label') or f['key']), mark, esc(f['key']), note,
+                % (lv, LEVEL_TEXT.get(lv, lv), esc(f.get('label') or f['key']), mark,
+                   (' ' + src_html) if src_html else '', esc(f['key']), note,
                    _field_input(f, cur), esc(f.get('range') or ''), esc(f.get('why') or '')))
 
     head = '<tr><th>级别</th><th>项</th><th>当前值</th><th>合法范围</th><th>改了会怎样</th></tr>'

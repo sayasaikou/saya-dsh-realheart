@@ -2712,6 +2712,9 @@ const ROUND_MARK = '[本轮消息]';
         promptVoiceTail: '但只有真有话时才算数。没话就过，空过也是对的 —— 这段不是配额。',
         promptTodayTail: '（这些是你自己做过、说过的事。不用念给他听；但他说到某件你想不起来的，就照上面的路径去翻 —— 那不是别人的事。）',
         promptMoodBan: '（知道就行，不必说出来 —— 它们不是你聊天的素材，只影响你说话的样子，不是你的话。）',
+      }, {
+        hostKeys: Object.keys(plainConfig(config)),
+        userKeys: Object.keys(plainConfig(user.config)),
       })), null, 2), 'utf8');
     } catch (err) {
       log(`写 config-schema.json 失败（面板会没有编辑区）：${err?.message ?? err}`, 'error');
