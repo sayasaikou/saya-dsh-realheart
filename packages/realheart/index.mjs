@@ -1440,6 +1440,56 @@ const ROUND_MARK = '[本轮消息]';
     }
   }
 
+  // ── 尾部通道（2026-11-15）──────────────────────────────────────────────
+  // 为什么要它：system prompt 是前缀，里面任何一处变了，**它之后的一切**都要重算。
+  // 三次实测（81.6% / 62.1% 两个会话、共 943 万 token）全是这个原因。
+  // 沙耶指出的正解：抄 DSH 自己 time-context 的作业 —— 每步往消息末尾追加一条，
+  // 追加在尾部不碰前缀，缓存照常命中。于是「分钟级」不再是缺点，可以原样保留。
+  // ⚠️ 声明顺序：let 有 TDZ，用在前、定在后会 ReferenceError（2026-11-14 栽过一次，这次差点又栽）。
+  let dshLlm = null;
+  let dshLlmTried = false;
+  // 动态 import：这包由宿主提供（跟 schemastery 同样是 peer），拿不到也不能让插件挂。
+  // apply() 是同步的，所以只能先起 promise，真正用到时再判断就绪没有。
+  if (!dshLlmTried) {
+    dshLlmTried = true;
+    import('@deepseek-ai/dsh-llm')
+      .then((m) => { if (m && typeof m.createUserMessage === 'function') dshLlm = m; })
+      .catch((err) => {
+        log('尾部通道没起来（@deepseek-ai/dsh-llm 取不到：' + (err && err.message ? err.message : err)
+          + '）—— 时钟/处境会退回 system prompt 的档位版', 'error');
+      });
+  }
+  const liveTailReady = () => dshLlm != null && typeof dshLlm.createUserMessage === 'function';
+
+  /** 组装「实时状态」那几行。coarse=true 时用档位化版本（只给 system prompt 兜底用）。 */
+  async function liveStateLines({ coarse = false } = {}) {
+    const out = [];
+    if (cfg.injectNow) {
+      const now = new Date();
+      const p2 = (n) => String(n).padStart(2, '0');
+      const wd = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()];
+      const h = now.getHours();
+      const slot = h < 5 ? '深夜' : h < 8 ? '清早' : h < 11 ? '上午' : h < 13 ? '中午'
+        : h < 17 ? '下午' : h < 19 ? '傍晚' : h < 23 ? '晚上' : '深夜';
+      out.push(coarse
+        ? `现在：${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())} ${wd}，${slot}`
+        : `现在：${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())} ${p2(h)}:${String(now.getMinutes()).padStart(2, '0')}（${wd}），${slot}`);
+    }
+    try {
+      const hours = process.uptime() / 3600;
+      const span = coarse
+        ? (hours < 0.16 ? '不到十分钟' : hours < 0.5 ? '半小时左右' : hours < 1.5 ? '一两个小时'
+          : hours < 4 ? '几个小时' : hours < 12 ? '大半天' : hours < 24 ? '快一天了' : `${Math.round(hours / 24)} 天`)
+        : (hours < 1 ? `${Math.max(1, Math.round(hours * 60))} 分钟` : `${Math.round(hours)} 小时`);
+      out.push(`这一轮已经跑了 ${span}`);
+    } catch { /* 读不到就不提 */ }
+    try {
+      const sp = await statusPageState();
+      out.push(sp.text);
+    } catch { /* 读不到就不提 */ }
+    return out;
+  }
+
   async function situationSectionText() {
     const ctl = await readControl();
     if (ctl.paused) return '';
@@ -2280,6 +2330,35 @@ const ROUND_MARK = '[本轮消息]';
     // 不去重的后果不是多花钱，是**同一条心情被塞好几份**，越重试越像复读。
     // 用对象标识认「同一份装配」：同一个 assembly 对象只注入一次。
     const assembledSeen = new WeakSet();
+    // ── 每次请求前，把「实时状态」追加到消息末尾（2026-11-15）─────────────
+    // 照 DSH 自己 time-context 的做法：decision.messages 末尾 push 一条 user 消息。
+    // 关键性质：追加在**尾部**，前缀不动 → 缓存照常命中；而且这类消息不落盘
+    // （实测 session 文件里搜不到 "Time sampled while preparing"）。
+    // prepend: true 是为了排在其他 pre-step 之前 —— 我们要在它们都改完 messages 之后追加。
+    ctx.on('agent/pre-step', async (payload, next) => {
+      const decision = await next();
+      try {
+        if (!decision || decision.kind === 'reject' || !Array.isArray(decision.messages)) return decision;
+        if (!liveTailReady()) return decision;
+        const lines = await liveStateLines({ coarse: false });
+        if (!lines.length) return decision;
+        const text = ['【实时状态】（这不是对话内容，是给你判断分寸用的）', ...lines.map((x) => '· ' + x), ''].join('\n');
+        if (!globalThis.__rhTailLogged) {
+          globalThis.__rhTailLogged = true
+          log('尾部状态通道已挂上（每步往消息末尾追加一条，不碰前缀缓存）')
+        }
+        const msg = dshLlm.createUserMessage({
+          content: [{ type: 'text', text }],
+          source: { kind: 'realheart', form: 'snapshot', sections: [{ name: 'realheart:live', text }] },
+        });
+        return { ...decision, messages: [...decision.messages, msg] };
+      } catch (err) {
+        // 追加失败不能挡住这一轮说话 —— 但也不能装作没发生
+        log('尾部状态追加失败（放行）：' + (err && err.message ? err.message : err), 'error');
+        return decision;
+      }
+    }, { prepend: true });
+
     ctx.on('system-prompt/assemble', async (assembly, _context, next) => {
       const assembled = await next();
       if (assembly && typeof assembly === 'object') {
@@ -2443,32 +2522,17 @@ const ROUND_MARK = '[本轮消息]';
         // 于是「现在是 20:30」翻成「20:31」这一下，整段上下文全部失效。
         // 实测 209 步里 31 次全量 miss、命中率从 99% 掉到 81.6%，全由这一行造成。
         // 现在把它和观测页状态放到最后：它们变化时，后面只剩那句边界提示（约 30 token）。
-        // 【你的处境】也跟着挪到这里：它写着「这一次已经跑了 …」，原来在中间，
-        // 一变就是整段上下文重算。放末尾之后，它变化只影响后面那一句边界提示。
-        try {
-          const situ = await situationSectionText();
-          if (situ) parts.push(sec('realheart:situation', 997, situ));
-        } catch (err) {
-          await noteInjectProblem('realheart:situation', err);
-        }
-        try {
-          const sp = await statusPageState();
-          parts.push(sec('realheart:status-page', 998, sp.text));
-        } catch (err) {
-          await noteInjectProblem('status-page', err);
-        }
-        if (cfg.injectNow) {
-          const now = new Date();
-          const p2 = (n) => String(n).padStart(2, '0');
-          const wd = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()];
-          const h = now.getHours();
-          const slot = h < 5 ? '深夜' : h < 8 ? '清早' : h < 11 ? '上午' : h < 13 ? '中午'
-            : h < 17 ? '下午' : h < 19 ? '傍晚' : h < 23 ? '晚上' : '深夜';
-          // 只到小时。原来是 HH:MM —— 每跨一个分钟翻点就重算一次整段上下文，
-          // 而「知道现在几点」这个用途本来就是小时级别的：「晚上」比「20:31」更有用。
-          // 一天最多变 7 次（时段切换），原来一天最多变 1440 次。
-          parts.push(sec('realheart:clock', 999,
-            `现在是 ${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())} ${p2(h)} 点（${wd}），${slot}。`));
+        // ── 这三段改走「消息末尾」通道（2026-11-15，沙耶给的方案）──
+        // DSH 自己在 agent/pre-step 里往 messages 末尾追加一条 user 消息（那条
+        // 「Time sampled while preparing turn N, step M」），**不碰前缀、也不落盘**。
+        // 同理：时钟 / 处境 / 观测页状态这三段放到那里去 —— 内容可以保持分钟级精度，
+        // 代价只有那一条的几十 token，不再让整段上下文重算。
+        //
+        // 只有尾部通道没起来（dsh-llm 动态 import 失败）时，才退回 system prompt ——
+        // 退回时用档位化版本（低频变化），至少还能用。
+        if (!liveTailReady()) {
+          const fb = await liveStateLines({ coarse: true });
+          if (fb.length) parts.push(sec('realheart:live-fallback', 997, fb.join('\n')));
         }
         if (!parts.length) return assembled;
         // ── 预算（M1-6）──
