@@ -232,27 +232,43 @@ export const RANGES = {
   indexTtlMs: { min: 60000, max: 7 * 24 * 60 * 60 * 1000 },
 };
 
+/**
+ * 宿主对 `.volatile()` 字段传进来的不是裸值，而是一个**只有一个 get 方法的壳**：
+ *   { get: () => 真值 }      （Object.keys 正好是 ['get']，JSON.stringify 出来是 {}）
+ *
+ * 2026-11-11 我把它当成「不是用户写的值」直接丢掉了 —— **那是错的**。
+ * 2026-11-15 用真的 schemastery 复现出来的：
+ *   Schema({injectNow:true}).injectNow  →  { get: [Function] }，.get() === true
+ * 也就是说 **YAML 里的值一直都在**，是读取这一层把它扔了。
+ * 后果：这台机器上「在设置页改配置」从来没生效过（来源标永远显示「默认」）。
+ *
+ * 现在先拆壳再判断类型。拆的时候 get() 可能抛（值没给时），抛了就按「没给」处理。
+ */
+const isVolatileHolder = (v) => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const ks = Object.keys(v);
+  return ks.length === 1 && ks[0] === 'get' && typeof v.get === 'function';
+};
+
 /** 只保留「能直接用的值」。
  *
- * 2026-11-11：宿主传进来的 config 里，volatile 的那些字段不是标量 ——
- * 实测是空对象（JSON.stringify 出来是 {}），在 0.2.2-rc 桌面上则是 undefined。
- * 不管它是包装、是代理还是没解析的表达式，它都不是用户写的值：
- * {...DEFAULTS, ...config} 把它当值收下，validateConfig 就会报「不是 true / false」。
- * 本插件的配置项全是标量或字符串数组，所以「对象一律丢掉」是安全的。
- * 显式写 null 的保留 —— 那是真的坏值，该报。
+ * volatile 的壳先拆开（见上）；剩下的：
+ *  · undefined —— 没给，丢掉，回落默认值
+ *  · 非数组的对象 —— 不是本插件的配置形态，丢掉
+ *  · 元素是对象的数组 —— 同样丢掉（数组型的项都是字符串数组）
+ *  · 显式写 null 的**保留** —— 那是真的坏值，该报。
  */
 export function plainConfig(obj) {
   const out = {};
-  const dropped = [];
-  for (const [k, v] of Object.entries(obj ?? {})) {
-    if (v === undefined) { dropped.push(k); continue; }
-    if (v !== null && typeof v === 'object' && !Array.isArray(v)) { dropped.push(k); continue; }
-    if (Array.isArray(v) && v.some((x) => x !== null && typeof x === 'object')) { dropped.push(k); continue; }
+  for (const [k, v0] of Object.entries(obj ?? {})) {
+    let v = v0;
+    if (isVolatileHolder(v0)) {
+      try { v = v0.get() } catch { continue; }
+    }
+    if (v === undefined) continue;
+    if (v !== null && typeof v === 'object' && !Array.isArray(v)) continue;
+    if (Array.isArray(v) && v.some((x) => x !== null && typeof x === 'object')) continue;
     out[k] = v;
-  }
-  if (dropped.length) {
-    try { out.__droppedByHost = dropped; } catch { /* 只用于诊断 */ }
-    delete out.__droppedByHost; // 不污染配置，仅在上面统计
   }
   return out;
 }

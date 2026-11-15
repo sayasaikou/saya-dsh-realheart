@@ -1,3 +1,40 @@
+# 0.5.2 — 2026-11-15（新机验收报回来的那个「大发现」，查实并修了）
+
+## 问题
+新机验收报告指出：观测页 56 个配置项的**来源标记全是「默认」**，且 profile YAML 里写着
+`injectNow: true` 而插件生效值是 `false` —— 也就是**在设置页改配置从来没生效过**。
+
+## 根因（用真的 schemastery 复现出来的，不是猜）
+宿主对 `.volatile()` 字段传进来的不是裸值，而是一个**只有一个 `get` 方法的壳**：
+
+```js
+Schema({ injectNow: true }).injectNow
+// → { get: [Function] }     Object.keys 正好是 ['get']，JSON.stringify 出来是 {}
+// → .get() === true         值一直都在
+```
+
+而 `plainConfig()`（2026-11-11 写的）把它当成「不是用户写的值」直接丢了 ——
+注释里当时写的理由是「实测是空对象 `{}`」。看对了现象，结论错了：那不是空，是没拆壳。
+
+## 修法
+`plainConfig` 先拆 volatile 壳（`Object.keys(v)` 恰好是 `['get']` 且 `typeof v.get === 'function'`），
+拆不开/`get()` 抛异常再按「没给」处理。其余判据不变（非标量丢、元素是对象的数组丢、显式 null 保留）。
+
+## 实测
+用真的 schemastery 造宿主输入（`{injectNow:true, pagePort:9000, pingMinMinutes:45, injectOffSections:['days']}`）：
+
+```
+拆壳后:   {"injectNow":true,"pagePort":9000,"pingMinMinutes":45,"injectOffSections":["days"]}
+合并生效: {"injectNow":true,"pagePort":9000}
+校验问题: 0
+来源标记: injectNow = host（设置页） / stateDir = default
+```
+
+修之前同一份输入得到的是 `{}`，全部回落默认值。
+
+## 影响面
+这条修好之后，**设置页写进 profile YAML 的改动才真正能到达插件**；
+来源标记里的「设置页」这一格也才有机会出现。
 # 0.5.1 — 2026-11-15
 
 - **每项标出来源：设置页 / 面板 / 默认。**
@@ -2252,6 +2289,7 @@ h-status.pid | 不停，打出是谁在用 |
 
 补记录不是为了补齐历史，是为了从这一版起，每一次「装的步骤变了 / 行为变了 / 格式变了」
 都有地方可查 —— 尤其是**怎么退**。
+
 
 
 
