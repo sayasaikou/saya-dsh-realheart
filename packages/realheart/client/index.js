@@ -906,89 +906,270 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
       const isJsonField = (k) => JSON_FIELDS.indexOf(k) >= 0
       // 内容本身是 JSON 文本的（不一定需要 parse 回对象），也给「校验」按钮
       const CHECKABLE = ['freeTimeSlots', 'capsJson']
+      // 分区序号只算一次：目录、区标题共用同一个编号，别两处各数一遍
+      REGIONS.forEach((r, i) => { r.no = String(i + 1).padStart(2, '0') })
       const GROUPED = REGIONS.map((r) => ({ region: r, fields: FIELDS.filter((f) => f.region === r.id) }))
                              .filter((g) => g.fields.length > 0)
 
-      // ── 样式：一次性注入，全部挂在 .rh4- 前缀下，不碰宿主 ──────────────────
+      // ── 视觉令牌（全部挂在 .rh4 上，只覆盖宿主没给的那几项）──────────────
+      // 原则：中性色占九成，品牌色只标"可交互 / 当前项"；层次靠字号+字重+前景灰三档，
+      // 不靠边框堆叠。间距一律取自 4px 刻度，避免 3/7/13 这种随手数。
       const CSS = `
-.rh4{container-type:inline-size;display:block;color:var(--dsw-alias-label-primary,#1f2328);font-size:14px;line-height:20px}
+.rh4{
+  container-type:inline-size;display:block;
+  --r4-fg1:var(--dsw-alias-label-primary,#1f2328);
+  --r4-fg2:var(--dsw-alias-label-secondary,#4a5159);
+  --r4-fg3:var(--dsw-alias-label-tertiary,#7b828b);
+  --r4-bg1:var(--dsw-alias-bg-l1,#fff);
+  --r4-bg2:var(--dsw-alias-bg-l2,#f5f6f8);
+  --r4-bg3:var(--dsw-alias-bg-l3,#eceff3);
+  --r4-line:color-mix(in srgb, var(--dsw-alias-border-l2,#d0d0d0) 70%, transparent);
+  --r4-line-strong:var(--dsw-alias-border-l2,#d0d0d0);
+  --r4-accent:var(--dsw-alias-brand-primary,#3b82f6);
+  --r4-danger:#b42318;
+  --r4-ok:#1a7f37;
+  --r4-r-sm:6px; --r4-r-md:10px; --r4-r-lg:14px;
+  --r4-sp1:4px; --r4-sp2:8px; --r4-sp3:12px; --r4-sp4:16px; --r4-sp5:24px; --r4-sp6:32px;
+  color:var(--r4-fg1);font-size:13px;line-height:20px;
+  -webkit-font-smoothing:antialiased;
+}
 .rh4 *{box-sizing:border-box}
 .rh4 [hidden]{display:none!important}
-.rh4-shell{display:flex;gap:24px;align-items:flex-start}
-.rh4-nav{flex:0 0 168px;display:flex;flex-direction:column;gap:2px;position:sticky;top:0}
-.rh4-navitem{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:6px 10px;border-radius:6px;border:0;background:transparent;color:var(--dsw-alias-label-secondary,#4a5159);font:inherit;text-align:left;cursor:pointer}
-.rh4-navitem:hover{background:var(--dsw-alias-bg-l2,#f2f4f7)}
-.rh4-navitem.on{background:var(--dsw-alias-bg-l2,#f2f4f7);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}
-.rh4-navdot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-brand-primary,#3b82f6);opacity:0;flex:0 0 auto}
-.rh4-navitem:hover .rh4-navdot,.rh4-navitem.on .rh4-navdot{opacity:.9}
+.rh4 :focus-visible{outline:2px solid var(--r4-accent);outline-offset:2px;border-radius:var(--r4-r-sm)}
+.rh4 ::placeholder{color:var(--r4-fg3)}
+
+/* 骨架：左目录 + 右内容 */
+.rh4-shell{display:flex;gap:var(--r4-sp6);align-items:flex-start}
+.rh4-nav{flex:0 0 176px;display:flex;flex-direction:column;gap:1px;position:sticky;top:0}
+.rh4-navitem{
+  position:relative;display:flex;align-items:center;gap:var(--r4-sp2);width:100%;min-height:34px;
+  padding:6px var(--r4-sp3) 6px 14px;border:0;border-radius:var(--r4-r-sm);background:transparent;
+  color:var(--r4-fg2);font:inherit;font-size:13px;text-align:left;cursor:pointer;
+  transition:background 120ms ease,color 120ms ease;
+}
+.rh4-navitem:hover{background:var(--r4-bg2);color:var(--r4-fg1)}
+.rh4-navitem.on{background:var(--r4-bg2);color:var(--r4-fg1);font-weight:600}
+.rh4-navitem.on::before{
+  content:"";position:absolute;left:4px;top:8px;bottom:8px;width:2px;border-radius:2px;background:var(--r4-accent);
+}
+.rh4-navno{
+  font-size:10.5px;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:.04em;
+  color:var(--r4-fg3);flex:0 0 auto;width:14px;
+}
+.rh4-navitem.on .rh4-navno{color:var(--r4-accent)}
 .rh4-main{flex:1 1 auto;min-width:0}
-.rh4-select{display:none;width:100%;min-height:36px;margin-bottom:16px;padding:6px 9px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2,#d0d0d0);background:var(--dsw-alias-bg-l1,#fff);color:inherit;font:inherit}
-.rh4-secwarn{display:none}
+.rh4-select{
+  display:none;width:100%;min-height:36px;margin-bottom:var(--r4-sp4);padding:6px 10px;
+  border-radius:var(--r4-r-sm);border:1px solid var(--r4-line-strong);background:var(--r4-bg1);
+  color:inherit;font:inherit;
+}
 @container (max-width: 45rem){ .rh4-shell{display:block} .rh4-nav{display:none} .rh4-select{display:block} }
 
-.rh4-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
-.rh4-search{flex:1 1 200px;min-width:0;min-height:34px;padding:6px 10px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2,#d0d0d0);background:var(--dsw-alias-bg-l1,#fff);color:inherit;font:inherit}
-.rh4-btn{min-height:32px;padding:5px 12px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2,#d0d0d0);background:var(--dsw-alias-bg-l1,#fff);color:inherit;font:inherit;cursor:pointer}
-.rh4-btn:hover{background:var(--dsw-alias-bg-l2,#f2f4f7)}
-.rh4-btn.primary{background:var(--dsw-alias-brand-primary,#3b82f6);border-color:transparent;color:#fff;font-weight:600}
-.rh4-btn:disabled{opacity:.5;cursor:not-allowed}
+/* 工具条 */
+.rh4-bar{display:flex;align-items:center;gap:var(--r4-sp2);flex-wrap:wrap;margin-bottom:var(--r4-sp5)}
+.rh4-search{
+  flex:1 1 220px;min-width:0;min-height:34px;padding:6px 10px 6px 30px;border-radius:var(--r4-r-sm);
+  border:1px solid var(--r4-line-strong);background:var(--r4-bg1) no-repeat 9px center;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%237b828b' stroke-width='2.2' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><path d='M20 20l-4.2-4.2'/></svg>");
+  color:inherit;font:inherit;font-size:13px;transition:border-color 120ms ease,box-shadow 120ms ease;
+}
+.rh4-search:focus{border-color:var(--r4-accent);box-shadow:0 0 0 3px color-mix(in srgb, var(--r4-accent) 16%, transparent)}
+.rh4-tools{display:flex;align-items:center;gap:var(--r4-sp2)}
+.rh4-vline{width:1px;height:20px;background:var(--r4-line-strong);opacity:.7;margin:0 2px}
+.rh4-btn{
+  min-height:32px;padding:5px var(--r4-sp3);border-radius:var(--r4-r-sm);border:1px solid var(--r4-line-strong);
+  background:var(--r4-bg1);color:var(--r4-fg1);font:inherit;font-size:13px;cursor:pointer;
+  transition:background 120ms ease,border-color 120ms ease,box-shadow 120ms ease;
+}
+.rh4-btn:hover{background:var(--r4-bg2)}
+.rh4-btn:active{background:var(--r4-bg3)}
+.rh4-btn.primary{
+  background:var(--r4-accent);border-color:transparent;color:#fff;font-weight:600;
+  box-shadow:0 1px 2px color-mix(in srgb, var(--r4-accent) 35%, transparent);
+}
+.rh4-btn.primary:hover{filter:brightness(1.06)}
+.rh4-btn.ghost{border-color:transparent;background:transparent;color:var(--r4-fg2)}
+.rh4-btn.ghost:hover{background:var(--r4-bg2);color:var(--r4-fg1)}
+.rh4-btn:disabled{opacity:.45;cursor:not-allowed}
+.rh4-note{
+  display:flex;gap:8px;align-items:flex-start;
+  font-size:12px;line-height:18px;color:var(--r4-fg2);margin:0 0 var(--r4-sp3);
+  padding:9px 11px;border-radius:var(--r4-r-md);background:var(--r4-bg2);
+  text-wrap:pretty;
+}
+.rh4-noteicon{
+  flex:0 0 auto;width:15px;height:15px;border-radius:50%;background:var(--r4-line-strong);
+  color:var(--r4-bg1);font-size:10px;line-height:15px;text-align:center;font-style:italic;
+  font-weight:600;margin-top:1px;
+}
+.rh4-hit{font-size:12px;line-height:18px;color:var(--r4-fg2);margin:0 0 var(--r4-sp3)}
 
-.rh4-sec{margin-bottom:24px}
-.rh4-sechead{display:flex;align-items:center;gap:10px;min-height:40px}
-.rh4-sectitle{font-size:14px;font-weight:600;margin:0}
-.rh4-secdesc{font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary,#4a5159);margin:2px 0 0}
+/* 分区：靠"顶部一道线 + 序号 + 标题"分界，不用四边卡片（窄容器下卡片边距吃宽度） */
+.rh4-sec{margin:0 0 var(--r4-sp6);padding-top:var(--r4-sp5);border-top:1px solid var(--r4-line)}
+.rh4-sec:first-of-type{border-top:0;padding-top:0}
+.rh4-sechead{display:flex;align-items:flex-start;gap:var(--r4-sp3);margin-bottom:var(--r4-sp2)}
+.rh4-secmeta{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.rh4-eyebrow{
+  display:flex;align-items:center;gap:6px;font-size:10.5px;line-height:14px;
+  letter-spacing:.09em;text-transform:uppercase;color:var(--r4-fg3);font-weight:600;
+}
+.rh4-sectitle{font-size:15px;font-weight:600;line-height:22px;margin:0;color:var(--r4-fg1);letter-spacing:-.01em}
+.rh4-secdesc{font-size:12px;line-height:17px;color:var(--r4-fg2);margin:0}
 .rh4-secgrow{flex:1 1 auto}
-.rh4-hr{height:1px;background:var(--dsw-alias-border-l2,#d0d0d0);opacity:.55;margin:8px 0 4px}
-.rh4-off{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#4a5159);padding:8px 0 12px}
+.rh4-off{
+  font-size:12px;line-height:18px;color:var(--r4-fg2);margin:var(--r4-sp2) 0 var(--r4-sp3);
+  padding:8px 10px;border-radius:var(--r4-r-sm);background:var(--r4-bg2);
+  border-left:2px solid var(--r4-line-strong);
+}
 
-.rh4-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:4px 12px}
-.rh4-f{grid-column:span 12;min-width:0;padding:10px 0}
+/* 栅格：12 列 + 容器查询；行 hover 只亮编辑态 */
+.rh4-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:2px var(--r4-sp3)}
+.rh4-f{grid-column:span 12;min-width:0;padding:var(--r4-sp2) 10px;margin:0 -10px;border-radius:var(--r4-r-sm);display:flex;flex-direction:column}
+.rh4.editing .rh4-f:hover{background:var(--r4-bg2)}
 @container (min-width: 30rem){ .rh4-f.half{grid-column:span 6} }
 @container (min-width: 48rem){ .rh4-f.half{grid-column:span 6} .rh4-f.third{grid-column:span 4} }
-.rh4-lblrow{display:flex;align-items:center;gap:6px;min-height:20px}
-.rh4-lbl{font-size:14px;font-weight:500;line-height:20px}
-.rh4-rec{font-size:11px;line-height:14px;color:var(--dsw-alias-label-secondary,#4a5159)}
-.rh4-help{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid var(--dsw-alias-border-l2,#d0d0d0);font-size:10px;line-height:1;color:var(--dsw-alias-label-secondary,#4a5159);cursor:help;user-select:none;flex:0 0 auto}
-.rh4-brief{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary,#4a5159);margin:4px 0 0;padding-left:8px;border-left:2px solid var(--dsw-alias-border-l2,#d0d0d0)}
-.rh4-in{width:100%;min-height:32px;padding:5px 9px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2,#d0d0d0);background:var(--dsw-alias-bg-l1,#fff);color:inherit;font:inherit}
-.rh4-in[readonly]{border-color:transparent;background:transparent;padding-left:0;cursor:text}
-.rh4-in:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:1px}
-.rh4-numwrap{display:flex;align-items:center;gap:6px;min-width:0}
-.rh4-num{min-inline-size:calc(6ch + 2.5rem);max-width:160px}
-.rh4-unit{font-size:12px;color:var(--dsw-alias-label-secondary,#4a5159);flex:0 0 auto}
-.rh4-code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;font-variant-ligatures:none;tab-size:2;white-space:pre-wrap;overflow-wrap:anywhere;min-height:96px;resize:vertical}
-.rh4-val{font-size:14px;line-height:20px;padding:4px 0;word-break:break-word;white-space:pre-wrap}
-.rh4-val.dim{color:var(--dsw-alias-label-secondary,#4a5159)}
-.rh4-copy{margin-left:6px;font-size:11px;padding:1px 6px;border-radius:4px;border:1px solid var(--dsw-alias-border-l2,#d0d0d0);background:transparent;color:var(--dsw-alias-label-secondary,#4a5159);cursor:pointer}
 
-/* 滑钮：52×32，整行可点，元素高 48 */
-.rh4-swrow{display:flex;align-items:center;gap:12px;min-height:48px;cursor:pointer}
+/* 一行三列时，标签折成两行的那个字段会把输入框顶下去 —— 整行看上去犬牙交错。
+   用 subgrid 让同一网格行的字段共享「标签行 / 控件行 / 备注行」三行的高度，
+   于是所有控件落在同一条基线上，备注也自然对齐。
+   （Chromium 117+ / Safari 16+ / Firefox 71+；不支持的浏览器退回上面的 flex 竖排。） */
+@supports (grid-template-rows: subgrid){
+  .rh4-f{display:grid;grid-template-rows:subgrid;grid-row:span 3;row-gap:0}
+  .rh4-f > .rh4-lblrow,.rh4-f > div{align-self:start}
+}
+
+.rh4-lblrow{display:flex;align-items:center;gap:var(--r4-sp2);min-height:20px}
+.rh4-lbl{font-size:13px;font-weight:500;line-height:20px;color:var(--r4-fg1)}
+.rh4-rec{
+  font-size:11px;line-height:16px;color:var(--r4-fg3);padding:0 6px;border-radius:999px;
+  background:var(--r4-bg2);white-space:nowrap;
+}
+.rh4-help{
+  display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;
+  border:1px solid var(--r4-line-strong);font-size:10px;line-height:1;color:var(--r4-fg3);
+  cursor:help;user-select:none;flex:0 0 auto;transition:color 120ms ease,border-color 120ms ease;
+}
+.rh4-help:hover{color:var(--r4-accent);border-color:var(--r4-accent)}
+.rh4-brief{
+  font-size:12px;line-height:17px;color:var(--r4-fg3);margin:5px 0 0;
+  max-width:62ch;text-wrap:pretty;
+}
+
+/* 输入 */
+.rh4-in{
+  width:100%;min-height:32px;padding:5px 10px;border-radius:var(--r4-r-sm);
+  border:1px solid var(--r4-line-strong);background:var(--r4-bg1);color:var(--r4-fg1);
+  font:inherit;font-size:13px;transition:border-color 120ms ease,box-shadow 120ms ease,background 120ms ease;
+}
+.rh4-in:hover{border-color:color-mix(in srgb, var(--r4-fg3) 55%, transparent)}
+.rh4-in:focus{border-color:var(--r4-accent);box-shadow:0 0 0 3px color-mix(in srgb, var(--r4-accent) 16%, transparent);outline:none}
+/* 只读：不做成"输入框长相"，让它看起来就是一段值；聚焦时才浮出描边（键盘可读仍成立） */
+.rh4-in[readonly]{
+  border-color:transparent;background:transparent;padding-left:0;padding-right:0;cursor:text;
+  color:var(--r4-fg1);
+}
+.rh4-in[readonly]:hover{border-color:transparent;background:transparent}
+.rh4-in[readonly]:focus{border-color:var(--r4-line-strong);box-shadow:none;padding-left:10px}
+.rh4-numwrap{display:flex;align-items:baseline;gap:6px;min-width:0}
+.rh4-num{min-inline-size:calc(6ch + 2.5rem);max-width:170px;font-variant-numeric:tabular-nums}
+.rh4-unit{font-size:12px;color:var(--r4-fg3);flex:0 0 auto}
+.rh4-code{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.55;
+  font-variant-ligatures:none;tab-size:2;white-space:pre-wrap;overflow-wrap:anywhere;min-height:96px;resize:vertical;
+  background:var(--r4-bg1);
+}
+.rh4-val{font-size:13px;line-height:20px;padding:4px 0;word-break:break-word;white-space:pre-wrap;color:var(--r4-fg1)}
+.rh4-val.dim{color:var(--r4-fg3)}
+/* 逗号分隔这种短值不需要整行宽，撑满反而显得空 */
+.rh4-in.rh4-short{max-width:440px}
+/* 改过的字段：左侧一道 accent 细条（inset 阴影，不占布局），一眼看出这次动了哪几项 */
+.rh4-f.dirty{box-shadow:inset 3px 0 0 var(--r4-accent);background:color-mix(in srgb, var(--r4-accent) 6%, transparent)}
+.rh4-f.dirty .rh4-lbl{font-weight:600}
+.rh4-f.dirty .rh4-lbl::after{
+  content:'';display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--r4-accent);margin-left:6px;vertical-align:2px;
+}
+.rh4-copy{
+  margin-left:6px;font-size:11px;line-height:16px;padding:1px 7px;border-radius:999px;
+  border:1px solid var(--r4-line);background:transparent;color:var(--r4-fg3);cursor:pointer;
+  transition:color 120ms ease,border-color 120ms ease,background 120ms ease;
+}
+.rh4-copy:hover{color:var(--r4-fg1);border-color:var(--r4-line-strong);background:var(--r4-bg2)}
+/* 编辑态每个字段都挂一个「默认」，常亮会跟标签抢注意力：默认半透明，指到那行才实心 */
+.rh4.editing .rh4-f .rh4-copy{opacity:.5}
+.rh4.editing .rh4-f:hover .rh4-copy,.rh4.editing .rh4-f .rh4-copy:hover,.rh4.editing .rh4-f .rh4-copy:focus-visible{opacity:1}
+
+/* 滑钮：52×32，整行可点 */
+.rh4-swrow{display:flex;align-items:center;gap:var(--r4-sp3);min-height:48px;cursor:pointer}
 .rh4-swrow.ro{cursor:default}
 .rh4-swtext{flex:1 1 auto;min-width:0}
 .rh4-sw{position:relative;flex:0 0 auto;width:52px;height:32px}
 .rh4-sw input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
-.rh4-sw input:focus-visible + .rh4-track{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:2px}
-.rh4-track{display:block;width:52px;height:32px;border-radius:999px;background:var(--dsw-alias-bg-l3,#c9ced6);border:2px solid var(--dsw-alias-border-l2,#c9ced6);transition:background 67ms linear,border-color 67ms linear;pointer-events:none}
-.rh4-knob{position:absolute;top:50%;left:5px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-bg-l1,#fff);transform:translateY(-50%);transition:left 250ms cubic-bezier(0.2,0,0,1),width 250ms cubic-bezier(0.2,0,0,1),height 250ms cubic-bezier(0.2,0,0,1);pointer-events:none;box-shadow:0 1px 2px rgba(0,0,0,.25)}
-.rh4-sw input:checked + .rh4-track{background:var(--dsw-alias-brand-primary,#3b82f6);border-color:transparent}
-.rh4-sw input:checked ~ .rh4-knob{left:24px;width:24px;height:24px}
-.rh4-sw input:disabled + .rh4-track{opacity:.12}
-.rh4-sw input:disabled ~ .rh4-knob{opacity:.38}
-.rh4-state{font-size:13px;color:var(--dsw-alias-label-primary,#1f2328);flex:0 0 auto}
-.rh4-state.off{color:var(--dsw-alias-label-secondary,#4a5159)}
+.rh4-sw input:focus-visible + .rh4-track{outline:2px solid var(--r4-accent);outline-offset:2px}
+.rh4-track{
+  display:block;width:52px;height:32px;border-radius:999px;background:color-mix(in srgb, var(--r4-fg3) 32%, var(--r4-bg1));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--r4-fg3) 30%, transparent);
+  transition:background 140ms ease,box-shadow 140ms ease;pointer-events:none;
+}
+.rh4-knob{
+  position:absolute;top:50%;left:5px;width:16px;height:16px;border-radius:50%;background:#fff;
+  transform:translateY(-50%);
+  transition:left 240ms cubic-bezier(.2,0,0,1),width 240ms cubic-bezier(.2,0,0,1),height 240ms cubic-bezier(.2,0,0,1);
+  pointer-events:none;box-shadow:0 1px 2px rgba(16,24,40,.28),0 0 0 .5px rgba(16,24,40,.06);
+}
+.rh4-sw input:checked + .rh4-track{background:var(--r4-accent);box-shadow:inset 0 0 0 1px color-mix(in srgb, #000 8%, var(--r4-accent))}
+.rh4-sw input:checked ~ .rh4-knob{left:23px;width:24px;height:24px}
+.rh4-sw input:disabled + .rh4-track{opacity:.35}
+.rh4-sw input:disabled ~ .rh4-knob{opacity:.45}
+.rh4-state{font-size:12.5px;color:var(--r4-fg2);flex:0 0 auto;font-variant-numeric:tabular-nums}
 
-.rh4-chips{display:flex;flex-wrap:wrap;gap:6px}
-.rh4-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2,#d0d0d0);font-size:12px;line-height:18px;font-family:ui-monospace,Consolas,monospace;cursor:pointer;color:var(--dsw-alias-label-secondary,#4a5159)}
-.rh4-chip.on{background:var(--dsw-alias-bg-l2,#eef2f7);color:var(--dsw-alias-label-primary,#1f2328);border-color:var(--dsw-alias-brand-primary,#3b82f6)}
-.rh4-diff{margin-top:12px;padding:10px 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,#d0d0d0);background:var(--dsw-alias-bg-l2,#f7f8fa)}
-.rh4-diff h4{margin:0 0 6px;font-size:12px;font-weight:600}
-.rh4-diffrow{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:18px}
-.rh4-msg{font-size:12px;line-height:18px;margin-top:8px}
-.rh4-msg.ok{color:#1a7f37}
-.rh4-msg.err{color:#b42318}
-.rh4-note{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#4a5159);margin:0 0 12px}
-.rh4-hit{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#4a5159);margin:0 0 8px}
+/* 段名 chips */
+.rh4-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.rh4-chip{
+  display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;
+  border:1px solid var(--r4-line-strong);font-size:11.5px;line-height:17px;
+  font-family:ui-monospace,Consolas,monospace;cursor:pointer;color:var(--r4-fg2);
+  background:var(--r4-bg1);transition:background 120ms ease,color 120ms ease,border-color 120ms ease;
+}
+.rh4-chip input{width:0;height:0;opacity:0;position:absolute}
+.rh4-chip:hover{border-color:var(--r4-fg3)}
+.rh4-chip.on{
+  background:color-mix(in srgb, var(--r4-accent) 12%, var(--r4-bg1));
+  color:var(--r4-fg1);border-color:color-mix(in srgb, var(--r4-accent) 55%, transparent);
+}
+
+/* 改动清单 */
+.rh4-diff{
+  margin:0 0 var(--r4-sp4);padding:var(--r4-sp3) var(--r4-sp4);border-radius:var(--r4-r-md);
+  border:1px solid var(--r4-line-strong);background:var(--r4-bg1);
+  box-shadow:0 1px 2px rgba(16,24,40,.04);
+}
+.rh4-diffhead{display:flex;align-items:center;gap:var(--r4-sp2);padding-bottom:9px;border-bottom:1px solid var(--r4-line-strong)}
+.rh4-diffhead h4{margin:0;font-size:12px;font-weight:600;color:var(--r4-fg1)}
+.rh4-diffhead .rh4-btn{min-height:28px;padding:2px 10px;font-size:12px}
+.rh4-diffrow{
+  display:grid;grid-template-columns:minmax(0,1fr) auto 12px auto;gap:var(--r4-sp2);align-items:baseline;
+  font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:22px;color:var(--r4-fg2);
+  padding:2px 0;
+}
+.rh4-diffkey{color:var(--r4-fg1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rh4-diffold{color:var(--r4-fg3);text-decoration:line-through;text-decoration-thickness:1.5px;justify-self:end;opacity:.9}
+.rh4-diffarrow{color:var(--r4-fg3);text-align:center}
+.rh4-diffnew{color:var(--r4-fg1);font-weight:600;justify-self:end}
+.rh4-dangerbox{
+  margin-top:var(--r4-sp2);padding:var(--r4-sp2) var(--r4-sp3);border-radius:var(--r4-r-sm);
+  background:color-mix(in srgb, var(--r4-danger) 7%, var(--r4-bg1));
+  border-left:3px solid var(--r4-danger);
+}
+.rh4-dangerbox h4{margin:0 0 4px;font-size:12px;font-weight:600;color:var(--r4-danger)}
+.rh4-dangerbox .rh4-diffrow{color:var(--r4-danger)}
+.rh4-msg{font-size:12px;line-height:18px;margin:0 0 var(--r4-sp3);padding:7px 10px;border-radius:var(--r4-r-sm)}
+.rh4-msg.ok{color:var(--r4-ok);background:color-mix(in srgb, var(--r4-ok) 8%, var(--r4-bg1))}
+.rh4-msg.err{color:var(--r4-danger);background:color-mix(in srgb, var(--r4-danger) 8%, var(--r4-bg1))}
 `
+
+      // 编辑态给根节点挂 .editing，让「行 hover 高亮」只在能改的时候出现
+      const rootClass = (editing) => 'rh4' + (editing ? ' editing' : '')
 
       const ensureCss = () => {
         try {
@@ -1126,11 +1307,24 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
 
       /** 一个字段。parent 只读 pendingRef，不重渲染。 */
       function Field(props) {
-        const { field, value, editing, pendingRef, onDirty, errs } = props
+        const { field, value, base, editing, pendingRef, onDirty, errs } = props
         const id = 'rh4-' + field.key
         const kind = field.kind
         const err = errs[field.key]
         const set = (v) => { pendingRef.current[field.key] = v; if (onDirty) onDirty(field.key) }
+
+        // 跟读回来那份比：对象/数组用 JSON 比，标量直接比
+        const pend = pendingRef.current
+        // 注意比的是 base（读回来那份）不是 value —— value 已经优先取了 pendingRef，
+        // 拿它自己跟自己比永远相等，这个标记就永远不会亮。
+        const orig = base === undefined ? undefined : base
+        const dirty = (field.key in pend) && (() => {
+          const a = pend[field.key]
+          if (a === orig) return false
+          if (a && typeof a === 'object') return JSON.stringify(a) !== JSON.stringify(orig)
+          if (orig && typeof orig === 'object') return JSON.stringify(orig) !== JSON.stringify(a)
+          return String(a === undefined ? '' : a) !== String(orig === undefined ? '' : orig)
+        })()
 
         const head = react.createElement('div', { className: 'rh4-lblrow' },
           react.createElement('label', { className: 'rh4-lbl', htmlFor: id }, field.label),
@@ -1140,7 +1334,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
             ? react.createElement('button', {
                 type: 'button', className: 'rh4-copy', title: '恢复成默认值',
                 onClick: () => set(field.def),
-              }, '默认')
+              }, '重置')
             : null,
           // capsJson / freeTimeSlots 这类结构型：给一个「校验」，不用等保存才知道错
           (editing && CHECKABLE.indexOf(field.key) >= 0)
@@ -1165,7 +1359,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
                 ? react.createElement('button', {
                     type: 'button', className: 'rh4-copy', style: { marginLeft: '6px' }, title: '恢复成默认值',
                     onClick: () => set(field.def),
-                  }, '默认')
+                  }, '重置')
                 : null),
             react.createElement(Switch, {
               id, checked: Boolean(value), readOnly: !editing,
@@ -1232,7 +1426,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
                   onChange: (e) => set(e.target.value),
                 })
               : react.createElement('input', {
-                  id, className: 'rh4-in', type: 'text', defaultValue: fmtValue(value), readOnly: !editing,
+                  id, className: 'rh4-in rh4-short', type: 'text', defaultValue: fmtValue(value), readOnly: !editing,
                   placeholder: '用逗号分隔',
                   onChange: (e) => set(toList(e.target.value)),
                 }),
@@ -1259,7 +1453,11 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
         }
 
         return react.createElement('div', {
-          className: 'rh4-f' + (kind === 'number' || kind === 'text' || kind === 'tags' ? ' third' : ''),
+          // dirty：这一项和读回来时不一样了。编辑态改了三五个字段之后，
+          // 光看控件是分不出「本来就是这值」和「我刚改的」的 —— 标出来。
+          className: 'rh4-f'
+            + (kind === 'number' || kind === 'text' || kind === 'tags' ? ' third' : '')
+            + (dirty ? ' dirty' : ''),
           key: field.key,
         },
           body,
@@ -1288,11 +1486,15 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
         const head = react.createElement('div', { className: 'rh4-sechead' },
           region.collapsible
             ? react.createElement('button', {
-                className: 'rh4-btn', style: { minHeight: '26px', padding: '1px 8px' },
+                className: 'rh4-btn ghost', style: { minHeight: '24px', padding: '0 8px', fontSize: '12px' },
                 onClick: () => setOpen(!open), 'aria-expanded': isOpen ? 'true' : 'false',
               }, isOpen ? '收起' : '展开')
             : null,
-          react.createElement('div', null,
+          // 小标题给"分区序号 + 英文 id"，长页面里扫一眼就知道走到第几段
+          react.createElement('div', { className: 'rh4-secmeta' },
+            react.createElement('div', { className: 'rh4-eyebrow' },
+              react.createElement('span', null, region.no || ''),
+              react.createElement('span', null, region.id)),
             react.createElement('h3', { className: 'rh4-sectitle' }, region.title),
             region.desc ? react.createElement('p', { className: 'rh4-secdesc' }, region.desc) : null),
           react.createElement('span', { className: 'rh4-secgrow' }),
@@ -1304,7 +1506,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
                   for (const f of fields) if (f.def !== undefined) pendingRef.current[f.key] = f.def;
                   if (onDirty) onDirty(region.id);
                 },
-              }, '本区默认')
+              }, '本区重置')
             : null,
           region.switchKey
             ? react.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
@@ -1332,7 +1534,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           ? react.createElement('div', { className: 'rh4-grid' },
               fields.map((f) => react.createElement(Field, {
                 key: f.key + ':' + gen, field: f,
-                value: live(f.key), editing, pendingRef, onDirty, errs,
+                value: live(f.key), base: values[f.key], editing, pendingRef, onDirty, errs,
               })))
           : null
 
@@ -1489,7 +1691,9 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
             className: 'rh4-search', type: 'search', placeholder: '搜配置（名字 / 说明 / 键名）',
             value: query, onChange: (e) => setQuery(e.target.value), 'aria-label': '搜配置',
           }),
-          react.createElement('button', { className: 'rh4-btn', onClick: () => void load() }, '重新读取'),
+          // 右侧动作按"读 / 写"分两簇，中间一条竖线：主次一眼分得开
+          react.createElement('div', { className: 'rh4-tools' },
+            react.createElement('button', { className: 'rh4-btn ghost', onClick: () => void load() }, '重新读取'),
           // 导出：把当前生效的整份配置变成 JSON。排查时贴给我比描述快得多（里面没有凭据）。
           react.createElement('button', {
             className: 'rh4-btn',
@@ -1523,50 +1727,65 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
               }
             },
           }, '导出 JSON'),
-          editing
-            ? react.createElement('button', {
-                className: 'rh4-btn primary',
-                onClick: () => {
-                  const keys = changedKeys()
-                  if (!keys.length) { setMsg({ ok: true, text: '没有改动。' }); return }
-                  const after = Object.assign({}, values)
-                  for (const k of keys) after[k] = pendingRef.current[k]
-                  setConfirm({ keys, danger: dangersOf(values, after) })
-                },
-              }, '保存（改动 ' + keysChanged.length + ' 项）')
-            : react.createElement('button', { className: 'rh4-btn primary', onClick: () => setEditing(true) }, '编辑'),
-          editing ? react.createElement('button', { className: 'rh4-btn', onClick: () => { pendingRef.current = {}; setEditing(false); setErrs({}); setConfirm(null); void load() } }, '放弃') : null)
+            react.createElement('span', { className: 'rh4-vline', 'aria-hidden': 'true' }),
+            editing
+              ? react.createElement('button', {
+                  className: 'rh4-btn' + (confirm ? ' ghost' : ' primary'),
+                  // 没改动就禁用；确认面板开着时也禁用 —— 主操作只有一个，在确认卡里
+                  disabled: keysChanged.length === 0 || Boolean(confirm),
+                  onClick: () => {
+                    const keys = changedKeys()
+                    if (!keys.length) return
+                    const after = Object.assign({}, values)
+                    for (const k of keys) after[k] = pendingRef.current[k]
+                    setConfirm({ keys, danger: dangersOf(values, after) })
+                  },
+                }, '保存（改动 ' + keysChanged.length + ' 项）')
+              : react.createElement('button', { className: 'rh4-btn primary', onClick: () => setEditing(true) }, '编辑'),
+            editing
+              ? react.createElement('button', {
+                  className: 'rh4-btn ghost',
+                  onClick: () => { pendingRef.current = {}; setEditing(false); setErrs({}); setConfirm(null); void load() },
+                }, '放弃')
+              : null))
 
         const diffPanel = confirm && confirm.keys.length
           ? react.createElement('div', { className: 'rh4-diff' },
-              react.createElement('h4', null, '这次要保存的改动'),
-              confirm.keys.map((k) => react.createElement('div', { className: 'rh4-diffrow', key: k },
-                k + '：' + (values[k] === undefined ? '（默认）' : valOf(values[k]))
-                  + '  →  ' + (pendingRef.current[k] === undefined ? '（默认）' : valOf(pendingRef.current[k])))),
-              (confirm.danger && confirm.danger.length)
-                ? react.createElement('div', { style: { marginTop: '8px' } },
-                    react.createElement('h4', { style: { color: '#b42318' } }, '这几项要再确认一次'),
-                    confirm.danger.map((d, i) => react.createElement('div', {
-                      key: 'd' + i, className: 'rh4-diffrow', style: { color: '#b42318' },
-                    }, '· ' + d)))
-                : null,
-              react.createElement('div', { style: { marginTop: '8px', display: 'flex', gap: '8px' } },
+              react.createElement('div', { className: 'rh4-diffhead' },
+                react.createElement('h4', null, '这次要保存的改动 · ' + confirm.keys.length + ' 项'),
+                react.createElement('span', { className: 'rh4-secgrow' }),
+                react.createElement('button', { className: 'rh4-btn ghost', onClick: () => setConfirm(null) }, '返回修改'),
                 react.createElement('button', {
                   className: 'rh4-btn primary',
                   onClick: () => void doSave(),
-                }, (confirm.danger && confirm.danger.length) ? '确认执行（有风险）' : '确认保存'),
-                react.createElement('button', { className: 'rh4-btn', onClick: () => setConfirm(null) }, '取消')))
+                }, (confirm.danger && confirm.danger.length) ? '确认执行（有风险）' : '确认保存')),
+              confirm.keys.map((k) => react.createElement('div', { className: 'rh4-diffrow', key: k },
+                react.createElement('span', { className: 'rh4-diffkey' }, k),
+                react.createElement('span', { className: 'rh4-diffold' },
+                  values[k] === undefined ? '（默认）' : valOf(values[k])),
+                react.createElement('span', { className: 'rh4-diffarrow' }, '→'),
+                react.createElement('span', { className: 'rh4-diffnew' },
+                  pendingRef.current[k] === undefined ? '（默认）' : valOf(pendingRef.current[k])))),
+              (confirm.danger && confirm.danger.length)
+                ? react.createElement('div', { className: 'rh4-dangerbox' },
+                    react.createElement('h4', null, '这几项要再确认一次'),
+                    confirm.danger.map((d, i) => react.createElement('div', {
+                      key: 'd' + i, className: 'rh4-diffrow',
+                    }, '· ' + d)))
+                : null)
           : null
 
         const nav = react.createElement('div', { className: 'rh4-nav', role: 'tablist', 'aria-label': '配置分区' },
-          GROUPED.map((g) => react.createElement('button', {
+          GROUPED.map((g, idx) => react.createElement('button', {
             key: g.region.id,
             role: 'tab',
             'aria-selected': (!q && active === g.region.id) ? 'true' : 'false',
             className: 'rh4-navitem' + ((!q && active === g.region.id) ? ' on' : ''),
             onClick: () => { setActive(g.region.id); setQuery('') },
           },
-            react.createElement('span', { className: 'rh4-navdot', 'aria-hidden': 'true' }),
+            // 序号不是装饰：九个区里靠它一眼定位，比记住标题快
+            react.createElement('span', { className: 'rh4-navno', 'aria-hidden': 'true' },
+              String(idx + 1).padStart(2, '0')),
             react.createElement('span', null, g.region.title))))
 
         const select = react.createElement('select', {
@@ -1591,15 +1810,21 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
               values, editing, pendingRef, onDirty: markDirty, errs, gen,
             })
 
-        return react.createElement('div', { className: 'rh4' },
-          react.createElement('p', { className: 'rh4-note' },
-            '这里的保存写进 profile 的 cordis.patch.yml，插件会热重载；观测页面板上那份是 config.user.json，改完要重启。两处都能改，别同时改同一项。'),
-          toolbar,
-          msg ? react.createElement('p', { className: 'rh4-msg ' + (msg.ok ? 'ok' : 'err') }, msg.text) : null,
-          diffPanel,
+        return react.createElement('div', { className: rootClass(editing) },
           react.createElement('div', { className: 'rh4-shell' },
             nav,
-            react.createElement('div', { className: 'rh4-main' }, select, body)))
+            // 工具条与内容同宽（都在右栏里）：跨过左目录会让"编辑"按钮贴到最右边，
+            // 和下面的开关、值对不齐 —— 视觉上一眼就能看出来别扭。
+            react.createElement('div', { className: 'rh4-main' },
+              select,
+              react.createElement('p', { className: 'rh4-note' },
+                react.createElement('span', { className: 'rh4-noteicon', 'aria-hidden': 'true' }, 'i'),
+                react.createElement('span', null,
+                  '这里的保存写进 profile 的 cordis.patch.yml，插件会热重载；观测页面板上那份是 config.user.json，改完要重启。两处都能改，别同时改同一项。')),
+              toolbar,
+              msg ? react.createElement('p', { className: 'rh4-msg ' + (msg.ok ? 'ok' : 'err') }, msg.text) : null,
+              diffPanel,
+              body)))
       }
 
       // remote.settings = @deepseek-ai/dsh-api-settings-controller 暴露的 settings Remote 域
