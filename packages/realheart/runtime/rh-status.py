@@ -1818,16 +1818,27 @@ def render_config_edit(flash=''):
     # 页首那四个不在这边重复出现 —— 同一个 name 提交两次，后端只会认一个，
     # 「改了没生效」会变成查不出来的怪事。
     starter_keys = {k for k, _ in STARTERS}
+    # 2026-11-15：优先按 region 分组 —— 跟设置页（左侧目录）用同一套分区。
+    # FIELD_META 里把 group 换成了 region，旧 schema 没有 region 就退回 topic，别让分组塌成一坨。
+    _regions = schema.get('regions') or []
+    _has_region = bool(_regions) and any(f.get('region') for f in schema['fields'])
     by_group = {}
     for f in schema['fields']:
         if f['key'] in starter_keys:
             continue
-        by_group.setdefault(f.get('topic') or f.get('group') or 'other', []).append(f)
+        key = (f.get('region') if _has_region else None) or f.get('topic') or f.get('group') or 'other'
+        by_group.setdefault(key, []).append(f)
+
+    if _has_region:
+        GROUP_LIST = [(r.get('id'), r.get('title') or r.get('id'), bool(r.get('defaultOpen', True)))
+                      for r in _regions]
+    else:
+        GROUP_LIST = GROUP_META
 
     tabs = []
     panels = []
     first = True
-    for gid, gname, opened in GROUP_META:
+    for gid, gname, opened in GROUP_LIST:
         fields = by_group.get(gid) or []
         if not fields:
             continue
@@ -1839,9 +1850,11 @@ def render_config_edit(flash=''):
                       % (' active' if first else '', gid, head, rows))
         first = False
     # 没归类的也列出来，不能因为写漏就消失（页首那四个除外，它们已经显示过了）
-    listed = dict((g, 1) for g, _, _ in GROUP_META)
+    listed = dict((g, 1) for g, _, _ in GROUP_LIST)
     leftover = [f for f in schema['fields']
-                if (f.get('topic') or f.get('group') or 'other') not in listed and f['key'] not in starter_keys]
+                if ((f.get('region') if _has_region else None)
+                    or f.get('topic') or f.get('group') or 'other') not in listed
+                and f['key'] not in starter_keys]
     if leftover:
         rows = ''.join(row_html(f) for f in leftover)
         tabs.append('<button type="button" class="cfgtab" data-g="__left" onclick="rhTab(this)">'

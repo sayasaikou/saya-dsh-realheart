@@ -34,6 +34,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
       /** 字段表（由 lib/config.mjs 的 FIELD_META 生成，不手抄） */
       const FIELDS = [
   {
+    "def": true,
     "key": "enabled",
     "region": "boot",
     "label": "总开关",
@@ -45,6 +46,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：true。影响：关闭后行为差异极大。"
   },
   {
+    "def": true,
     "key": "injectMood",
     "region": "inject",
     "label": "每轮注入状态",
@@ -56,6 +58,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：true。影响：关闭后她看不到自己的账，仍可写入但不受影响。"
   },
   {
+    "def": false,
     "key": "injectNow",
     "region": "inject",
     "label": "注入里带上「现在几点」",
@@ -67,6 +70,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：true。影响：每轮多几十字；用于判断「此刻合不合适说」。"
   },
   {
+    "def": true,
     "key": "injectVoice",
     "region": "inject",
     "label": "注入里告诉她「你能主动开口」",
@@ -78,6 +82,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：true。影响：关闭后主动消息显著减少（实测：写出来之前几乎不发）。"
   },
   {
+    "def": [],
     "key": "voiceHints",
     "region": "inject",
     "label": "告诉她具体怎么发（可选）",
@@ -89,6 +94,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：[]。影响：留空则只给意图、不给路径。不可自动探测，路径各机不同。"
   },
   {
+    "def": true,
     "key": "injectToday",
     "region": "inject",
     "label": "注入「今天我」",
@@ -100,6 +106,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：true。影响：每轮多一段；关闭后她对今天没有连续印象。"
   },
   {
+    "def": "",
     "key": "sayLogPath",
     "region": "paths",
     "label": "主动消息账本在哪",
@@ -111,6 +118,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：空 = 由 root/work 推导。影响：路径错则读不到已发记录。"
   },
   {
+    "def": true,
     "key": "pingContext",
     "region": "ping",
     "label": "带上她此刻的调子",
@@ -122,6 +130,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：true。影响：关闭后唤醒语气与心情脱钩。"
   },
   {
+    "def": 60,
     "key": "pingMinMinutes",
     "region": "ping",
     "label": "最短间隔",
@@ -133,6 +142,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "有就说，没有就继续睡。跟「自由时间」分开是因为两件事节奏不同 —— 自由时间做东西要连续两小时、打断就做不成；想说话却该是随时能发生的。⚠️ 成本：每次唤醒都是一次完整的模型调用（带注入）。30–60 分钟随机 ≈ 一天二十来次。"
   },
   {
+    "def": 120,
     "key": "pingMaxMinutes",
     "region": "ping",
     "label": "最长间隔",
@@ -144,6 +154,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：60。影响：必须 ≥ 最短间隔。"
   },
   {
+    "def": 9,
     "key": "pingFromHour",
     "region": "ping",
     "label": "从几点开始",
@@ -155,6 +166,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：8。影响：窗口外不唤醒。"
   },
   {
+    "def": 23,
     "key": "pingToHour",
     "region": "ping",
     "label": "到几点为止",
@@ -166,6 +178,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：23。影响：可跨零点（如 22→6）。"
   },
   {
+    "def": [],
     "key": "toolsOff",
     "region": "limits",
     "label": "关掉哪几个工具",
@@ -188,6 +201,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：自动探测。影响：填错会导致账本/脚本全面错位。"
   },
   {
+    "def": 2400,
     "key": "injectBudgetChars",
     "region": "inject",
     "label": "注入字数上限",
@@ -199,6 +213,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "超了从优先级低的那段开始裁：待改 → 没完的事 → 她留的话；心情永不裁。裁掉会记一条。调大是花钱买完整，调小是省钱买残缺。"
   },
   {
+    "def": 200,
     "key": "moodTailLines",
     "region": "inject",
     "label": "注入只读心情账本的最后几条",
@@ -210,6 +225,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "只读尾部是为了不让「账本变长」变成「每轮都变慢」。设 0 就每轮读全份 —— 账本很大时会明显拖慢。"
   },
   {
+    "def": 24,
     "key": "moodFadeHours",
     "region": "inject",
     "label": "心情多久算「旧了」",
@@ -221,6 +237,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：24。影响：不修改账本值，只影响呈现。"
   },
   {
+    "def": 6,
     "key": "bleedMinLevel",
     "region": "inject",
     "label": "别处的情绪多浓才带过来",
@@ -232,6 +249,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：7。影响：调低会更易串场。"
   },
   {
+    "def": 12,
     "key": "bleedMaxHours",
     "region": "inject",
     "label": "多新的别处情绪才会带过来",
@@ -254,6 +272,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "改之前先 export。"
   },
   {
+    "def": "127.0.0.1",
     "key": "pageBind",
     "region": "page",
     "label": "观测页绑定地址",
@@ -265,6 +284,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：127.0.0.1。影响：改 0.0.0.0 会暴露到网络，需自控访问。"
   },
   {
+    "def": true,
     "key": "freeTime",
     "region": "freetime",
     "label": "自由时间",
@@ -276,6 +296,20 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：true。影响：关闭后不触发自由时间任务。"
   },
   {
+    "def": [
+      {
+        "start": "07:00",
+        "minutes": 60
+      },
+      {
+        "start": "12:00",
+        "minutes": 60
+      },
+      {
+        "start": "20:00",
+        "minutes": 60
+      }
+    ],
     "key": "freeTimeSlots",
     "region": "freetime",
     "label": "哪几段",
@@ -287,6 +321,16 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：见配置。影响：窗口外不触发。"
   },
   {
+    "def": [
+      "AI 与科技",
+      "科学与科普",
+      "语言与文字",
+      "历史与社会",
+      "设计与建筑",
+      "游戏与虚拟世界",
+      "硬件与动手折腾",
+      "数据与统计"
+    ],
     "key": "freeTimeFocus",
     "region": "freetime",
     "label": "让她多看什么",
@@ -298,6 +342,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：[]。影响：留空则不给方向。"
   },
   {
+    "def": "freetime",
     "key": "freeTimeProfile",
     "region": "freetime",
     "label": "自由时间用哪个 profile",
@@ -309,6 +354,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：空 = 同当前。影响：填错则该会话起不来。"
   },
   {
+    "def": 8098,
     "key": "pagePort",
     "region": "page",
     "label": "观测页端口",
@@ -320,6 +366,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：8098。影响：端口冲突时页面不可用，不影响主流程。"
   },
   {
+    "def": true,
     "key": "servePage",
     "region": "page",
     "label": "开观测页",
@@ -331,6 +378,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：true。影响：关闭后无页面，也不监听端口。"
   },
   {
+    "def": 3600000,
     "key": "indexTtlMs",
     "region": "inject",
     "label": "索引重建间隔",
@@ -342,6 +390,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：60000。影响：调小更实时、IO 更频繁。"
   },
   {
+    "def": true,
     "key": "announceOnInstall",
     "region": "boot",
     "label": "首次启动提示",
@@ -364,6 +413,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：自动探测。影响：错则索引为空。"
   },
   {
+    "def": "",
     "key": "auditDir",
     "region": "paths",
     "label": "审计日志目录",
@@ -375,6 +425,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：探测。影响：错则审计为空。"
   },
   {
+    "def": "",
     "key": "historyDir",
     "region": "paths",
     "label": "对话历史目录",
@@ -397,6 +448,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：探测。影响：错则读不到人格补充。"
   },
   {
+    "def": false,
     "key": "allowManualMoodOverride",
     "region": "limits",
     "label": "允许人工改写她的心情",
@@ -408,6 +460,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：false。影响：开启后改写会明确标注「不是你自己的」。"
   },
   {
+    "def": 3,
     "key": "maxManualMoodOverridePerWeek",
     "region": "limits",
     "label": "一周最多改写几次",
@@ -419,6 +472,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：3。影响：超额拒绝写入。"
   },
   {
+    "def": "",
     "key": "ownerId",
     "region": "paths",
     "label": "他本人的号",
@@ -430,6 +484,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：空。影响：留空则不过滤，群消息可能混入。"
   },
   {
+    "def": "",
     "key": "msgsDir",
     "region": "paths",
     "label": "落盘消息目录",
@@ -441,6 +496,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：探测。影响：错则对账无数据。"
   },
   {
+    "def": "",
     "key": "promptFree",
     "region": "prompt",
     "label": "自由时间的提示词",
@@ -452,6 +508,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：内置。影响：直接决定自由时间的产出质量。"
   },
   {
+    "def": "",
     "key": "promptPing",
     "region": "prompt",
     "label": "短唤醒的提示词",
@@ -463,6 +520,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：内置。影响：直接决定唤醒时的开场行为。"
   },
   {
+    "def": "",
     "key": "promptVoiceTail",
     "region": "prompt",
     "label": "「你能主动开口」的尾句",
@@ -474,6 +532,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：内置。影响：弱化会让主动消息变少。"
   },
   {
+    "def": "",
     "key": "promptTodayTail",
     "region": "prompt",
     "label": "「今天我」的尾句",
@@ -485,6 +544,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：内置。影响：控制该段的用法约束。"
   },
   {
+    "def": "",
     "key": "promptMoodBan",
     "region": "prompt",
     "label": "心情段的禁令句",
@@ -496,6 +556,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：内置。影响：删除后她会把心情当聊天素材说出来（已对照验证）。"
   },
   {
+    "def": true,
     "key": "capsOn",
     "region": "caps",
     "label": "外部能力总开关",
@@ -507,6 +568,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：true。影响：关闭后 rh_call 直接拒调。"
   },
   {
+    "def": "",
     "key": "capsFile",
     "region": "caps",
     "label": "配方文件路径",
@@ -518,6 +580,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：空 = 账本目录下 capabilities.json。影响：设置页「外部能力」有内容时以设置页为准。"
   },
   {
+    "def": 30,
     "key": "capsDailyLimit",
     "region": "caps",
     "label": "每条能力每日上限",
@@ -529,6 +592,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：30。影响：生成类按次计费，这是成本闸。"
   },
   {
+    "def": "",
     "key": "capsJson",
     "region": "caps",
     "label": "能力配方（整份 JSON）",
@@ -540,6 +604,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：空。影响：写了就以这里为准；不含密钥，可整段分享。\n修改后需重启。"
   },
   {
+    "def": [],
     "key": "injectOffSections",
     "region": "inject",
     "label": "关掉哪几段注入",
@@ -551,6 +616,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：[]。影响：关错会让她缺一块上下文，但不会报错。"
   },
   {
+    "def": 5,
     "key": "moodShowMax",
     "region": "inject",
     "label": "心情一次摆几条",
@@ -562,6 +628,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：5。影响：调小可能丢掉「又喜又悲」并存的那一半。"
   },
   {
+    "def": 120000,
     "key": "capsTimeoutMs",
     "region": "caps",
     "label": "外部调用超时",
@@ -573,6 +640,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：120000。影响：视频类要留够（生成常需数分钟）。"
   },
   {
+    "def": 5000,
     "key": "capsPollMs",
     "region": "caps",
     "label": "异步轮询间隔",
@@ -584,6 +652,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：5000。影响：调小更快出结果但请求更多；记录里写了 pollMs 时以记录为准。"
   },
   {
+    "def": 1,
     "key": "capsRetry",
     "region": "caps",
     "label": "失败重试次数",
@@ -595,6 +664,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：1。影响：4xx 不重试（参数错重试也一样错）。"
   },
   {
+    "def": 6,
     "key": "capsConfirmPrompt",
     "region": "caps",
     "label": "提示词最短长度",
@@ -606,6 +676,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：6。影响：调 0 = 不再拦截（force 也可绕过）。"
   },
   {
+    "def": 30,
     "key": "capsMediaKeepDays",
     "region": "caps",
     "label": "媒体文件保留天数",
@@ -617,6 +688,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：30。影响：调 0 则不清理，磁盘会一直长。"
   },
   {
+    "def": 20,
     "key": "talkGapMinutes",
     "region": "inject",
     "label": "「今天聊到哪」切段间隔",
@@ -628,6 +700,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：20 分钟。影响：调小会把一段话拆散，调大可能跨到上一个话题。"
   },
   {
+    "def": 60,
     "key": "talkSummaryChars",
     "region": "inject",
     "label": "摘要字数上限",
@@ -639,6 +712,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：60。影响：太短失去信息，太长挤占预算。"
   },
   {
+    "def": 380,
     "key": "talkBudgetChars",
     "region": "inject",
     "label": "「今天聊到哪」总预算",
@@ -650,6 +724,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：380。影响：超了先丢最旧的轮，最后才丢摘要。"
   },
   {
+    "def": "",
     "key": "promptTalkSummary",
     "region": "prompt",
     "label": "摘要的指令句",
@@ -661,6 +736,30 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：空，用内置那句（含「只根据这段对话／不写动作描写」）。影响：删掉这几条约束它会开始编。"
   },
   {
+    "def": [
+      "累",
+      "难受",
+      "疼",
+      "软",
+      "困",
+      "烦",
+      "怕",
+      "慌",
+      "想哭",
+      "委屈",
+      "生气",
+      "心里堵",
+      "没劲",
+      "不想动",
+      "撑不住",
+      "松了口气",
+      "舒服",
+      "爽",
+      "开心",
+      "高兴",
+      "踏实",
+      "沉"
+    ],
     "key": "moodNudgeWords",
     "region": "inject",
     "label": "情绪词表",
@@ -672,6 +771,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：22 个常用词。影响：词太少抓不到钩子，太多会误报。"
   },
   {
+    "def": 5,
     "key": "pageRefreshSec",
     "region": "page",
     "label": "观测页自动刷新",
@@ -683,6 +783,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
     "detail": "默认：5 秒。影响：调 0 就静止，得手动刷。"
   },
   {
+    "def": 0,
     "key": "pingJitterMinutes",
     "region": "ping",
     "label": "额外抖动",
@@ -881,7 +982,32 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
       /** 只读态要显示成「开启/关闭」而不是禁用滑钮 */
       const onoff = (v) => (v ? '开启' : '关闭')
 
+      /** 「没设过」和「明确设成空」要分得开（沙耶 2026-11-15 提的）：
+       *  undefined/null → （默认 = def）；'' 或 [] → （空）
+       *  返回 { bare: boolean, hint: string } —— bare 表示值是空的，hint 是占位说明。 */
+      const blankOf = (field, v) => {
+        const none = v === undefined || v === null
+        const empty = !none && (v === '' || (Array.isArray(v) && v.length === 0))
+        if (!none && !empty) return { bare: false, hint: '' }
+        if (none) {
+          const d = field.def
+          const show = d === undefined ? '' : (typeof d === 'object' ? JSON.stringify(d) : String(d))
+          return { bare: true, hint: show ? '（默认 = ' + show + '）' : '（默认）' }
+        }
+        return { bare: true, hint: '（空）' }
+      }
+
       /** 保存前的一致性校验：返回 [{key, msg}] */
+      /** 危险改动：保存前列出来要人再点一次。 */
+      const dangersOf = (before, after) => {
+        const out = []
+        if (before.enabled !== false && after.enabled === false) out.push('关掉整个插件（不注入、不记账、工具不注册）')
+        if (String(before.capsJson || '').trim() && !String(after.capsJson || '').trim()) out.push('清空能力配方（外部能力会失效）')
+        if (Number(after.injectBudgetChars) > 0 && Number(after.injectBudgetChars) < 1000) out.push('注入预算降到 1000 字以下（大部分段落会被裁）')
+        if (Array.isArray(after.toolsOff) && Array.isArray(before.toolsOff) && after.toolsOff.length > before.toolsOff.length + 3) out.push('一次停用了 3 个以上工具')
+        return out
+      }
+
       const validateAll = (v) => {
         const out = []
         // 结构型字段先归一：界面上是字符串，校验要拿对象
@@ -952,7 +1078,15 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
         const head = react.createElement('div', { className: 'rh4-lblrow' },
           react.createElement('label', { className: 'rh4-lbl', htmlFor: id }, field.label),
           field.recommend ? react.createElement('span', { className: 'rh4-rec' }, field.recommend) : null,
-          field.detail ? react.createElement('span', { className: 'rh4-help', title: field.detail, 'aria-label': '说明' }, '?') : null)
+          field.detail ? react.createElement('span', { className: 'rh4-help', title: field.detail, 'aria-label': '说明' }, '?') : null,
+          (editing && field.def !== undefined && kind !== 'switch')
+            ? react.createElement('button', {
+                type: 'button', className: 'rh4-copy', title: '恢复成默认值',
+                onClick: () => set(field.def),
+              }, '默认')
+            : null)
+
+        const blank = blankOf(field, value)
 
         let body
         if (kind === 'switch') {
@@ -960,7 +1094,13 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           body = react.createElement('div', { className: 'rh4-swrow' + (editing ? '' : ' ro') },
             react.createElement('div', { className: 'rh4-swtext' },
               react.createElement('label', { className: 'rh4-lbl', htmlFor: id }, field.label),
-              field.detail ? react.createElement('span', { className: 'rh4-help', title: field.detail, style: { marginLeft: '6px' }, 'aria-label': '说明' }, '?') : null),
+              field.detail ? react.createElement('span', { className: 'rh4-help', title: field.detail, style: { marginLeft: '6px' }, 'aria-label': '说明' }, '?') : null,
+              (editing && field.def !== undefined)
+                ? react.createElement('button', {
+                    type: 'button', className: 'rh4-copy', style: { marginLeft: '6px' }, title: '恢复成默认值',
+                    onClick: () => set(field.def),
+                  }, '默认')
+                : null),
             react.createElement(Switch, {
               id, checked: Boolean(value), readOnly: !editing,
               onToggle: (nx) => set(nx),
@@ -970,9 +1110,15 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
             head,
             react.createElement('div', { className: 'rh4-numwrap' },
               react.createElement('input', {
-                id, className: 'rh4-in rh4-num', type: 'number', inputMode: 'decimal',
-                defaultValue: fmtValue(value), readOnly: !editing,
-                onChange: (e) => set(e.target.value === '' ? undefined : Number(e.target.value)),
+                // 用 text 不用 number：number 在只读态仍带浏览器 spinner，看着像能点。
+                id, className: 'rh4-in rh4-num', type: 'text', inputMode: 'decimal',
+                defaultValue: blank.bare ? '' : fmtValue(value),
+                placeholder: blank.bare && !editing ? blank.hint : undefined,
+                readOnly: !editing,
+                onChange: (e) => {
+                  const raw = String(e.target.value).trim();
+                  set(raw === '' ? undefined : (Number.isFinite(Number(raw)) ? Number(raw) : raw));
+                },
               }),
               field.unit ? react.createElement('span', { className: 'rh4-unit' }, field.unit) : null,
               err ? react.createElement('span', { className: 'rh4-msg err' }, err) : null))
@@ -984,9 +1130,10 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
               ? react.createElement('textarea', {
                   id, className: 'rh4-in rh4-code', rows,
                   style: { minHeight: (rows * 18) + 'px' },
-                  defaultValue: isJsonField(field.key)
+                  defaultValue: blank.bare ? '' : (isJsonField(field.key)
                     ? JSON.stringify(value === undefined ? [] : value, null, 2)
-                    : valOf(value),
+                    : valOf(value)),
+                  placeholder: blank.bare && !editing ? blank.hint : undefined,
                   readOnly: !editing,
                   spellCheck: false, autoCorrect: 'off', autoCapitalize: 'off',
                   'aria-invalid': err ? 'true' : undefined,
@@ -1005,7 +1152,10 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
             head,
             react.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } },
               react.createElement('input', {
-                id, className: 'rh4-in', type: 'text', defaultValue: fmtValue(value), readOnly: !editing,
+                id, className: 'rh4-in', type: 'text',
+                defaultValue: blank.bare ? '' : fmtValue(value),
+                placeholder: blank.bare && !editing ? blank.hint : undefined,
+                readOnly: !editing,
                 onChange: (e) => set(e.target.value),
               }),
               (!editing && isPath && typeof navigator !== 'undefined' && navigator.clipboard)
@@ -1055,6 +1205,16 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
             react.createElement('h3', { className: 'rh4-sectitle' }, region.title),
             region.desc ? react.createElement('p', { className: 'rh4-secdesc' }, region.desc) : null),
           react.createElement('span', { className: 'rh4-secgrow' }),
+          // 本区恢复默认：只对「有默认值」的项生效（路径类的 def 是 undefined，跳过）
+          (editing && fields.some((f) => f.def !== undefined))
+            ? react.createElement('button', {
+                type: 'button', className: 'rh4-copy', title: '把本区这些项都恢复成默认值（还没保存，可放弃）',
+                onClick: () => {
+                  for (const f of fields) if (f.def !== undefined) pendingRef.current[f.key] = f.def;
+                  if (onDirty) onDirty(region.id);
+                },
+              }, '本区默认')
+            : null,
           region.switchKey
             ? react.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
                 region.switchKind === 'proxy' ? react.createElement('span', { className: 'rh4-rec' }, region.proxyNote || '') : null,
@@ -1143,6 +1303,18 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
 
         react.useEffect(() => { void load() }, [load])
 
+        // Esc：先关确认面板，再退出编辑态（不保存）。挂 window 上，页面切走也会解绑。
+        react.useEffect(() => {
+          if (typeof window === 'undefined' || !window.addEventListener) return undefined
+          const onKey = (ev) => {
+            if (ev.key !== 'Escape') return
+            if (confirm) { setConfirm(null); return }
+            if (editing) { pendingRef.current = {}; setEditing(false); setErrs({}); void load() }
+          }
+          window.addEventListener('keydown', onKey)
+          return () => window.removeEventListener('keydown', onKey)
+        }, [confirm, editing, load])
+
         const markDirty = () => setTick((n) => n + 1)
 
         const changedKeys = () => {
@@ -1227,13 +1399,48 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
             value: query, onChange: (e) => setQuery(e.target.value), 'aria-label': '搜配置',
           }),
           react.createElement('button', { className: 'rh4-btn', onClick: () => void load() }, '重新读取'),
+          // 导出：把当前生效的整份配置变成 JSON。排查时贴给我比描述快得多（里面没有凭据）。
+          react.createElement('button', {
+            className: 'rh4-btn',
+            title: '把当前配置导成 JSON（不含任何 key）',
+            onClick: () => {
+              const out = { exportedAt: new Date().toISOString(), ns: NS, version: (values && values.__v) || undefined, config: {} }
+              for (const f of FIELDS) out.config[f.key] = values[f.key]
+              const text = JSON.stringify(out, null, 2)
+              try {
+                if (typeof document !== 'undefined' && typeof Blob !== 'undefined') {
+                  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = 'realheart-config-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '') + '.json'
+                  document.body.appendChild(a)
+                  a.click()
+                  document.body.removeChild(a)
+                  setTimeout(() => URL.revokeObjectURL(url), 2000)
+                  setMsg({ ok: true, text: '已导出（下载里那个 realheart-config-*.json）' })
+                } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                  navigator.clipboard.writeText(text)
+                  setMsg({ ok: true, text: '已复制到剪贴板' })
+                }
+              } catch (err) {
+                setMsg({ ok: false, text: '导出没成功：' + String((err && err.message) || err) })
+              }
+              // 两个分支都没走成（比如没有下载能力）也要说一句，别静默
+              if (!(typeof document !== 'undefined' && typeof Blob !== 'undefined')
+                && !(typeof navigator !== 'undefined' && navigator.clipboard)) {
+                setMsg({ ok: false, text: '这个环境导不出来（没有下载也没有剪贴板），可以手动复制下面搜索框里的值。' })
+              }
+            },
+          }, '导出 JSON'),
           editing
             ? react.createElement('button', {
                 className: 'rh4-btn primary',
                 onClick: () => {
                   const keys = changedKeys()
                   if (!keys.length) { setMsg({ ok: true, text: '没有改动。' }); return }
-                  setConfirm({ keys })
+                  const after = Object.assign({}, values)
+                  for (const k of keys) after[k] = pendingRef.current[k]
+                  setConfirm({ keys, danger: dangersOf(values, after) })
                 },
               }, '保存（改动 ' + keysChanged.length + ' 项）')
             : react.createElement('button', { className: 'rh4-btn primary', onClick: () => setEditing(true) }, '编辑'),
@@ -1243,9 +1450,20 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
           ? react.createElement('div', { className: 'rh4-diff' },
               react.createElement('h4', null, '这次要保存的改动'),
               confirm.keys.map((k) => react.createElement('div', { className: 'rh4-diffrow', key: k },
-                k + '：' + valOf(values[k] === undefined ? '（默认）' : values[k]) + '  →  ' + valOf(pendingRef.current[k] === undefined ? '（默认）' : pendingRef.current[k]))),
+                k + '：' + (values[k] === undefined ? '（默认）' : valOf(values[k]))
+                  + '  →  ' + (pendingRef.current[k] === undefined ? '（默认）' : valOf(pendingRef.current[k])))),
+              (confirm.danger && confirm.danger.length)
+                ? react.createElement('div', { style: { marginTop: '8px' } },
+                    react.createElement('h4', { style: { color: '#b42318' } }, '这几项要再确认一次'),
+                    confirm.danger.map((d, i) => react.createElement('div', {
+                      key: 'd' + i, className: 'rh4-diffrow', style: { color: '#b42318' },
+                    }, '· ' + d)))
+                : null,
               react.createElement('div', { style: { marginTop: '8px', display: 'flex', gap: '8px' } },
-                react.createElement('button', { className: 'rh4-btn primary', onClick: () => void doSave() }, '确认保存'),
+                react.createElement('button', {
+                  className: 'rh4-btn primary',
+                  onClick: () => void doSave(),
+                }, (confirm.danger && confirm.danger.length) ? '确认执行（有风险）' : '确认保存'),
                 react.createElement('button', { className: 'rh4-btn', onClick: () => setConfirm(null) }, '取消')))
           : null
 
