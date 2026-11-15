@@ -1126,14 +1126,19 @@ const ROUND_MARK = '[本轮消息]';
     // 所以这里做的是**呈现层的衰减**：过了一天的那几条不再占正文，收成一行点名 ——
     // 值不改、她的描述一字不改。淡不淡由她再写一条说（写了就重新回到正文）。
     if (mine.length > 1) {
+      // ⚠️ 这段文字进的是 system prompt（2026-11-15 教训）。
+      // 原来写「26 小时前」「3 小时前」—— 每跨一小时，整段前缀缓存就废一次。
+      // 精确到分钟对心情没有意义：「今天」「昨天」已经够她判断要不要接这个话头，
+      // 而"多久"的精确值只在观测页上有用（那边随便算）。
       const ago = (at) => {
         const t = Date.parse(String(at || ''));
         if (Number.isNaN(t)) return '';
         const min = (Date.now() - t) / 60000;
         if (min < 1) return '刚刚';
-        if (min < 60) return `${Math.round(min)} 分钟前`;
         const h = min / 60;
-        if (h < 24) return `${Math.round(h)} 小时前`;
+        if (h < 6) return '今天早些时候';
+        if (h < 24) return '今天';
+        if (h < 48) return '昨天';
         return `${Math.round(h / 24)} 天前`;
       };
       const lineOf = (r, withWhy = true) => {
@@ -1200,7 +1205,8 @@ const ROUND_MARK = '[本轮消息]';
     }
     if (stale) {
       lines.push(`${feeling}${lv}`);
-      lines.push(`注意：这是 ${Math.round(hours)} 小时前记的，早该淡了。别硬演，也别拿它当借口。`);
+      // 天级而不是小时级：这行进 system prompt，写到小时就是每小时一次缓存全废（2026-11-15）。
+      lines.push(`注意：这是 ${hours >= 48 ? Math.round(hours / 24) + ' 天' : '昨天以前'}前记的，早该淡了。别硬演，也别拿它当借口。`);
     } else {
       lines.push(`${feeling}${lv}`);
       if (decay) lines.push(`大概什么时候淡：${decay}`);
@@ -1825,15 +1831,18 @@ const ROUND_MARK = '[本轮消息]';
    * ⚠️ 只说事实，不带评价。写「两天前」可以，写「还没弄完」不行 ——
    * 前一个是时间，后一个是自责，而她最容易滑进后者。
    */
+  // ⚠️ 这段也进 system prompt（2026-11-15）：原来给到「37 分钟前」「5 小时前」，
+  // 每跨一个单位就整段前缀失效一次。粗到天，一天最多变两次。
   function agoText(at) {
     const t = Date.parse(at);
     if (!Number.isFinite(t)) return '';
     const mins = Math.floor((Date.now() - t) / 60000);
     if (mins < 0) return '';
     if (mins <= 5) return '刚刚';
-    if (mins < 90) return `${mins} 分钟前`;
     const hrs = Math.floor(mins / 60);
-    if (hrs < 36) return `${hrs} 小时前`;
+    if (hrs < 6) return '今天早些时候';
+    if (hrs < 24) return '今天';
+    if (hrs < 48) return '昨天';
     return `${Math.floor(hrs / 24)} 天前`;
   }
 
