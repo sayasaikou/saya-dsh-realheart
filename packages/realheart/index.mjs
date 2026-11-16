@@ -2430,12 +2430,6 @@ const ROUND_MARK = '[本轮消息]';
         } catch (err) {
           await noteInjectProblem('realheart:days', err);
         } return null; })(__seq.length));
-        __seq.push((async (i) => { try {
-          const today = await todaySectionText();
-          if (today) return { i, part: sec('realheart:today', 905, today) };
-        } catch (err) {
-          await noteInjectProblem('realheart:today', err);
-        } return null; })(__seq.length));
         try {
           const voice = voiceSectionText();
           if (voice) parts.push(sec('realheart:voice', 894, voice));
@@ -2502,7 +2496,16 @@ const ROUND_MARK = '[本轮消息]';
         }
         try {
           const ttext = await timeSenseText();
-          try {
+          // 【今天聊到过】挪到这里（2026-11-16，注入指纹监控点名的）。
+        // 它的内容随对话变，原来坐在中间 —— 一变就把后面 style/pending/kept/caps-tasks/time
+        // 全部重算。现在它后面只剩同样会变的那几段。
+        try {
+          const today = await todaySectionText();
+          if (today) parts.push(sec('realheart:today', 996, today));
+        } catch (err) {
+          await noteInjectProblem('realheart:today', err);
+        }
+        try {
           const openTasks = await openCapsTasks();
           if (openTasks.length) {
             const lines = openTasks.slice(-3).map((t) => '· ' + t.id + '（任务号 ' + t.taskId + '）'
@@ -2604,7 +2607,7 @@ const ROUND_MARK = '[本轮消息]';
         try {
           if (!globalThis.__rhInjectFp) globalThis.__rhInjectFp = new Map();
           const fp = globalThis.__rhInjectFp;
-          const EXPECTED_LATE = new Set(['realheart:clock', 'realheart:status-page', 'realheart:time', 'realheart:caps-tasks', 'realheart:situation']);
+          const EXPECTED_LATE = new Set(['realheart:clock', 'realheart:status-page', 'realheart:time', 'realheart:caps-tasks', 'realheart:situation', 'realheart:today']);
           const changed = [];
           for (const p of parts) {
             const text = String(p && p.text != null ? p.text : '');
