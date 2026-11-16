@@ -1205,7 +1205,7 @@ if (moduleLoader !== undefined && moduleLoader !== null) {
       /** 只读态要显示成「开启/关闭」而不是禁用滑钮 */
       const onoff = (v) => (v ? '开启' : '关闭')
 
-      /** 「没设过」和「明确设成空」要分得开（沙耶 2026-11-15 提的）：
+      /** 「没设过」和「明确设成空」要分得开（2026-11-15 提的）：
        *  undefined/null → （默认 = def）；'' 或 [] → （空）
        *  返回 { bare: boolean, hint: string } —— bare 表示值是空的，hint 是占位说明。 */
       const blankOf = (field, v) => {

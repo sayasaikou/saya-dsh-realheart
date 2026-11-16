@@ -29,7 +29,7 @@ const { apply } = await import('../index.mjs');
 const QQROOT = join(FAKE_HOME, 'qqbot');
 const STATE = join(QQROOT, 'work', 'realheart');
 const CLAIMS = join(STATE, 'claims.jsonl');
-const SID = 'napcat-private-1418499574-claim';
+const SID = 'napcat-private-1000000001-claim';
 
 function makeCtx() {
   const tools = new Map();

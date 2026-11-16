@@ -177,7 +177,7 @@ test('主动想起：他提到那件事时，注入里出现她以前的看法',
   try {
     await mkdir(h.msgsDir, { recursive: true });
     await writeFile(join(h.msgsDir, '2026-11-01.jsonl'),
-      JSON.stringify({ at: Date.now(), openid: '1418499574', name: 'SaYask', text: '适配层到底要不要做' }) + '\n',
+      JSON.stringify({ at: Date.now(), openid: '1000000001', name: 'SaYask', text: '适配层到底要不要做' }) + '\n',
       'utf8');
     await h.tools.get('rh_view').execute({ subject: '适配层', view: '不该做，会白白多养一层' });
     const inj = h.handlers.find((x) => x.name === 'system-prompt/assemble');
@@ -196,7 +196,7 @@ test('主动想起：没提到就不提（不刷屏）', async () => {
   try {
     await mkdir(h.msgsDir, { recursive: true });
     await writeFile(join(h.msgsDir, '2026-11-01.jsonl'),
-      JSON.stringify({ at: Date.now(), openid: '1418499574', name: 'SaYask', text: '今天天气不错' }) + '\n',
+      JSON.stringify({ at: Date.now(), openid: '1000000001', name: 'SaYask', text: '今天天气不错' }) + '\n',
       'utf8');
     await h.tools.get('rh_view').execute({ subject: '适配层', view: '不该做' });
     const inj = h.handlers.find((x) => x.name === 'system-prompt/assemble');
@@ -264,7 +264,7 @@ test('linger：写进去后会出现在注入里（带剩余分钟）', async ()
   try {
     await mkdir(h.msgsDir, { recursive: true });
     await writeFile(join(h.msgsDir, '2026-11-01.jsonl'),
-      JSON.stringify({ at: Date.now(), openid: '1418499574', text: '在吗' }) + '\n',
+      JSON.stringify({ at: Date.now(), openid: '1000000001', text: '在吗' }) + '\n',
       'utf8');
     const r = await h.tools.get('rh_control').execute({ action: 'linger', minutes: 20, why: '先想想怎么说' });
     assert.ok(!r.text.includes('没写进去'), r.text);

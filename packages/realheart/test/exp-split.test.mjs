@@ -33,7 +33,7 @@ const QQROOT = join(FAKE_HOME, 'qqbot');
 const STATE = join(QQROOT, 'work', 'realheart');
 const FREE = join(STATE, 'free-time.jsonl');
 const SMALL = join(DSH, 'realheart', 'small.jsonl');
-const SID = 'napcat-private-1418499574-exp';
+const SID = 'napcat-private-1000000001-exp';
 
 function makeCtx() {
   const tools = new Map();

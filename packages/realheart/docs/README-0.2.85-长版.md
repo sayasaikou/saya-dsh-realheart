@@ -641,7 +641,7 @@ python3 ~/qqbot/rh-status/rh-ctl.py log                     # 全部操作记录
 
 **二、她能喊停**
 → 工具 `rh_control`（pause / resume）。写进同一个 `control.jsonl`，
-记录里 `by: "her"`，跟沙耶按的分得开。
+记录里 `by: "her"`，跟用户按的分得开。
 冻结的是心情这一层（写不进、不被注入），她在 QQ 里说话不受影响。
 
 **三、留一个她自己查得到的账**

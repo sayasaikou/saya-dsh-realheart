@@ -84,7 +84,7 @@ test('voice：默认就写，而且末句是「没话就过」', async () => {
 });
 
 test('voice：配了具体路径就写进去', async () => {
-  const h = await boot({ voiceHints: ['/home/ubuntu/qqbot/work/bin/say "想说的话"'] });
+  const h = await boot({ voiceHints: ['<HOME>/qqbot/work/bin/say "想说的话"'] });
   const text = await injectedText(h);
   assert.ok(text.includes('work/bin/say'), '配了路径却没写进注入');
   await rm(h.root, { recursive: true, force: true });
@@ -171,7 +171,7 @@ test('today：activity 前面是「看了」时，作品那段不能被截掉', 
   await writeFile(join(stateDir, 'free-time.jsonl'), JSON.stringify({
     ts: todayAt(21, 20),
     activity: '看了：V2EX 热榜（中转站推广、媳妇把孩子户口落回农村、被 AI 狠狠骂）、B 站热榜（下山舞、芬兰集市）、HN（US boy names）。做了《过线》：美国名字从一种性别走到另一种。',
-    artifacts: ['/home/ubuntu/qqbot/work/pieces/crossing-2026-11-03/plate.png'],
+    artifacts: ['<HOME>/qqbot/work/pieces/crossing-2026-11-03/plate.png'],
     told_saya: true,
   }) + '\n', 'utf8');
   const h = makeCtx();
@@ -184,7 +184,7 @@ test('today：activity 前面是「看了」时，作品那段不能被截掉', 
 });
 
 // 2026-11-04：原来只取**最后一次**的 material。一天四段自由时间，前三段留的话
-// 全被最后一段挤掉 —— 沙耶要的「素材」实际只有一个槽位。
+// 全被最后一段挤掉 —— 用户要的「素材」实际只有一个槽位。
 test('today：一天留过几句 material → 都带得上，不只最后一句', async () => {
   const root = await mkdtemp(join(tmpdir(), 'rh-vt-t5-'));
   const stateDir = join(root, 'state');

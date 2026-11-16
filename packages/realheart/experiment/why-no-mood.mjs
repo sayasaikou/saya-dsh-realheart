@@ -16,7 +16,7 @@ const { apply } = await import('../index.mjs');
 
 const QQROOT = join(HOME, 'qqbot');
 const STATE = join(QQROOT, 'work', 'realheart');
-const SID = 'napcat-private-1418499574-exp';
+const SID = 'napcat-private-1000000001-exp';
 
 function makeCtx() {
   const tools = new Map();
