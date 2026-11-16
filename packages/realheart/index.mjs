@@ -2377,8 +2377,6 @@ const ROUND_MARK = '[本轮消息]';
         // 那就分不出「中午该不该说这个」和「深夜该不该开口」。人也一样：不看表就不懂分寸。
         // 为什么不做成“时间感”那段的一部分：那段说的是“距你上次开口多久”，是相对；
         // 这个说的是“现在几点”，是绝对。两件事，分开开关。
-        const mood = await moodSectionText({ sessionId: sessionIdOfAssembleContext(_context) });
-        if (mood) parts.push(sec('realheart:mood', 900, mood));
         // 2026-11-14：这十几段彼此不依赖，改成并发取 —— 原来一次一次 await，
         // 实测整段拼装 112~223ms，其中大头就耗在这串顺序 IO 上。
         const __seq = [];
@@ -2423,12 +2421,6 @@ const ROUND_MARK = '[本轮消息]';
           if (work) return { i, part: sec('realheart:work', 908, work) };
         } catch (err) {
           await noteInjectProblem('realheart:work', err);
-        } return null; })(__seq.length));
-        __seq.push((async (i) => { try {
-          const days = await recentDaysText();
-          if (days) return { i, part: sec('realheart:days', 909, days) };
-        } catch (err) {
-          await noteInjectProblem('realheart:days', err);
         } return null; })(__seq.length));
         try {
           const voice = voiceSectionText();
@@ -2499,6 +2491,22 @@ const ROUND_MARK = '[本轮消息]';
           // 【今天聊到过】挪到这里（2026-11-16，注入指纹监控点名的）。
         // 它的内容随对话变，原来坐在中间 —— 一变就把后面 style/pending/kept/caps-tasks/time
         // 全部重算。现在它后面只剩同样会变的那几段。
+        // 【你现在的状态】也放到末尾（2026-11-16，新机 R10 实测）。
+        // 她写一条心情，这一段立刻变 —— 原来它在**第一段**，一变后面全部重算，
+        // 同一回合的第二步就掉到 50% 命中。位置不影响她读到它，但要影响缓存。
+        try {
+          const mood = await moodSectionText({ sessionId: sessionIdOfAssembleContext(_context) });
+          if (mood) parts.push(sec('realheart:mood', 995, mood));
+        } catch (err) {
+          await noteInjectProblem('realheart:mood', err);
+        }
+        // 【最近几天】同理：今天发生过什么它就跟着变。
+        try {
+          const days = await recentDaysText();
+          if (days) parts.push(sec('realheart:days', 994, days));
+        } catch (err) {
+          await noteInjectProblem('realheart:days', err);
+        }
         try {
           const today = await todaySectionText();
           if (today) parts.push(sec('realheart:today', 996, today));
@@ -2607,7 +2615,7 @@ const ROUND_MARK = '[本轮消息]';
         try {
           if (!globalThis.__rhInjectFp) globalThis.__rhInjectFp = new Map();
           const fp = globalThis.__rhInjectFp;
-          const EXPECTED_LATE = new Set(['realheart:clock', 'realheart:status-page', 'realheart:time', 'realheart:caps-tasks', 'realheart:situation', 'realheart:today']);
+          const EXPECTED_LATE = new Set(['realheart:clock', 'realheart:status-page', 'realheart:time', 'realheart:caps-tasks', 'realheart:situation', 'realheart:today', 'realheart:mood', 'realheart:days']);
           const changed = [];
           for (const p of parts) {
             const text = String(p && p.text != null ? p.text : '');
@@ -2740,6 +2748,54 @@ const ROUND_MARK = '[本轮消息]';
    * 2026-10-27 她读完 `ensureRuntime` 指出来的。第一版就是这么写的，
    * 而且 `child.pid` 在 ENOENT 时是 undefined，pid 文件会写进一个 "undefined"。
    */
+  /**
+   * 怎么把「叫醒她」这件事发出去。
+   *
+   * 2026-11-16（新机验收报回来的）：Windows 上 `spawn('dsh', ...)` 一直 ENOENT —— 
+   * dsh 在 Windows 上是 `dsh.cmd`，而 Node 从 20.12 起**禁止直接 spawn .cmd/.bat**（安全修复），
+   * 走 shell 又要跟 prompt 里的引号/换行打架。所以三条路依次试：
+   *   ① 环境变量指定的可执行文件（想换就换，不写死）
+   *   ② DSH 桌面自带：用当前进程的 exe（Electron）+ ELECTRON_RUN_AS_NODE + cli.js
+   *      —— 这正是 dsh.cmd 内部那一行，只是绕开了 .cmd
+   *   ③ 最后才退回 PATH 里的 'dsh'（Linux 上就是它，一直能用）
+   */
+  function resolveDshSpawn() {
+    const envBin = process.env.REALHEART_DSH_BIN || process.env.DSH_BIN;
+    if (envBin && existsSync(envBin)) return { cmd: envBin, pre: [], extraEnv: {} };
+    // ② 桌面自带（Windows）：exe 当 node 用，跑 app.asar 里的 cli.js
+    try {
+      const exe = process.execPath;
+      if (/DeepSeek Harness\.exe$/i.test(exe)) {
+        const cli = join(dirname(exe), 'resources', 'app.asar', 'dsh', 'node_modules',
+          '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js');
+        if (existsSync(cli)) return { cmd: exe, pre: ['--expose-internals', cli], extraEnv: { ELECTRON_RUN_AS_NODE: '1' } };
+      }
+    } catch { /* 推不出来就走下一步 */ }
+    // ②' npm 全局装的 dsh（纯 node 能跑）
+    try {
+      const npmBin = join(process.env.APPDATA || '', 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
+      if (existsSync(npmBin)) return { cmd: process.execPath, pre: [npmBin], extraEnv: {} };
+    } catch { /* 同上 */ }
+    // ③ 兜底：PATH 里的 dsh
+    return { cmd: 'dsh', pre: [], extraEnv: {} };
+  }
+
+  /**
+   * 这台机器能不能用 CLI 叫醒她？
+   *
+   * 2026-11-16 实测（桌面端）：\`dsh --profile desktop …\` 直接被拒：
+   *   error: profile "desktop" is managed exclusively by the Electron application
+   * 所以「找不到 dsh」只是第一层；就算找到了，桌面端的 profile 也不许 CLI 启动。
+   * 云端（Linux）没这个限制，短唤醒一直正常。
+   *
+   * 桌面端要让「她」醒来，只能走 DSH 自己的会话机制，插件这边没有入口。
+   * 与其每轮刷一条 ENOENT，不如把限制说明白 —— 少一段不能是静默的，但也不能是噪音。
+   */
+  function desktopHostBlocksCli() {
+    try {
+      return process.platform === 'win32' && /DeepSeek Harness\.exe$/i.test(process.execPath);
+    } catch { return false; }
+  }
   function spawnReady(cmd, args, opts) {
     return new Promise((resolve) => {
       let child;
@@ -4032,8 +4088,18 @@ const ROUND_MARK = '[本轮消息]';
           const sayPath = join(QQROOT, 'work', 'bin', 'say');
           if (existsSync(sayPath)) await execFileAsync(sayPath, ['--flush']).catch(() => {});
         } catch { /* 补发失败不挡叫醒 */ }
-        const r = await spawnReady('dsh', ['--profile', cfg.freeTimeProfile, prompt], {
-          cwd: QQROOT, detached: true, stdio: 'ignore', env: process.env,
+        if (desktopHostBlocksCli()) {
+          // 桌面端：profile 被 Electron 独占，CLI 起不来。说明一次，别每轮刷 error。
+          if (!globalThis.__rhWakeSkipLogged) {
+            globalThis.__rhWakeSkipLogged = true;
+            log('短唤醒：桌面端用不了（profile 被 Electron 独占，CLI 起不来）—— 这个功能只在云端那台有效');
+          }
+          return;
+        }
+        const launch = resolveDshSpawn();
+        const r = await spawnReady(launch.cmd, [...launch.pre, '--profile', cfg.freeTimeProfile, prompt], {
+          cwd: QQROOT, detached: true, stdio: 'ignore',
+          env: { ...process.env, ...launch.extraEnv },
         });
         if (!r.ok) {
           log(`短唤醒叫不起来她：${r.error?.code === 'ENOENT' ? '找不到 dsh（PATH 变了？）' : (r.error?.message ?? r.error)}`, 'error');
@@ -4381,8 +4447,17 @@ PY
     // 2026-11-04：先把「这一段跑过了」记下来再叫。先叫后记的话，
     // 呼醒后插件崩了，重启会重算 —— 而重算看到 done 里没它，就会再叫一次。
     if (slot?.key) await markFreeDone(slot.key);
-    const r = await spawnReady('dsh', ['--profile', cfg.freeTimeProfile, await buildFreePrompt(slot)], {
-      cwd: QQROOT, detached: true, stdio: 'ignore', env: process.env,
+    if (desktopHostBlocksCli()) {
+      if (!globalThis.__rhFreeSkipLogged) {
+        globalThis.__rhFreeSkipLogged = true;
+        log('自由时间：桌面端用不了（profile 被 Electron 独占）—— 只在云端那台有效');
+      }
+      return;
+    }
+    const launch = resolveDshSpawn();
+    const r = await spawnReady(launch.cmd, [...launch.pre, '--profile', cfg.freeTimeProfile, await buildFreePrompt(slot)], {
+      cwd: QQROOT, detached: true, stdio: 'ignore',
+      env: { ...process.env, ...launch.extraEnv },
     });
     if (!r.ok) {
       // 定时器里跑的，没人看着 —— 这里打死都不能把错误冒出去

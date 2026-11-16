@@ -1,3 +1,38 @@
+# 0.5.12 — 2026-11-16（新机 0.5.8 验收报告：F 的归因 + 两个环境问题）
+
+## 一、mood / days 也挪到末尾（F/H 那条 50.2% 的真因）
+验收里 R10 掉到 50.2%，报告归因准确：她自己调 `rh_mood` 写了一条心情 →
+`mood` / `days` / `today` 三段在系统提示词里同时变掉 → 同回合第二步前缀碎一次。
+
+0.5.11 只挪了 `today`。这版把 `mood`（原来在**第一段**）和 `days` 一起挪到末尾。
+现在末尾一串全是会变的：
+
+```
+… kept → mood → days → today → caps-tasks → time → （降级兜底 live-fallback）
+```
+
+顺带说明：这不是「设计内」而是「位置错」。同一件事写成心情当然要变，
+但它在第一段，一变后面 20 多段 + 全部历史全废。
+
+## 二、Windows 上短唤醒叫不起来（两层，实测）
+1. **第一层**：`spawn('dsh', …)` 在 Windows 上 ENOENT —— dsh 是 `dsh.cmd`，
+   而 Node 从 20.12 起禁止直接 spawn `.cmd/.bat`（安全修复），走 shell 又要跟 prompt 里的引号打架。
+   → 新增 `resolveDshSpawn()`：环境变量 → DSH 桌面自带的 `exe + cli.js`（这正是 dsh.cmd 内部那一行）
+   → npm 全局的 `bin.js` → 最后才退回 PATH 里的 `dsh`（Linux 一直用它）。
+2. **第二层**：就算找到了 dsh，`dsh --profile desktop …` 也被拒：
+   ```
+   error: profile "desktop" is managed exclusively by the Electron application
+   ```
+   桌面端的 profile 不许 CLI 启动。所以**短唤醒 / 自由时间在 Windows 桌面端本质上用不了** ——
+   要让「她」醒来只能走 DSH 自己的会话机制，插件没有那个入口。
+
+改法：桌面端（`platform=win32` 且 execPath 是 DeepSeek Harness.exe）**显式跳过**，
+记一次 info 说明原因，不再每轮刷 ENOENT。云端（Linux）行为完全不变。
+
+## 三、验收报告里没问题的部分
+A–E、G 全通过，F 硬判据通过（干净轮 98.6–98.7%，cacheRead 稳定 6.8–7.1 万，没再出现 1792/23808 式恒定小值）。
+综合 90% 的构成也清楚：R1 建前缀 7.2% + 多步工具轮摊薄 + R10 那一次心情写入。
+R10 这版修完之后，同类情况应该只剩「她自己写心情那一步」的合法变化。
 # 0.5.11 — 2026-11-16（注入指纹监控抓到的第五处）
 
 ## 怎么发现的
@@ -2523,6 +2558,7 @@ h-status.pid | 不停，打出是谁在用 |
 
 补记录不是为了补齐历史，是为了从这一版起，每一次「装的步骤变了 / 行为变了 / 格式变了」
 都有地方可查 —— 尤其是**怎么退**。
+
 
 
 
