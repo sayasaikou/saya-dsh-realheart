@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { appendFile, mkdir, readFile, readdir, writeFile, copyFile, chmod, open, stat, unlink, rm } from 'node:fs/promises';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, appendFileSync, statSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, estimateCost, priceOf, pricingTable, PRICING_ASOF, FORM_LIST, KIND_LIST } from './lib/caps.mjs';
+import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, estimateCost, priceOf, pricingTable, PRICING_ASOF, FORM_LIST, KIND_LIST, paramHints, SEED_REGISTRY } from './lib/caps.mjs';
 import { promisify } from 'node:util';
 import {
   fingerprint as pendingFp,
@@ -5776,16 +5776,16 @@ PY
         '每条记录写着：能力、模型、端点、调用形态、默认参数、备注。',
         '',
         'action：',
-        '  list   —— 列出来（可带 cap 过滤：image / video / vision / tts / asr / text）',
-        '  get    —— 看一条的完整配方（id）',
-        '  add    —— 加一条（record 是完整对象）',
-        '  update —— 改一条（id + record 只写要改的字段）',
-        '  remove —— 删一条（id）',
-        '  export —— 导出全部配方（不含 key）',
-        '  import —— 导入配方数组（records）',
+        '  list    —— 列出来（可带 cap 过滤：image / video / vision / tts / asr / text）。',
+        '             **每条会告诉你「能传哪些参数」** —— 那就是 rh_call 里 params 的键。',
+        '  get     —— 一条的完整说明：参数骨架（可照抄）、每个参数干嘛、踩过的坑。调之前先看这个。',
+        '  plan    —— 用户的话太含糊时先问什么（给 cap）。问题清单里带「不答会怎么补」。',
+        '  pricing —— 内置价目表，比价用。',
+        '  add / update / remove —— 维护配方（record 是完整对象；update 只写要改的字段）。',
+        '  export / import —— 导出导入（不含 key）。',
         '',
         '调用形态只有四种：openai-chat / sync-generate / async-task / raw。',
-        '凭据不写在这里，写 keyRef：env:变量名 或 file:路径。',
+        '凭据不写在这里，写 keyRef：env:变量名 或 file:路径。缺了会明确报「缺凭据」。',
       ].join('\n'),
       parameters: {
         type: 'object',
@@ -5820,16 +5820,69 @@ PY
           if (!rows.length) {
             return { text: '（还没有可用的外部能力。要加的话用 action=add，或者在配置里填。）' };
           }
-          const lines = rows.map((r) => '· [' + r.cap + '] ' + r.name + '（id: ' + r.id + '，模型 ' + r.model + '，形态 ' + r.form + '）' + (r.notes ? ' —— ' + r.notes : ''));
-          return { text: ['可用的外部能力：', ...lines, '', '要调就 rh_call，先看配方用 action=get。'].join('\n') };
+          // 2026-11-17 重排：原来一行里塞 notes 全文（有的 300 多字），
+          // agent 读完还是不知道 params 该填什么 —— 于是瞎写尺寸、漏传参考图。
+          // 现在每条先给「能传什么」，notes 只取第一行当要点，细节留给 action=get。
+          const money = (r) => (r.free ? '免费'
+            : r.price ? (r.price.value + ' 元/' + (r.price.unit === 'per_image' ? '张' : r.price.unit === 'per_second' ? '秒' : '千token'))
+              : '价格未录');
+          const blocks = rows.map((r) => {
+            const hint = (r.params || []).map((p) => p.name + '：' + p.why).join(' ｜ ');
+            const head = '· [' + r.cap + '] ' + r.name + '  id=' + r.id + '  形态=' + r.form + '  ' + money(r);
+            // 要点要挑「不是重复能传那句话」的那条 —— 第一行通常是【怎么传】，
+            // 跟上面「能传」说的是同一件事，白占一行。
+            const noteLines = String(r.notes || '').split('\n').map((x) => x.trim()).filter(Boolean);
+            const first = noteLines.find((x) => !x.startsWith('【怎么传】')) || noteLines[0] || '';
+            return [head, '  能传: ' + (hint || '（无参数）'), first ? '  要点: ' + first : ''].filter(Boolean).join('\n');
+          });
+          return {
+            text: ['可用的外部能力（' + rows.length + ' 条）：', '', ...blocks, '',
+              '调法：rh_call { id, params } —— params 的键就用上面「能传」那些。',
+              '要看某条的完整说明和参数骨架：action=get，带 id。'].join('\n'),
+          };
         }
 
         if (action === 'get') {
           const id = String(args?.id || '').trim();
           const rec = items.find((x) => x && x.id === id);
-          if (!rec) return { text: '（没有这条：' + id + '）' };
+          if (!rec) {
+            const ids = items.map((x) => x && x.id).filter(Boolean);
+            return { text: '（没有这条：' + id + '。现有的：' + (ids.join(' / ') || '一条都没有') + '）' };
+          }
+          // 2026-11-17：原来是裸 JSON dump —— bodyExtra / submitBody 里的模板
+          // agent 看不懂，等于没说。现在先给「照着填」的形状，原始记录放最后。
           const safe = JSON.parse(JSON.stringify(rec));
-          return { text: JSON.stringify(safe, null, 2) };
+          const hint = paramHints(rec);
+          const skeleton = {};
+          for (const p of hint) {
+            const d = (rec.defaults || {})[p.name];
+            skeleton[p.name] = d !== undefined ? d
+              : (p.name === 'prompt' || p.name === 'content' ? '<' + (rec.cap === 'video' ? '拍什么' : '画什么') + '>'
+                : p.name === 'image' ? '<参考图 URL 或 data:image/…;base64，没有就不写这一项>'
+                  : p.name === 'image_url' ? '<图片 URL>'
+                    : p.name === 'messages' ? [{ role: 'user', content: '<要问什么>' }]
+                      : '<' + p.why + '>');
+          }
+          const pr = priceOf(rec);
+          const moneyLine = rec.free === true ? '免费'
+            : pr ? (pr.value + ' 元/' + (pr.unit === 'per_image' ? '张' : pr.unit === 'per_second' ? '秒' : '千token'))
+              : '（价格没录入）';
+          const lines = [
+            id + '  ' + (rec.name || '') + '  [' + (rec.cap || '') + ']',
+            '形态 ' + rec.form + ' ｜ 模型 ' + (rec.model || '-') + ' ｜ ' + moneyLine,
+            '',
+            '怎么调（照这个形状填）：',
+            'rh_call ' + JSON.stringify({ id, params: skeleton }, null, 2),
+            '',
+            '能传的参数：',
+            ...hint.map((p) => '  ' + p.name + '：' + p.why),
+            '',
+          ];
+          if (rec.notes) lines.push('踩过的坑：', String(rec.notes), '');
+          const authRef = String(rec.auth?.keyRef || '');
+          if (authRef) lines.push('凭据：' + authRef + (authRef.startsWith('env:') ? '（环境变量，得自己在系统里设）' : '（文件，得那个路径真的有 key）'), '');
+          lines.push('原始记录（要看模板细节时用）：', JSON.stringify(safe, null, 2));
+          return { text: lines.join('\n') };
         }
 
         if (action === 'pricing') {
@@ -5957,10 +6010,23 @@ PY
       description: [
         '按配方调一个外部能力：识图、生成图/视频、转语音……',
         '',
-        '先 rh_capabilities action=list 看有什么，action=get 看那条的配方（参数名就在 defaults 里）。',
-        'params 里放这次要传的东西（prompt、size、messages…），会盖掉配方里的默认值。',
+        '**先 rh_capabilities action=list** 看有什么（它会列出每条「能传哪些参数」），',
+        '**再 action=get <id>** 拿参数骨架 —— 骨架可以照着填，别自己猜键名。',
         '',
-        '生成视频这类是异步的：第一次调会返回任务号；过几分钟带 taskId 再调一次取结果。',
+        'params 里放这次要传的东西，会盖掉配方里的默认值。四种形态各自长这样：',
+        '',
+        '  sync-generate（出图）：',
+        '    { "prompt": "画什么", "size": "1024x1024", "image": "参考图地址（没有就别写这个键）" }',
+        '  async-task（出视频）：',
+        '    { "prompt": "拍什么", "ratio": "16:9", "duration": 5 }',
+        '  openai-chat（对话 / 识图）：',
+        '    { "prompt": "问什么", "image_url": "图片地址" }   或   { "messages": [{role,content}] }',
+        '  raw：bodyTemplate 里的占位符名字就是键。',
+        '',
+        '**参数名一定以 list / get 里列出来的为准** —— 不同能力的参数名不一样，',
+        '写错了会被服务端静默忽略（比如尺寸写成不支持的那一档，照样出方图，不报错）。',
+        '',
+        '生成视频这类是异步的：第一次调会返回任务号；过几分钟带 taskId 再调一次取结果（不会重复计费）。',
         '',
         '**用户的话很含糊时（「生成一张猫的图片」），别直接跑。** 先用 rh_capabilities action=plan 拿问题清单，',
         '问清楚再动手。他答完，剩下没说到的用「最便宜的那条 + 默认参数 + 你自己把提示词补成完整描述」来配，',

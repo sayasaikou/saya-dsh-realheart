@@ -33,7 +33,19 @@ async function keyOf(auth) {
   }
   if (ref.startsWith('file:')) {
     const p = ref.slice(5);
-    const v = (await readFile(p, 'utf8')).trim();
+    let raw;
+    try {
+      raw = await readFile(p, 'utf8');
+    } catch (err) {
+      // 2026-11-17：原来直接把 ENOENT 抛出去，agent 只看到「文件不存在」，
+      // 看不出这是「缺凭据」。缺什么、去哪填，得在这里说清楚。
+      if (err && err.code === 'ENOENT') {
+        throw new Error(`这条能力缺凭据：auth.keyRef 指向的文件不存在（${p}）。`
+          + '去设置页「外部能力」填 key，或者把它改成 env:环境变量名。');
+      }
+      throw err;
+    }
+    const v = String(raw).trim();
     if (!v) throw new Error(`凭据文件是空的：${p}`);
     return v;
   }
@@ -236,7 +248,132 @@ export async function runCapability(rec, params = {}, opts = {}) {
   return out;
 }
 
-/** 读注册表；文件不存在就给空表，不自动造。 */
+/**
+ * 内置的起步配方（随包发布，不是用户数据）。
+ *
+ * 为什么要有：注册表文件不存在时原来返回空表 —— 新装、换机器之后 agent 手里
+ * 一条配方都没有，只能自己拼 HTTP、自己猜参数（2026-11-17 实测：尺寸猜 1536x1024
+ * 被服务端忽略两次、参考图两轮都没传）。**有配方和没配方，是能不能用起来的差别。**
+ *
+ * 只在文件不存在时用。用户那份一旦写了，就以文件为准，这里永远不覆盖。
+ * 凭据一律写成 env:ARK_API_KEY —— 不替任何人预设它把 key 放哪。
+ */
+export const SEED_REGISTRY = [
+  {
+    id: 'ark-image-flash',
+    name: '豆包生图 flash',
+    cap: 'image',
+    form: 'sync-generate',
+    model: 'doubao-seedream-5-0-flash-260915',
+    endpoint: 'https://ark.cn-beijing.volces.com/api/v3/images/generations',
+    auth: { type: 'bearer', keyRef: 'env:ARK_API_KEY' },
+    defaults: { size: '1024x1024', response_format: 'url' },
+    price: { unit: 'per_image', value: 0.12 },
+    notes: [
+      '【怎么传】params 里加 "prompt"（必填，画什么）；可选 "size"、"image"。',
+      '【参考图】body 加 "image": "https://…" 或 "data:image/png;base64,…" —— 模型按参考图改画（图生图），',
+      '  尺寸和构图会跟着参考图走。不传就是纯文字生成。',
+      '【尺寸】默认 1024x1024。实测 2048x1312（3:2）生效；**1536x1024 会被服务端忽略、仍出方图** ——',
+      '  要横图就写 2048x1312，别写中间档。',
+      '【提示词】想让人物背对就明写「从正后方看、脸被头发挡住」；要画面里有字会糊，用「看不清的手写便签」代替。',
+    ].join('\n'),
+  },
+  {
+    id: 'ark-image-pro',
+    name: '豆包生图 pro',
+    cap: 'image',
+    form: 'sync-generate',
+    model: 'doubao-seedream-5-5-261028',
+    endpoint: 'https://ark.cn-beijing.volces.com/api/v3/images/generations',
+    auth: { type: 'bearer', keyRef: 'env:ARK_API_KEY' },
+    defaults: { size: '1024x1024', response_format: 'url' },
+    price: { unit: 'per_image', value: 0.25 },
+    notes: [
+      '【怎么传】同 flash：params 里 "prompt" 必填，可选 "size"、"image"。',
+      '【什么时候用它】只有 flash 出的质量不够才换这条 —— 贵一倍。',
+      '【额度】报 SetLimitExceeded 不是参数错，是账号的「安全体验模式」有用量上限，要去控制台放开。',
+    ].join('\n'),
+  },
+  {
+    id: 'ark-vision',
+    name: '豆包识图',
+    cap: 'vision',
+    form: 'openai-chat',
+    model: 'doubao-seed-2-1-pro-260915',
+    endpoint: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+    auth: { type: 'bearer', keyRef: 'env:ARK_API_KEY' },
+    defaults: { max_tokens: 400 },
+    notes: [
+      '【怎么传】两种都行：',
+      '  ① params 里给 "prompt" 和 "image_url"（图片 http 地址或 data:image/…;base64）—— 插件会拼成一条 messages；',
+      '  ② params 里直接给 "messages" 数组（要自定义多轮时用）。',
+      '【速度】是带思考的模型，实测 20~30 秒一张。等不起的时候别用。',
+    ].join('\n'),
+  },
+  {
+    id: 'ark-video-seedance',
+    name: '豆包生视频',
+    cap: 'video',
+    form: 'async-task',
+    model: 'doubao-seedance-2-5-260628',
+    endpoint: 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks',
+    auth: { type: 'bearer', keyRef: 'env:ARK_API_KEY' },
+    defaults: {},
+    submitBody: { content: [{ type: 'text', text: '{{prompt}}' }] },
+    resultPath: 'content.video_url',
+    pollEndpoint: 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/{{id}}',
+    price: { unit: 'per_second', value: 1.51 },
+    notes: [
+      '【怎么传】params 里给 "prompt"（写清主机位、动作、场景）；可选 "ratio"、"duration"。',
+      '【异步】第一次调用会提交任务、等一会儿；没好就返回任务号。',
+      '  拿任务号再调一次 rh_call（带 taskId）只取结果，不会重复提交、不会重复计费。',
+      '【额度】报 SetLimitExceeded 是账号用量上限，不是参数错 —— 去控制台放开。',
+    ].join('\n'),
+  },
+];
+
+/** 从一条记录里推出「这次调用能传什么参数」——给 agent 看的，不让它猜。 */
+export function paramHints(rec) {
+  const form = String(rec?.form || '');
+  const cap = String(rec?.cap || '');
+  const out = [];
+  // 这些是「实现细节」，agent 传了既没好处还可能传错。只对应内部占位符。
+  const HIDDEN = new Set(['id', 'response_format']);
+
+  const add = (name, why) => {
+    if (HIDDEN.has(name) || out.some((x) => x.name === name)) return;
+    out.push({ name, why });
+  };
+
+  // 先放「这一形态真正要人拿主意」的那几个，顺序按人想事情的顺序
+  if (form === 'sync-generate') {
+    add('prompt', '必填 —— 画什么（主体 + 场景 + 风格）');
+    add('size', '可选 —— 尺寸，默认 ' + JSON.stringify(rec?.defaults?.size ?? '1024x1024'));
+    add('image', '可选 —— 参考图（http 地址或 data:image/…;base64）；给了就按图改画');
+  } else if (form === 'async-task') {
+    add('prompt', '必填 —— 拍什么（主体 + 动作 + 主机位）');
+    add('ratio', '可选 —— 画面比例，如 "16:9" / "9:16"');
+    add('duration', '可选 —— 时长（秒）');
+    add('image_url', '可选 —— 首帧图，给了就是图生视频');
+  } else if (form === 'openai-chat') {
+    add('prompt', '要问什么');
+    if (cap === 'vision') add('image_url', '识图要给图：http 地址或 data:image/…;base64');
+    add('messages', '可选 —— 自己拼完整 messages 数组（要多轮时用）');
+    add('max_tokens', '可选 —— 回答长度上限，默认 ' + JSON.stringify(rec?.defaults?.max_tokens ?? 400));
+  } else if (form === 'raw') {
+    add('（任意）', 'bodyTemplate 里出现的占位符名都能传');
+  }
+
+  // 再把记录自己声明的默认值补上（有就补，没就跳过）
+  for (const k of Object.keys(rec?.defaults || {})) add(k, '默认 ' + JSON.stringify(rec.defaults[k]));
+  // ⚠️ 只从 **提交用的模板** 里推参数。pollEndpoint 里的 {{id}} 是轮询任务号，
+  // 不是用户要传的东西 —— 列进「能传」会让 agent 以为得自己给任务号。
+  const blob = JSON.stringify([rec?.submitBody, rec?.bodyExtra, rec?.bodyTemplate].filter(Boolean));
+  for (const m of blob.matchAll(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g)) add(m[1], '模板占位符');
+  return out;
+}
+
+/** 读注册表；文件不存在就用内置 seed（不是空表）。 */
 export async function loadRegistry(file) {
   try {
     const raw = await readFile(file, 'utf8');
@@ -245,7 +382,7 @@ export async function loadRegistry(file) {
     if (Array.isArray(j.items)) return j;
     return { items: [] };
   } catch (err) {
-    if (err && err.code === 'ENOENT') return { items: [] };
+    if (err && err.code === 'ENOENT') return { items: SEED_REGISTRY.map((x) => ({ ...x })) };
     throw err;
   }
 }
@@ -275,6 +412,13 @@ export function summarize(reg, cap) {
   return pickd.map((x) => ({
     id: x.id, name: x.name || x.id, cap: x.cap, model: x.model,
     form: x.form, notes: x.notes || '',
+    // 2026-11-17：这两项是「能不能用起来」的关键 —— 原来只给 notes，
+    // agent 看完不知道 params 该填什么，只能瞎写尺寸、漏掉参考图。
+    params: paramHints(x),
+    defaults: x.defaults || {},
+    price: x.price || null,
+    free: x.free === true,
+    seeded: SEED_REGISTRY.some((y) => y.id === x.id) && !x.auth?.keyRef?.startsWith('file:'),
   }));
 }
 
