@@ -34,6 +34,7 @@ import { appendFile, mkdir, readFile, readdir, writeFile, copyFile, chmod, open,
 import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, appendFileSync, statSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, estimateCost, priceOf, pricingTable, PRICING_ASOF, FORM_LIST, KIND_LIST, paramHints, SEED_REGISTRY } from './lib/caps.mjs';
+import { CATALOG, flattenCatalog, findCatalogModel, buildRecordFromCatalog } from './lib/catalog.mjs';
 import { promisify } from 'node:util';
 import {
   fingerprint as pendingFp,
@@ -5779,6 +5780,8 @@ PY
         '  list    —— 列出来（可带 cap 过滤：image / video / vision / tts / asr / text）。',
         '             **每条会告诉你「能传哪些参数」** —— 那就是 rh_call 里 params 的键。',
         '  get     —— 一条的完整说明：参数骨架（可照抄）、每个参数干嘛、踩过的坑。调之前先看这个。',
+        '  catalog —— **看有哪些型号可以直接装**（内置厂商目录）。用户说要能生图/生视频但还没配的时候先看这个。',
+        '  setup   —— **填个 key 就装好一条**（model + keyRef）。会自动带上该型号的端点、参数表、提示词规范、踩过的坑。',
         '  plan    —— 用户的话太含糊时先问什么（给 cap）。问题清单里带「不答会怎么补」。',
         '  pricing —— 内置价目表，比价用。',
         '  add / update / remove —— 维护配方（record 是完整对象；update 只写要改的字段）。',
@@ -5790,7 +5793,9 @@ PY
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['list', 'get', 'plan', 'pricing', 'add', 'update', 'remove', 'export', 'import'], description: '要做什么' },
+          action: { type: 'string', enum: ['list', 'get', 'catalog', 'setup', 'plan', 'pricing', 'add', 'update', 'remove', 'export', 'import'], description: '要做什么' },
+          model: { type: 'string', description: 'setup 用：action=catalog 里看到的型号（如 volcengine/doubao-seedream-5-0-flash-260915）' },
+          keyRef: { type: 'string', description: 'setup 用：凭据写哪。不填就用该厂商默认的环境变量名（如 env:ARK_API_KEY）' },
           cap: { type: 'string', description: 'list 时按能力过滤' },
           id: { type: 'string', description: 'get / update / remove 的记录 id' },
           record: { type: 'object', description: 'add / update 的记录内容' },
@@ -5944,6 +5949,73 @@ PY
           ];
           if (rec.notes) lines.push('', '（这条的备注：' + rec.notes + '）');
           return { text: lines.join('\n') };
+        }
+
+        if (action === 'catalog') {
+          // 2026-11-17：用户手上只有一把 key 的时候，他不知道该填什么端点、参数叫什么、
+          // 尺寸有几档。这一支把「我们认识的型号」摊开 —— 选一个，setup 直接带出整套规范。
+          const all = flattenCatalog();
+          const byVendor = new Map();
+          for (const x of all) {
+            if (!byVendor.has(x.vendor)) byVendor.set(x.vendor, []);
+            byVendor.get(x.vendor).push(x);
+          }
+          const lines = ['能直接装的型号（共 ' + all.length + ' 个）：', ''];
+          for (const [, list] of byVendor) {
+            const v = list[0];
+            lines.push('【' + v.vendorName + '】凭据默认 env:' + v.keyEnv + '  ·  ' + v.keyNote);
+            for (const x of list) {
+              const wantId = x.vendor + '-' + x.model.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+              const installed = items.some((it) => it && it.id === wantId);
+              lines.push('  · ' + x.catalogId + '  ' + x.name + '  [' + x.cap + ']'
+                + (x.price ? '  ' + x.price.value + ' 元/' + (x.price.unit === 'per_image' ? '张' : '秒') : '')
+                + (installed ? '  ← 已经装了' : ''));
+            }
+            lines.push('');
+          }
+          lines.push('装一条：rh_capabilities action=setup model=<上面那串>');
+          lines.push('  用自己的 key：再加 keyRef:"env:你的变量名" 或 keyRef:"file:/绝对/路径"');
+          lines.push('  目录里没有的厂商：用 action=add 手写一条（form 只有四种：' + FORM_LIST.join(' / ') + '）。');
+          return { text: lines.join('\n') };
+        }
+
+        if (action === 'setup') {
+          const needle = String(args?.model || args?.id || '').trim();
+          if (!needle) return { text: '（setup 要给 model。先 rh_capabilities action=catalog 看有哪些型号。）' };
+          const entry = findCatalogModel(needle);
+          if (!entry) {
+            const ids = flattenCatalog().map((x) => x.catalogId);
+            return { text: '（目录里没有这个型号：' + needle + '。现有：' + ids.join(' / ') + '。都不合适就用 action=add 手写一条。）' };
+          }
+          const keyRef = String(args?.keyRef || '').trim();
+          let rec;
+          try {
+            rec = buildRecordFromCatalog(entry, { keyRef: keyRef || undefined, id: args?.id ? String(args.id) : undefined });
+          } catch (err) {
+            return { text: '（装配失败：' + (err?.message ?? err) + '）' };
+          }
+          if (!FORM_LIST.includes(rec.form)) return { text: '（目录条目形态不合法：' + rec.form + '）' };
+          if (items.some((x) => x && x.id === rec.id)) {
+            return { text: '（已经有 id=' + rec.id + ' 了。要覆盖用 action=update；要另存就在 setup 时给 id="别的名字"。）' };
+          }
+          items.push(rec);
+          reg.items = items;
+          await saveRegistry(capsPath(), reg);
+          const hint = paramHints(rec);
+          const sample = hint.slice(0, 2).map((p) => '"' + p.name + '": "…"').join(', ');
+          return {
+            text: [
+              '装好了：' + rec.id + '（' + rec.name + '，' + rec.cap + ' / ' + rec.form + '）',
+              '',
+              '能传的参数：' + hint.map((p) => p.name).join(' / '),
+              '凭据：' + rec.auth.keyRef
+                + (String(rec.auth.keyRef).startsWith('env:') ? '（环境变量，得在系统里真的设上）' : '（文件，得那个路径真的有 key）'),
+              '',
+              '下一步，真调一次看通不通：',
+              '  rh_call { id: "' + rec.id + '", params: { ' + sample + ' } }',
+              '不通的话：先看凭据，再看 action=get ' + rec.id + ' 里「踩过的坑」那段。',
+            ].join('\n'),
+          };
         }
 
         if (action === 'add') {
