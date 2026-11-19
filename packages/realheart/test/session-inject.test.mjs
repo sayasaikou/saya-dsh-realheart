@@ -236,10 +236,12 @@ test('自由时间：带上今天最后聊到的几句，噪音剥掉', async ()
     assert.ok(text.includes('还有要做的吗？'), '最后一句没带进来');
     assert.ok(!text.includes('Time sampled'), 'time-context 噪音没剥掉');
     // 2026-11-04 记过：两条肥鱼自己说的话也被当成「他说的」带进去了。
-    // 2026-11-19 复核：talkExchangeText 只按 role 过，**不按 name 过**，所以这个洞还在。
-    // 这条断言原来要求「过滤掉」，但代码从没实现过 —— 红着挂在 skip 里。
-    // 现在改成如实记录现状，并把它记成待修；否则这条测试永远红。
-    // TODO(2026-11-19)：talkExchangeText 里按 name 过滤掉同胞机器人（/肥鱼/ 但 name !== 自己）。
+    // 2026-11-19 查清：**不是 bug，是当时的推测错了**。
+    //   · talkExchangeText 只读 napcat-private-*.jsonl —— 私聊，那里只有他一个人；
+    //   · 真实 history 的行长这样 {"ts","role","text"}，**根本没有 name 字段**
+    //     （实测私聊 180 行、群 216 行，name 全是 null）；
+    //   · 群里的消息压根不走这条路。
+    // 所以「按 name 过滤同胞机器人」这件事做不了、也不需要做。原断言基于错误前提，删掉。
     assert.ok(text.includes('还有要做的吗？'), '今天的对话没带进来');
   } finally {
     await rm(root, { recursive: true, force: true });
