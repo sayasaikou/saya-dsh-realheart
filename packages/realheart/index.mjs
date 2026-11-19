@@ -2547,6 +2547,39 @@ const ROUND_MARK = '[本轮消息]';
           if (fb.length) parts.push(sec('realheart:live-fallback', 997, fb.join('\n')));
         }
         if (!parts.length) return assembled;
+        // ── 2026-11-19：把「会变」的段压到末尾 ──
+        //
+        // 为什么 order 字段没用：`dsh-system-prompt` 是先按 order 排好序、**再**跑
+        // `system-prompt/assemble` 这条 waterfall 的。钩子往 assembled.sections 里 push
+        // 的东西全在排序结果之后 —— 最终顺序 = 这里的 push 顺序，order 只是个摆设。
+        //
+        // 为什么必须重排：DeepSeek 的前缀缓存从头匹配。任何一段在中间变了，它之后的
+        // 每个 token 都要重算。7 天日志实测：11-18 一天打碎 58 次；段名 mood-nudge 70、
+        // pending 63、exp 13、today 12。这些段全挤在 894~917 这一小段，前面十几段稳定的
+        // 账本内容陪着一起重算。
+        //
+        // 做法：稳定段保持原顺序在前（她读东西的次序不能动），会变段按「变得越勤越靠后」
+        // 排在末尾。分区排序，不是全排序。
+        const __LATE_RANK = [
+          'realheart:mood-nudge',    // 心情提醒 —— 变
+          'realheart:pending',       // 没完的事 —— 变
+          'realheart:exp',           // 经历 —— 变
+          'realheart:style',         // 调子 —— 偶变
+          'realheart:days',          // 这几天 —— 变
+          'realheart:mood',          // 心情 —— 变
+          'realheart:today',         // 今天 —— 变
+          'realheart:live-fallback', // 实时状态兜底 —— 变
+          'realheart:time',          // 时间感 —— 每轮变
+        ];
+        const __lateRank = (p) => __LATE_RANK.indexOf(String(p && p.name ? p.name : ''));
+        parts.sort((a, b) => {
+          const ra = __lateRank(a);
+          const rb = __lateRank(b);
+          if (ra < 0 && rb < 0) return 0;
+          if (ra < 0) return -1;
+          if (rb < 0) return 1;
+          return ra - rb;
+        });
         // ── 预算（M1-6）──
         // 不做这个的话，她留的话越攒越多、待办越来越长，每轮都在为它们付钱，
         // 而且是不知不觉的。超了就按优先级从低到高裁，**裁掉的要留痕** —— 少一段不能是静默的。
@@ -2616,7 +2649,12 @@ const ROUND_MARK = '[本轮消息]';
         try {
           if (!globalThis.__rhInjectFp) globalThis.__rhInjectFp = new Map();
           const fp = globalThis.__rhInjectFp;
-          const EXPECTED_LATE = new Set(['realheart:clock', 'realheart:status-page', 'realheart:time', 'realheart:caps-tasks', 'realheart:situation', 'realheart:today', 'realheart:mood', 'realheart:days']);
+          // 2026-11-19：白名单从「按名字」改成「按位置」，跟上面那张 __LATE_RANK 是同一张表。
+          // 原来写死的名字里，clock / status-page / situation 三段**从来没被加过**
+          // （sec() 里根本没有），而真正在变的 mood-nudge / pending / exp / style
+          // 一个都不在名单里 —— 于是每次报警报的都是白名单没盖到的那几个。
+          // 现在：排在末尾的变了不报，位置在中间变了才报。
+          const EXPECTED_LATE = new Set(__LATE_RANK);
           const changed = [];
           for (const p of parts) {
             const text = String(p && p.text != null ? p.text : '');
