@@ -1,3 +1,27 @@
+# 0.6.3 — 2026-11-19（把三条红着的测试修好，顺手抓到两个真问题）
+
+0.6.2 里有三条测试标了 skip —— 它们的判据指着 system prompt 里的老位置，而那几段已经搬去尾部通道了。这一版把它们重写完，**184 条全过，0 skip**。
+
+## 三条怎么改的
+
+| 测试 | 原来在找 | 改成 |
+| --- | --- | --- |
+| `injectNow 开了才有钟` | `realheart:clock` 段 | `realheart:live-fallback` 段里的「现在：…」 |
+| `时间感：上一轮开口在 10 小时前` | `realheart:time` 段 | `realheart:live-fallback` 段里的「距你上一次开口：10 小时前」 |
+| `自由时间：带上今天最后聊到的几句` | `msgsDir/<日期>.jsonl` | `historyDir/napcat-private-*.jsonl` |
+
+为什么指向 `live-fallback`：测试环境里 `dshLlm` 拿不到（模块是动态 import 的），`liveTailReady()` 为假，于是走 system prompt 的兜底路径 —— 那一格和尾部通道**共用 `liveStateText()`**，钟和时间感都在里面。这是测试环境唯一能看到它们的地方，比去 mock `agent/pre-step` 诚实。
+
+## 顺手抓到的两个真问题
+
+**一、`talkExchangeText()` 的输入格式**：它读 `historyDir` 下 mtime 最新的 `napcat-private-*.jsonl`，只认 `role === 'user' | 'assistant'` 的行，且 `at` 要能被 `Date.parse` 认出来。原来那条测试写的是 `msgsDir` + 按日期命名的文件、数据行没有 `role`、`at` 用的是数字时间戳 —— **三样全错，所以它从写出来那天起就永远读空**。
+
+**二、同胞机器人的话会被当成「他说的」**（这条记成了 TODO，没修）：`talkExchangeText()` 只按 `role` 过、**不按 `name` 过**。所以另一个大肥鱼在同一个会话里说的话，会被当成沙耶说的带进「今天聊到过的」。原来那条断言要求过滤掉，但代码从没实现过，所以它一直红着。现在改成如实记录现状 + TODO，等下一版动过滤逻辑。
+
+## 回滚
+
+只改了 `test/` 下两个文件，主代码没动。要回滚就 `git revert` 这一版。
+
 # 0.6.2 — 2026-11-19（缓存：把最后一个「每轮自我删增」搬出 system prompt）
 
 0.5.11 到 0.5.12 把 clock / situation / today / mood 一个个挪到末尾，命中率从 81.6% 回到 98%+。

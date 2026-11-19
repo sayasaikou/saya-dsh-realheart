@@ -182,14 +182,18 @@ test('别处记的会摆出来，但标明是别处的、带不带由她自己�
   assert.ok(text.includes('带不带过来') || text.includes('不是这里的事'), '没说明那是别处的：' + text);
 });
 
-test('injectNow 开了才有钟，关着一个字不塞', { skip: '结构已变：clock 在 2026-11-15 迁到尾部通道，这条还在 system prompt 里找 realheart:clock 段，需要按新结构重写。' }, async () => {
+test('injectNow 开了才有钟，关着一个字不塞', async () => {
+  // 2026-11-19 重写：clock 在 11-15 就搬去尾部通道了，system prompt 里不再有 realheart:clock。
+  // 测试环境里 dshLlm 拿不到（动态 import 失败），所以走的是兜底路径 realheart:live-fallback ——
+  // 那一格和尾部通道共用 liveStateLines()，钟就在里面。断言改成盯这一格。
   const off = makeCtx();
   apply(off.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();
   const inj0 = off.handlers.find((x) => x.name === 'system-prompt/assemble');
   const a0 = { sections: [] };
   const o0 = await inj0.fn(a0, { agent: { session: { id: PRIVATE } } }, async () => a0);
-  assert.ok(!(o0.sections ?? []).some((s) => s.name === 'realheart:clock'), 'injectNow 默认关，但钟出现了');
+  const fb0 = (o0.sections ?? []).find((s) => s.name === 'realheart:live-fallback');
+  assert.ok(!fb0 || !/现在：/.test(String(fb0.text)), 'injectNow 默认关，但钟出现了：' + (fb0 ? fb0.text : ''));
 
   const on = makeCtx();
   apply(on.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false, injectNow: true });
@@ -197,9 +201,10 @@ test('injectNow 开了才有钟，关着一个字不塞', { skip: '结构已变�
   const inj1 = on.handlers.find((x) => x.name === 'system-prompt:assemble') ?? on.handlers.find((x) => x.name === 'system-prompt/assemble');
   const a1 = { sections: [] };
   const o1 = await inj1.fn(a1, { agent: { session: { id: PRIVATE } } }, async () => a1);
-  const clock = (o1.sections ?? []).find((s) => s.name === 'realheart:clock');
-  assert.ok(clock, 'injectNow 开了，钟没出现：' + (o1.sections ?? []).map((s) => s.name).join(' / '));
-  assert.match(String(clock.text), /现在是 \d{4}-\d{2}-\d{2} \d{2}:\d{2}（周.）/, '钟的格式不对：' + clock.text);
+  const fb1 = (o1.sections ?? []).find((s) => s.name === 'realheart:live-fallback');
+  assert.ok(fb1, 'injectNow 开了，兜底段没出现：' + (o1.sections ?? []).map((s) => s.name).join(' / '));
+  // 兜底路径用 coarse 档：只到「日 + 星期 + 时段」，不带时分
+  assert.match(String(fb1.text), /现在：\d{4}-\d{2}-\d{2} 周.，/, '钟的格式不对：' + fb1.text);
 });
 
 test('收尾：清掉临时目录', async () => {
