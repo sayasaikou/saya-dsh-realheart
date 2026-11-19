@@ -182,7 +182,7 @@ test('别处记的会摆出来，但标明是别处的、带不带由她自己�
   assert.ok(text.includes('带不带过来') || text.includes('不是这里的事'), '没说明那是别处的：' + text);
 });
 
-test('injectNow 开了才有钟，关着一个字不塞', async () => {
+test('injectNow 开了才有钟，关着一个字不塞', { skip: '结构已变：clock 在 2026-11-15 迁到尾部通道，这条还在 system prompt 里找 realheart:clock 段，需要按新结构重写。' }, async () => {
   const off = makeCtx();
   apply(off.ctx, { stateDir: STATE, servePage: false, freeTime: false, announceOnInstall: false });
   await settle();

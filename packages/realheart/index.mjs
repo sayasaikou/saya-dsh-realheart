@@ -1462,6 +1462,38 @@ const ROUND_MARK = '[本轮消息]';
   }
   const liveTailReady = () => dshLlm != null && typeof dshLlm.createUserMessage === 'function';
 
+  // ── 本轮什么时候开始的（2026-11-19）────────────────────────────────────
+  // 原来「这一轮已经跑了 X」用的是 process.uptime() —— 那是**宿主进程**的寿命，不是本轮。
+  // 常驻桌面进程跑几天以后，新的一轮第一步会看到「这一轮已经跑了 3 天」，那不是话，是 bug。
+  // 轮边界 DSH 自己给了：ctx.agents.turnBoundaryOf(session).lastTurn。
+  // 拿不到（老版本 / 服务不在 / 事件顺序不同）就**退回说进程**并改标签 ——
+  // 宁可少说一句，不说错一句。
+  const turnStarts = new Map(); // sessionKey -> { turn, at }
+  let turnNow = null; // { key, turn } —— 最近一次认出来的那张（多会话下不会串到别人的轮）
+  let awayCache = null; // { turnKey, text } —— 「距你上一次开口」的轮内冻结
+  function noteTurnBoundary(agent) {
+    try {
+      if (!agent || !agent.session) return;
+      if (!ctx.agents || typeof ctx.agents.turnBoundaryOf !== 'function') return;
+      const tb = ctx.agents.turnBoundaryOf(agent.session);
+      const t = tb && tb.lastTurn;
+      if (!Number.isFinite(t)) return;
+      const s = agent.session;
+      // 会话 id 的字段名各版本不一定一样 —— 认不出来就退回 agent.id（同一会话内稳定）。
+      const key = String(s.id ?? s.sessionId ?? s.key ?? agent.id ?? '');
+      const prev = turnStarts.get(key);
+      if (!prev || prev.turn !== t) turnStarts.set(key, { turn: t, at: Date.now() });
+      turnNow = { key, turn: t };
+    } catch { /* 拿不到就退回进程时长 */ }
+  }
+  /** 本轮已经跑了多少毫秒；拿不到轮边界时返回 null。 */
+  function turnElapsedMs() {
+    if (!turnNow) return null;
+    const v = turnStarts.get(turnNow.key);
+    if (!v || v.turn !== turnNow.turn) return null;
+    return Math.max(0, Date.now() - v.at);
+  }
+
   /** 组装「实时状态」那几行。coarse=true 时用档位化版本（只给 system prompt 兜底用）。 */
   async function liveStateLines({ coarse = false } = {}) {
     const out = [];
@@ -1477,12 +1509,30 @@ const ROUND_MARK = '[本轮消息]';
         : `现在：${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())} ${p2(h)}:${String(now.getMinutes()).padStart(2, '0')}（${wd}），${slot}`);
     }
     try {
-      const hours = process.uptime() / 3600;
-      const span = coarse
-        ? (hours < 0.16 ? '不到十分钟' : hours < 0.5 ? '半小时左右' : hours < 1.5 ? '一两个小时'
-          : hours < 4 ? '几个小时' : hours < 12 ? '大半天' : hours < 24 ? '快一天了' : `${Math.round(hours / 24)} 天`)
-        : (hours < 1 ? `${Math.max(1, Math.round(hours * 60))} 分钟` : `${Math.round(hours)} 小时`);
-      out.push(`这一轮已经跑了 ${span}`);
+      const tms = turnElapsedMs();
+      if (tms != null) {
+        // 真·本轮时长。尾部通道每步一条，分钟级精度在这里不花钱。
+        const mins = Math.round(tms / 60000);
+        const span = mins < 1 ? '不到一分钟'
+          : mins < 60 ? `${mins} 分钟`
+            : mins < 24 * 60 ? `${(mins / 60).toFixed(1)} 小时`
+              : `${Math.round(mins / 1440)} 天`;
+        out.push(`这一轮已经跑了 ${span}`);
+      } else {
+        const hours = process.uptime() / 3600;
+        const span = coarse
+          ? (hours < 0.16 ? '不到十分钟' : hours < 0.5 ? '半小时左右' : hours < 1.5 ? '一两个小时'
+            : hours < 4 ? '几个小时' : hours < 12 ? '大半天' : hours < 24 ? '快一天了' : `${Math.round(hours / 24)} 天`)
+          : (hours < 1 ? `${Math.max(1, Math.round(hours * 60))} 分钟` : `${Math.round(hours)} 小时`);
+        // 拿不到轮边界 —— 那就不说「这一轮」，说进程。标签必须跟数据对得上。
+        out.push(`这个进程已经跑了 ${span}`);
+      }
+    } catch { /* 读不到就不提 */ }
+    // 距上一次开口（2026-11-19 从 system prompt 挪进来）。
+    // 这条只在隔了 3 小时以上才出现，出现一次就够她知道了 —— 不需要整轮都挂着。
+    try {
+      const away = await timeSinceLastTalk();
+      if (away) out.push(`距你上一次开口：${away}前`);
     } catch { /* 读不到就不提 */ }
     try {
       const sp = await statusPageState();
@@ -1628,7 +1678,23 @@ const ROUND_MARK = '[本轮消息]';
         const at = Date.parse(String(e?.at || ''));
         return !Number.isNaN(at) && now - at < span;
       };
-      const moods = (await readMood()).filter(within);
+      // 2026-11-19：这里原来只按时间窗过滤，**不看 voided / faded**。
+      // 于是同一次注入里两句话对不上账：【当前心情】跳过被她作废/淡化的条目、退到 4 天前那条，
+      // 【这几天】还在数 3 天前那条已经废掉的 —— 「4 天前」和「最后一条 3 天前」并排出现。
+      // 判据必须跟 moodSectionText 里那三条**一模一样**（改这儿的时候那边一起看）。
+      // 场合（session）这一层不在这里过滤：这一段本来就是跨场合的「这几天发生过什么」。
+      const moodsAll = await readMood();
+      const moods = [];
+      for (let i = 1; i <= moodsAll.length; i += 1) {
+        const row = moodsAll[i - 1];
+        if (ctl.voided.has(i)) continue;
+        if (row?.at && ctl.voided.has(String(row.at))) continue;
+        if (row?.at) {
+          const fk = `${row.at}\u0000${String(row.feeling || '').trim()}`;
+          if (ctl.faded.has(String(row.at)) || ctl.faded.has(fk)) continue;
+        }
+        if (within(row)) moods.push(row);
+      }
       const works = openWorks(await readWorks()).filter((w) => within(w));
       const views = (await readView()).filter(within);
       if (!moods.length && !works.length && !views.length) return '';
@@ -2309,19 +2375,38 @@ const ROUND_MARK = '[本轮消息]';
    *   ① 三小时内 —— 太近了，说了像打卡；
    *   ② 读不到 —— 第一次跑 / 文件不在 / 权限不对，**不猜**，一句都不加；
    *   ③ 超过 30 天也不报具体数 —— 说「很久」比说「43 天没来」更像人。
+   *
+   * ⚠️ 2026-11-19：**它不能待在 system prompt 里**，已挪进尾部通道（见 liveStateLines）。
+   * 原因：last-inject 是**每次装配后都写**的（下面 2649 那两行）。于是同一轮里
+   *   第 1 步读到 mtime = 上一轮 →「4.0 天前」→ 这一段出现；
+   *   装配完 mtime 被写成「刚才」→ 第 2 步读到 <3 小时 → 返回空 → 这一段消失。
+   * system prompt 一变，**它之后的全部注入段 + 整个对话历史**都要重算。
+   * 实测（会话 6，58 步）：第 2 步 0% 命中、31.8K 全量重算，来源就是这一次出现/消失。
+   * 它天生随时间变，和 clock 是同一类东西 —— 尾部通道才放得下分钟级精度。
+   *
+   * 返回**裸值**（不带【时间感】前缀），因为尾部通道一行一条，前缀由调用方拼。
    */
-  async function timeSenseText() {
+  async function timeSinceLastTalk() {
+    // 轮内冻结（2026-11-19）：同一轮里只算一次。
+    // 根因是 last-inject 每次装配后都写 —— 第 2 步再去 stat，读到的是「刚才」，
+    // 于是「4 天前」会在轮中间凭空消失。尾部通道不心疼这点变化，
+    // 但兜底路径（system prompt 里那格）会因此把前缀打碎一次。冻结就两边都稳。
+    const tk = turnNow ? `${turnNow.key}#${turnNow.turn}` : null;
+    if (tk && awayCache && awayCache.turnKey === tk) return awayCache.text;
+    let text = '';
     try {
       const paths = lastInjectPaths(cfg.stateDir, instanceTagFrom(process.argv));
       const st = await stat(paths.latest);
       const hours = (Date.now() - st.mtimeMs) / 3600000;
-      if (!Number.isFinite(hours) || hours < 3) return '';
-      if (hours > 24 * 30) return '【时间感】距你上一次开口：已经很久了。';
-      const when = hours < 24 ? `${Math.round(hours)} 小时` : `${(hours / 24).toFixed(1)} 天`;
-      return `【时间感】距你上一次开口：${when}前。`;
+      if (Number.isFinite(hours) && hours >= 3) {
+        text = hours > 24 * 30 ? '很久了'
+          : hours < 24 ? `${Math.round(hours)} 小时` : `${(hours / 24).toFixed(1)} 天`;
+      }
     } catch {
-      return '';
+      text = '';
     }
+    if (tk) awayCache = { turnKey: tk, text };
+    return text;
   }
   if (cfg.injectMood !== false) {
     // ⚠️ { global: true } 不是可选的：system-prompt/assemble 按作用域触发，
@@ -2338,6 +2423,9 @@ const ROUND_MARK = '[本轮消息]';
     // prepend: true 是为了排在其他 pre-step 之前 —— 我们要在它们都改完 messages 之后追加。
     ctx.on('agent/pre-step', async (payload, next) => {
       const decision = await next();
+      // 记轮边界（2026-11-19）：「这一轮已经跑了 X」得说真的这一轮，不是进程寿命。
+      // 放在这里而不是 assemble 里 —— pre-step 每步都过，assemble 不是。
+      noteTurnBoundary(payload && payload.agent);
       try {
         if (!decision || decision.kind === 'reject' || !Array.isArray(decision.messages)) return decision;
         if (!liveTailReady()) return decision;
@@ -2488,9 +2576,12 @@ const ROUND_MARK = '[本轮消息]';
           await noteInjectProblem('kept', err);
         }
         try {
-          const ttext = await timeSenseText();
-          // 【今天聊到过】挪到这里（2026-11-16，注入指纹监控点名的）。
-        // 它的内容随对话变，原来坐在中间 —— 一变就把后面 style/pending/kept/caps-tasks/time
+        // 【时间感】不在这里了 —— 2026-11-19 挪进尾部通道（liveStateLines）。
+        // 它读 last-inject 的 mtime，而那份文件**每次装配后都写**：同一轮里第 1 步
+        // 读到「4 天前」（段出现）、第 2 步读到「刚才」（段消失）。system prompt 一变，
+        // 它后面的全部注入段 + 整个对话历史都要重算。会话 6 的 step 2 就这么烧了 31.8K。
+        // 【今天聊到过】挪到这里（2026-11-16，注入指纹监控点名的）。
+        // 它的内容随对话变，原来坐在中间 —— 一变就把后面 style/pending/kept/caps-tasks
         // 全部重算。现在它后面只剩同样会变的那几段。
         // 【你现在的状态】也放到末尾（2026-11-16，新机 R10 实测）。
         // 她写一条心情，这一段立刻变 —— 原来它在**第一段**，一变后面全部重算，
@@ -2523,9 +2614,8 @@ const ROUND_MARK = '[本轮消息]';
               ...lines, '（要就带 taskId 再调一次 rh_call；不要了就不用管。）'].join('\n')));
           }
         } catch { /* 读不到账本就不提 */ }
-        if (ttext) parts.push(sec('realheart:time', 906, ttext));
         } catch (err) {
-          await noteInjectProblem('time', err);
+          await noteInjectProblem('recent', err);
         }
         // ── 为什么这两段必须排在最后（2026-11-15 实测，代价 798 万 token）──
         // 前缀缓存是从头匹配的：system prompt 里任何一处变了，**它之后的所有 token**
@@ -2547,19 +2637,22 @@ const ROUND_MARK = '[本轮消息]';
           if (fb.length) parts.push(sec('realheart:live-fallback', 997, fb.join('\n')));
         }
         if (!parts.length) return assembled;
-        // ── 2026-11-19：把「会变」的段压到末尾 ──
+        // ── 把「会变」的段压到末尾（2026-11-19）──
         //
         // 为什么 order 字段没用：`dsh-system-prompt` 是先按 order 排好序、**再**跑
         // `system-prompt/assemble` 这条 waterfall 的。钩子往 assembled.sections 里 push
         // 的东西全在排序结果之后 —— 最终顺序 = 这里的 push 顺序，order 只是个摆设。
         //
-        // 为什么必须重排：DeepSeek 的前缀缓存从头匹配。任何一段在中间变了，它之后的
-        // 每个 token 都要重算。7 天日志实测：11-18 一天打碎 58 次；段名 mood-nudge 70、
-        // pending 63、exp 13、today 12。这些段全挤在 894~917 这一小段，前面十几段稳定的
-        // 账本内容陪着一起重算。
+        // 为什么必须重排：前缀缓存从头匹配。任何一段在中间变了，它之后的每个 token 都要重算。
+        // 7 天日志实测：11-18 一天打碎 58 次；段名 mood-nudge 70、pending 63、exp 13、
+        // today 12。这些段全挤在 894~917 这一小段，前面十几段稳定的账本内容陪着一起重算。
         //
         // 做法：稳定段保持原顺序在前（她读东西的次序不能动），会变段按「变得越勤越靠后」
         // 排在末尾。分区排序，不是全排序。
+        //
+        // ⚠️ 这只是**减少**损失，不是消除：它们还在 system prompt 里，变了以后整个对话历史
+        //    照样重算。真零成本的只有尾部通道 —— 【时间感】已经搬过去了（本版），
+        //    这张表里不留它的位置。
         const __LATE_RANK = [
           'realheart:mood-nudge',    // 心情提醒 —— 变
           'realheart:pending',       // 没完的事 —— 变
@@ -2569,7 +2662,6 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:mood',          // 心情 —— 变
           'realheart:today',         // 今天 —— 变
           'realheart:live-fallback', // 实时状态兜底 —— 变
-          'realheart:time',          // 时间感 —— 每轮变
         ];
         const __lateRank = (p) => __LATE_RANK.indexOf(String(p && p.name ? p.name : ''));
         parts.sort((a, b) => {
@@ -2606,7 +2698,7 @@ const ROUND_MARK = '[本轮消息]';
           'realheart:pending': 60,
           'realheart:status-page': 55,
           'realheart:pending-change': 40,
-          'realheart:time': 45,
+          // 'realheart:time' 已不在 system prompt 里（2026-11-19 挪进尾部通道），这里不留死键
         };
         const budget = Number(cfg.injectBudgetChars) > 0 ? Number(cfg.injectBudgetChars) : 0;
         let total = parts.reduce((n, p) => n + p.text.length, 0);
@@ -2649,12 +2741,15 @@ const ROUND_MARK = '[本轮消息]';
         try {
           if (!globalThis.__rhInjectFp) globalThis.__rhInjectFp = new Map();
           const fp = globalThis.__rhInjectFp;
-          // 2026-11-19：白名单从「按名字」改成「按位置」，跟上面那张 __LATE_RANK 是同一张表。
-          // 原来写死的名字里，clock / status-page / situation 三段**从来没被加过**
-          // （sec() 里根本没有），而真正在变的 mood-nudge / pending / exp / style
-          // 一个都不在名单里 —— 于是每次报警报的都是白名单没盖到的那几个。
-          // 现在：排在末尾的变了不报，位置在中间变了才报。
-          const EXPECTED_LATE = new Set(__LATE_RANK);
+          // 名单跟上面那张排序表同源（__LATE_RANK）—— 它们本来就是同一件事的两种说法。
+          // 2026-11-19 之前这里写死的名单是错的：clock / status-page / situation 三段
+          // **从来没被 sec() 加过**（压根不存在），而真正在变的 mood-nudge / pending / exp
+          // 一个都不在里面 —— 于是每次报警，报的都是名单没盖到的那几个。
+          //
+          // ⚠️ 但「排在末尾」≠「便宜」：它们还在 system prompt 里，一变，后面的
+          //    整个对话历史照样重算。这张表现在的含义只是「已知会变、且改不掉」。
+          //    真正免费的是尾部通道（realheart:live：消息末尾追加、不碰前缀，压根不进表）。
+          const KNOWN_VARIES = new Set(__LATE_RANK);
           const changed = [];
           for (const p of parts) {
             const text = String(p && p.text != null ? p.text : '');
@@ -2663,12 +2758,26 @@ const ROUND_MARK = '[本轮消息]';
             if (prev !== undefined && prev !== h) changed.push(p.name);
             fp.set(p.name, h);
           }
-          const late = changed.filter((n) => EXPECTED_LATE.has(n));
-          const early = changed.filter((n) => !EXPECTED_LATE.has(n));
-          if (late.length) log('注入变化（末尾段，代价小）：' + late.join(' / '));
-          if (early.length) {
-            log('⚠️ 注入变化打碎了前缀缓存：' + early.join(' / ')
-              + ' —— 这些段不在末尾，一变就是整段上下文重算（2026-11-15 那次 798 万 token 就是这么烧的）', 'error');
+          // 同一轮里同一段变两次 = 结构问题，不是波动。
+          // 2026-11-19 抓到的第一个案例就是【时间感】：第 1 步出现、第 2 步消失，两次都让前缀重算。
+          const turnKey = turnNow ? `${turnNow.key}#${turnNow.turn}` : null;
+          const twice = [];
+          for (const n of changed) {
+            const k = n + '\u0000turn';
+            const prevTurn = fp.get(k);
+            if (turnKey != null && prevTurn === turnKey) twice.push(n);
+            fp.set(k, turnKey);
+          }
+          const known = changed.filter((n) => KNOWN_VARIES.has(n));
+          const unexpected = changed.filter((n) => !KNOWN_VARIES.has(n));
+          if (known.length) log('注入变化（已知会变）：' + known.join(' / ') + ' —— 在 system prompt 里，代价是它后面的历史重算');
+          if (twice.length) {
+            log('⚠️ 同一轮里变了两次：' + [...new Set(twice)].join(' / ')
+              + ' —— 这不是波动，是结构问题（一段在一轮里先出现再消失），每次都要重算整个前缀', 'error');
+          }
+          if (unexpected.length) {
+            log('⚠️ 注入变化打碎了前缀缓存：' + unexpected.join(' / ')
+              + ' —— system prompt 里没有便宜的段，一变就是它后面的全部历史重算', 'error');
           }
         } catch { /* 监控是附带的，不能因为它挡住注入 */ }        const sections = Array.isArray(assembled?.sections) ? assembled.sections : [];
         const payload = parts.map((x) => `--- ${x.name} ---\n${x.text}`).join('\n\n');

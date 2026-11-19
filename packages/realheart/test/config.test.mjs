@@ -13,7 +13,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULTS, Config, RANGES, validateConfig, describeConfig, loadUserConfig } from '../lib/config.mjs';
+import { DEFAULTS, RANGES, validateConfig, describeConfig, loadUserConfig } from '../lib/config.mjs';
+import { Config } from '../lib/schema.mjs';
 
 test('默认配置必须自己过得了校验', () => {
   assert.deepEqual(validateConfig(DEFAULTS), []);
