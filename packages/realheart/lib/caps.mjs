@@ -16,7 +16,7 @@
  */
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, extname } from 'node:path';
 import { estimateCost, priceOf, pricingTable, PRICING_ASOF } from './pricing.mjs';
 
 const CAPS_FORMS = ['openai-chat', 'sync-generate', 'async-task', 'raw'];
@@ -172,7 +172,21 @@ export async function runCapability(rec, params = {}, opts = {}) {
     out.text = String(pick(r.json, rec.resultPath || 'choices.0.message.content') ?? '');
     out.ok = true;
   } else if (form === 'sync-generate') {
-    const body = fillDeep({ model: rec.model, prompt: vars.prompt, ...(rec.defaults || {}), ...(rec.bodyExtra || {}) }, vars);
+    // 2026-11-22：以前这里只展开 rec.defaults 和 bodyExtra，params 传进来的键一个都进不了 body
+    // （fillDeep 只替换 {{占位符}}，不做键的过继）。结果 size 永远锁在默认值、image 根本发不出去，
+    // 而 paramHints 又告诉 agent「能传」—— 三处说法不一致，最容易骗到人的那种失败。
+    const extra = Object.fromEntries(
+      Object.entries(vars).filter(([k]) => !HIDDEN.has(k) && !BODY_SKIP.has(k))
+    );
+    const body = fillDeep({ model: rec.model, prompt: vars.prompt, ...(rec.defaults || {}), ...extra, ...(rec.bodyExtra || {}) }, vars);
+    // 本机参考图：file: 前缀转内联 data URI（外部接口只认 http / data 串）
+    if (typeof body.image === 'string' && body.image.startsWith('file:')) {
+      body.image = await inlineFileAsDataUri(body.image.slice(5));
+    }
+    // bodyExtra 声明的键，用户没传就别把空串发出去（服务端会 400）
+    for (const k of Object.keys(rec.bodyExtra || {})) {
+      if (body[k] === '') delete body[k];
+    }
     const r = await httpJson(rec.endpoint, { method: 'POST', headers, body: JSON.stringify(body) }, timeoutMs);
     if (!r.ok) throw new Error(`HTTP ${r.status}：${(r.text || '').slice(0, 300)}`);
     const url = pick(r.json, rec.resultPath || 'data.0.url');
@@ -272,9 +286,11 @@ export const SEED_REGISTRY = [
     notes: [
       '【怎么传】params 里加 "prompt"（必填，画什么）；可选 "size"、"image"。',
       '【参考图】body 加 "image": "https://…" 或 "data:image/png;base64,…" —— 模型按参考图改画（图生图），',
-      '  尺寸和构图会跟着参考图走。不传就是纯文字生成。',
-      '【尺寸】默认 1024x1024。实测 2048x1312（3:2）生效；**1536x1024 会被服务端忽略、仍出方图** ——',
-      '  要横图就写 2048x1312，别写中间档。',
+      '  尺寸和构图会跟着参考图走。也可写 "file:/本机/路径.png"，执行器会读文件转 base64 再发。',
+      '  不传就是纯文字生成。',
+      '【尺寸】默认 1024x1024，传什么就发什么（2026-11-22 修：之前 params 进不了 body，传了等于没传）。',
+      '  实测 2048x1312（3:2）生效；1536x1024 与 2K 这类写法是否被服务端接受，以实际返回为准 ——',
+      '  以前"1536x1024 被忽略"那条结论是错的，实际是根本没发出去。',
       '【提示词】想让人物背对就明写「从正后方看、脸被头发挡住」；要画面里有字会糊，用「看不清的手写便签」代替。',
     ].join('\n'),
   },
@@ -332,13 +348,38 @@ export const SEED_REGISTRY = [
   },
 ];
 
+// 这些是「实现细节」，agent 传了既没好处还可能传错。只对应内部占位符。
+// 2026-11-22：提到模块级 —— 执行器拼 body 时要用同一份名单（之前只有 paramHints 看得到）。
+const HIDDEN = new Set(['id', 'response_format']);
+// 拼 body 时不由 params 直接过继的键：prompt 单独处理，messages 只在 openai-chat 用。
+const BODY_SKIP = new Set(['prompt', 'messages']);
+
+/**
+ * file: 前缀 → 内联 data URI。
+ * 2026-11-22：外部接口只认 http 地址或 data 串，本机参考图以前传不进去。
+ * .txt 按 base64 载荷处理（历史用法），其余按扩展名给 mime。
+ */
+async function inlineFileAsDataUri(p) {
+  const buf = await readFile(p);
+  const ext = extname(p).slice(1).toLowerCase();
+  if (ext === 'txt') {
+    const s = buf.toString('utf8').trim();
+    if (s.startsWith('data:')) return s;
+    if (s && /^[A-Za-z0-9+/=\s]+$/.test(s)) return `data:image/png;base64,${s.replace(/\s+/g, '')}`;
+    throw new Error(`file: 指向的文本既不是 data URI 也不是 base64：${p}`);
+  }
+  const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+    : ext === 'webp' ? 'image/webp'
+      : ext === 'gif' ? 'image/gif'
+        : 'image/png';
+  return `data:${mime};base64,${buf.toString('base64')}`;
+}
+
 /** 从一条记录里推出「这次调用能传什么参数」——给 agent 看的，不让它猜。 */
 export function paramHints(rec) {
   const form = String(rec?.form || '');
   const cap = String(rec?.cap || '');
   const out = [];
-  // 这些是「实现细节」，agent 传了既没好处还可能传错。只对应内部占位符。
-  const HIDDEN = new Set(['id', 'response_format']);
 
   const add = (name, why) => {
     if (HIDDEN.has(name) || out.some((x) => x.name === name)) return;
@@ -349,7 +390,7 @@ export function paramHints(rec) {
   if (form === 'sync-generate') {
     add('prompt', '必填 —— 画什么（主体 + 场景 + 风格）');
     add('size', '可选 —— 尺寸，默认 ' + JSON.stringify(rec?.defaults?.size ?? '1024x1024'));
-    add('image', '可选 —— 参考图（http 地址或 data:image/…;base64）；给了就按图改画');
+    add('image', '可选 —— 参考图（http 地址、data:image/…;base64，或 file:/本机/路径.png）；给了就按图改画');
   } else if (form === 'async-task') {
     add('prompt', '必填 —— 拍什么（主体 + 动作 + 主机位）');
     add('ratio', '可选 —— 画面比例，如 "16:9" / "9:16"');
