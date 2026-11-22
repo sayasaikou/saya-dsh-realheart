@@ -80,6 +80,11 @@ export function estimateCost(rec, params = {}) {
     const d = Number(params.duration || params.seconds || (rec.defaults && rec.defaults.duration) || 5);
     return v * (Number.isFinite(d) && d > 0 ? d : 5);
   }
+  if (p.unit === 'per_1m_tokens') {
+    // 官方常按「每百万 token」报价，照原样存，换算只在这一处做
+    const t = Number(params.tokens || 2000);
+    return (v * (Number.isFinite(t) && t > 0 ? t : 2000)) / 1000000;
+  }
   if (p.unit === 'per_1k_tokens') {
     const t = Number(params.tokens || 2000);
     return (v * (Number.isFinite(t) && t > 0 ? t : 2000)) / 1000;

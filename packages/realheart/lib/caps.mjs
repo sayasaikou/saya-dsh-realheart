@@ -35,6 +35,7 @@ export const UNIT_LABEL = {
   per_second: '元/秒',
   per_minute: '元/分钟',
   per_1k_tokens: '元/千 token',
+  per_1m_tokens: '元/百万 token',
   per_1k_chars: '元/千字符',
   per_song: '元/首',
   per_video: '元/个视频',
@@ -169,6 +170,26 @@ async function httpBinary(url, init, timeoutMs) {
   }
 }
 
+/**
+ * 请求头里的占位符：{{uuid}} / {{ts}} 现填。
+ * 为的是天工那类「必须带 Idempotency-Key、且每次请求都得是新值」的接口 ——
+ * 写死一个常量等于把后续请求都当成同一笔重试，永远拿回第一个任务。
+ */
+function filledHeaders(h) {
+  if (!h || typeof h !== 'object') return {};
+  const now = new Date();
+  const vars = {
+    uuid: (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function')
+      ? globalThis.crypto.randomUUID()
+      : 'idem-' + now.getTime().toString(36) + Math.random().toString(36).slice(2, 10),
+    ts: String(now.getTime()),
+    iso: now.toISOString(),
+  };
+  const out = {};
+  for (const [k, v] of Object.entries(h)) out[k] = fill(String(v), vars);
+  return out;
+}
+
 function authHeaders(auth, key) {
   const h = { 'content-type': 'application/json' };
   if (key) {
@@ -260,8 +281,12 @@ export async function runCapability(rec, params = {}, opts = {}) {
   const key = rec.auth && rec.auth.type === 'kling-jwt'
     ? await klingJwt(rec.auth)
     : await keyOf(rec.auth);
-  const headers = { ...authHeaders(rec.auth, key), ...(rec.extraHeaders || {}) };
+  const headers = { ...authHeaders(rec.auth, key), ...filledHeaders(rec.extraHeaders) };
   const form = String(rec.form || '');
+  // 有的接口收 multipart/form-data（Stability），不能带 application/json 那个头，
+  // 否则 fetch 不会替你生成 boundary，服务端直接 415。
+  const isMultipart = String(rec.bodyType || '') === 'multipart';
+  if (isMultipart) delete headers['content-type'];
 
   if (!CAPS_FORMS.includes(form)) throw new Error(`不认识的调用形态：${form}（只支持 ${CAPS_FORMS.join(' / ')}）`);
 
@@ -298,7 +323,13 @@ export async function runCapability(rec, params = {}, opts = {}) {
     //     参数藏在嵌套结构里，只能靠模板映射。以前没有这条路，DashScope 那几家根本没法用这套形态调。
     let body = rec.bodyTemplate
       ? fillDeep(rec.bodyTemplate, vars)
-      : fillDeep({ model: rec.model, prompt: vars.prompt, ...(rec.defaults || {}), ...extra, ...(rec.bodyExtra || {}) }, vars);
+      : fillDeep({
+        ...(rec.modelInBody === false ? {} : { model: rec.model }),
+        prompt: vars.prompt,
+        ...(rec.defaults || {}),
+        ...extra,
+        ...(rec.bodyExtra || {}),
+      }, vars);
     // 本机参考图：file: 前缀转内联 data URI（外部接口只认 http / data 串）
     if (typeof body.image === 'string' && body.image.startsWith('file:')) {
       body.image = await inlineFileAsDataUri(body.image.slice(5));
@@ -311,9 +342,11 @@ export async function runCapability(rec, params = {}, opts = {}) {
     // 模板里没被填上的占位符会变成空串（如 seed / negative_prompt 没传）——
     // 原样发出去就是 400。整棵树上把空串剪掉，但保留显式的 0 / false。
     if (rec.bodyTemplate) body = pruneEmpty(body);
+    // multipart 那几家（Stability）要把字段一个个挂上去，不能 JSON.stringify
+    const payload = isMultipart ? await toFormData(body) : JSON.stringify(body);
     // 有的接口（OpenAI /v1/audio/speech 这类）响应体就是成品文件，没有 JSON
     if (String(rec.responseType || '') === 'binary') {
-      const bin = await httpBinary(rec.endpoint, { method: 'POST', headers, body: JSON.stringify(body) }, timeoutMs);
+      const bin = await httpBinary(rec.endpoint, { method: 'POST', headers, body: payload }, timeoutMs);
       if (!bin.ok) throw new Error(`HTTP ${bin.status}：${bin.head}`);
       await mkdir(outDir, { recursive: true });
       const ext = rec.fileExt || guessExt('', bin.ctype) || 'bin';
@@ -325,7 +358,7 @@ export async function runCapability(rec, params = {}, opts = {}) {
       out.meta.ms = Date.now() - t0;
       return out;
     }
-    const r = await httpJson(rec.endpoint, { method: 'POST', headers, body: JSON.stringify(body) }, timeoutMs);
+    const r = await httpJson(rec.endpoint, { method: 'POST', headers, body: payload }, timeoutMs);
     if (!r.ok) throw new Error(`HTTP ${r.status}：${(r.text || '').slice(0, 300)}`);
     const url = pick(r.json, rec.resultPath || 'data.0.url');
     const b64 = pick(r.json, rec.resultB64Path || 'data.0.b64_json');
@@ -343,6 +376,7 @@ export async function runCapability(rec, params = {}, opts = {}) {
   } else if (form === 'async-task') {
     // 已经有任务号（第二次来取结果）：跳过提交，直接轮询
     let taskId = String(opts.pollTaskId || '').trim();
+    let submitJson = null;
     if (!taskId) {
       // 有的新接口把模型写进 URL 路径（可灵 3.0），body 里再塞一个 model 会被当成未知字段
       const modelPart = rec.modelInBody === false ? {} : { model: rec.model };
@@ -353,10 +387,17 @@ export async function runCapability(rec, params = {}, opts = {}) {
       }
       const sub = await httpJson(rec.endpoint, { method: 'POST', headers, body: JSON.stringify(submitBody) }, timeoutMs);
       if (!sub.ok) throw new Error(`提交失败 HTTP ${sub.status}：${(sub.text || '').slice(0, 300)}`);
+      submitJson = sub.json;
       taskId = String(pick(sub.json, rec.taskIdPath || 'id') || '');
       if (!taskId) throw new Error(`提交返回里没找到任务号（试过 ${rec.taskIdPath || 'id'}）`);
     }
-    const pollUrlTpl = rec.pollEndpoint || (rec.endpoint.replace(/\/tasks\/?$/, '/tasks/{{id}}'));
+    // 有的厂商（BFL）提交时直接给一条 polling_url，只能原样用 —— 自己拼域名会跨集群路由，
+    // 官方明写不要自己拼。所以优先用响应里那条。
+    let pollUrlTpl = rec.pollEndpoint || (rec.endpoint.replace(/\/tasks\/?$/, '/tasks/{{id}}'));
+    if (rec.pollUrlPath && submitJson) {
+      const fromResp = pick(submitJson, rec.pollUrlPath);
+      if (fromResp) pollUrlTpl = String(fromResp);
+    }
     // 阿里百炼的任务查询是 POST（带 auth 头、无 body）；按 GET 发会被网关绕一圈才报错
     const pollMethod = String(rec.pollMethod || 'GET').toUpperCase();
     const deadline = Date.now() + timeoutMs;
@@ -473,6 +514,36 @@ async function inlineFileAsDataUri(p) {
       : ext === 'gif' ? 'image/gif'
         : 'image/png';
   return `data:${mime};base64,${buf.toString('base64')}`;
+}
+
+/**
+ * 表单体：multipart 那几家（Stability / OpenAI 语音识别）每个字段单独挂，不能 JSON.stringify。
+ * 值写成 file:/本机/路径 时按文件上传（语音识别必须要真的文件流，不是路径字符串），
+ * 其余对象/数组按 JSON 串塞进字段。
+ */
+async function toFormData(body) {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(body || {})) {
+    if (v === '' || v == null) continue;
+    if (typeof v === 'string' && v.startsWith('file:')) {
+      const p = v.slice(5);
+      const buf = await readFile(p);
+      const ext = extname(p).slice(1).toLowerCase();
+      const mime = ext === 'mp3' ? 'audio/mpeg'
+        : ext === 'wav' ? 'audio/wav'
+          : ext === 'm4a' ? 'audio/mp4'
+            : ext === 'ogg' ? 'audio/ogg'
+              : ext === 'webm' ? 'audio/webm'
+                : ext === 'flac' ? 'audio/flac'
+                  : ext === 'png' ? 'image/png'
+                    : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+                      : 'application/octet-stream';
+      fd.append(k, new Blob([buf], { type: mime }), extname(p) ? p.split(/[\\/]/).pop() : (k + '.bin'));
+      continue;
+    }
+    fd.append(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+  }
+  return fd;
 }
 
 /** 把树里所有 file: 开头的字符串就地换成 data URI（模板形态下参考图埋在嵌套结构里） */

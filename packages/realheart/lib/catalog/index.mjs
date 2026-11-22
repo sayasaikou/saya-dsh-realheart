@@ -195,7 +195,7 @@ export function buildRecordFromCatalog(entry, { id, keyRef, extra = {} } = {}) {
     'submitBody', 'bodyTemplate', 'bodyExtra', 'method', 'extraHeaders',
     'resultPath', 'resultB64Path', 'resultHexPath', 'fileUrlPath', 'fileB64Path',
     'taskIdPath', 'statePath', 'doneWhen', 'failWhen', 'pollEndpoint', 'pollMs', 'pollMethod',
-    'followUp', 'modelInBody',
+    'followUp', 'modelInBody', 'pollUrlPath', 'bodyType',
     'responseType', 'fileExt', 'price', 'free', 'enabled', 'blocked', 'transport',
   ]) {
     if (entry[k] !== undefined) rec[k] = entry[k];

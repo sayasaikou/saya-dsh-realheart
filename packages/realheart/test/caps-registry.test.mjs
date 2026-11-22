@@ -273,3 +273,119 @@ test('目录按能力分组后仍能按 vendor/model 找到（setup 那条路没
     for (const m of v.models) assert.ok(m.form);
   }
 });
+
+test('multipart + Accept 头：拿得到二进制文件，且不带 JSON 的 content-type', async () => {
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64');
+  let seen = null;
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      seen = { ctype: req.headers['content-type'] || '', accept: req.headers.accept || '', raw: Buffer.concat(chunks) };
+      res.writeHead(200, { 'content-type': 'image/png' });
+      res.end(PNG);
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  process.env.RH_TEST_KEY = 'dummy';
+
+  const rec = {
+    id: 'mp', name: 'M', cap: 'image', form: 'sync-generate', modelInBody: false,
+    model: 'core', endpoint: `http://127.0.0.1:${port}/gen`,
+    auth: { type: 'bearer', keyRef: 'env:RH_TEST_KEY' },
+    bodyType: 'multipart',
+    extraHeaders: { accept: 'image/*' },
+    responseType: 'binary',
+    fileExt: 'png',
+    bodyTemplate: { prompt: '{{prompt}}', aspect_ratio: '{{aspect_ratio}}' },
+  };
+  const out = await runCapability(rec, { prompt: '灯塔', aspect_ratio: '21:9' }, { outDir: await tmp(), timeoutMs: 5000 });
+  server.close();
+  assert.ok(seen, '没发出请求');
+  assert.ok(seen.ctype.startsWith('multipart/form-data'), '该是 multipart，实际：' + seen.ctype);
+  assert.equal(seen.accept, 'image/*', 'Accept 头没带上 —— 不带就只能拿到 base64 JSON');
+  const body = seen.raw.toString('utf8');
+  assert.ok(body.includes('灯塔'), '表单里没有 prompt');
+  assert.ok(body.includes('21:9'));
+  assert.ok(!body.includes('"model"'), 'modelInBody:false 时不该出现 model');
+  assert.equal(out.files.length, 1);
+  assert.ok(out.files[0].endsWith('.png'));
+  assert.equal((await readFile(out.files[0])).length, PNG.length, '落盘的不是原图');
+});
+
+test('pollUrlPath：轮询用响应里给的那条地址，不自己拼', async () => {
+  const hits = [];
+  const server = createServer((req, res) => {
+    hits.push(req.url);
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      if (req.method === 'POST' && req.url === '/submit') {
+        res.end(JSON.stringify({ id: 'x1', polling_url: `http://127.0.0.1:${server.address().port}/poll/x1?token=abc` }));
+        return;
+      }
+      res.end(JSON.stringify({ status: 'Ready', result: { sample: null } }));
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  process.env.RH_TEST_KEY = 'dummy';
+
+  const rec = {
+    id: 'bflish', name: 'B', cap: 'image', form: 'async-task', model: 'm',
+    endpoint: `http://127.0.0.1:${port}/submit`,
+    auth: { type: 'bearer', keyRef: 'env:RH_TEST_KEY' },
+    submitBody: { prompt: '{{prompt}}' },
+    taskIdPath: 'id', pollUrlPath: 'polling_url',
+    statePath: 'status', doneWhen: ['Ready'], failWhen: ['Error'],
+    resultPath: 'result.sample', pollMs: 10,
+  };
+  await runCapability(rec, { prompt: '猫' }, { outDir: await tmp(), timeoutMs: 3000 });
+  server.close();
+  assert.ok(hits.includes('/poll/x1?token=abc'), '没按响应给的 polling_url 去轮询：' + hits.join(','));
+  assert.ok(!hits.some((u) => u.includes('/tasks/')), '不该自己拼轮询地址');
+});
+
+test('extraHeaders 支持 {{uuid}}：每次请求都是新值', async () => {
+  const keys = [];
+  let port = 0;
+  const server = createServer((req, res) => {
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'audio/mpeg' });
+      res.end(Buffer.from('fake-mp3'));
+      return;
+    }
+    keys.push(req.headers['idempotency-key'] || '');
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: [{ audio_url: `http://127.0.0.1:${port}/a.mp3` }] }));
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  port = server.address().port;
+  process.env.RH_TEST_KEY = 'dummy';
+
+  const rec = {
+    id: 'idem', name: 'I', cap: 'music', form: 'sync-generate', model: 'm',
+    endpoint: `http://127.0.0.1:${port}/music`,
+    auth: { type: 'bearer', keyRef: 'env:RH_TEST_KEY' },
+    extraHeaders: { 'Idempotency-Key': '{{uuid}}' },
+    bodyTemplate: { prompt: '{{prompt}}' },
+    resultPath: 'data.0.audio_url',
+  };
+  try {
+    await runCapability(rec, { prompt: '夏日' }, { outDir: await tmp(), timeoutMs: 5000 });
+    await runCapability(rec, { prompt: '夏日' }, { outDir: await tmp(), timeoutMs: 5000 });
+  } finally {
+    server.close();
+  }
+  assert.equal(keys.length, 2);
+  assert.ok(keys[0] && keys[1], 'Idempotency-Key 没带上');
+  assert.ok(/^[\w.:-]{6,}$/.test(keys[0]), '格式不像幂等键：' + keys[0]);
+  assert.notEqual(keys[0], keys[1], '两次请求用了同一个幂等键 —— 会被服务端当成重试');
+});

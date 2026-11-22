@@ -214,4 +214,38 @@ export const LLM_MODELS = [
     ],
     unverified: ['思考模式的开关字段名'],
   },
+  // ── Google Gemini 文本 ──────────────────────────────────
+  {
+    vendor: 'google',
+    recordId: 'google-gemini-flash',
+    model: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    cap: 'text',
+    form: 'sync-generate',
+    endpoint: 'https://generativelanguage.googleapis.com/v1/models/gemini-3.8-flash:generateContent',
+    bodyTemplate: {
+      contents: [{ role: 'user', parts: [{ text: '{{prompt}}' }] }],
+      generationConfig: { maxOutputTokens: '{{max_tokens}}' },
+    },
+    resultPath: 'candidates.0.content.parts.0.text',
+    price: { unit: 'per_1m_tokens', value: 0.75, currency: 'USD' },
+    priceNote: '**美元/百万 token**：输入 $0.75、输出 $3.75、缓存读取 $0.075。Batch/Flex 减半，Priority 加价',
+    input: 'text / 图片 / 音视频 part',
+    output: 'JSON，文本在 candidates[0].content.parts[].text',
+    limits: { contextTokens: 1048576 },
+    docs: 'https://aistudio.google.com/docs/pricing',
+    asOf: '2026-11-22',
+    params: {
+      prompt: { desc: '要问什么', required: true },
+      max_tokens: { desc: '输出上限（进 generationConfig.maxOutputTokens）' },
+    },
+    pitfalls: [
+      'thinking token 计入输出计费 —— effort 开高了账单会明显上去。',
+      'API 默认版本是 **v1**（不是老教程里的 v1beta）。',
+      '认证用 x-goog-api-key 头，不是 Bearer。',
+      '它走的是 generateContent 不是 chat/completions —— body 结构和 OpenAI 那套完全不同。',
+    ],
+    unverified: ['max output tokens 官方原值', '当前 Pro 档主力模型 ID 与价格'],
+  },
+
 ];

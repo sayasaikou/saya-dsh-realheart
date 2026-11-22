@@ -76,9 +76,36 @@ export const VENDORS = {
     vendor: 'stability',
     vendorName: 'Stability AI',
     keyEnv: 'STABILITY_API_KEY',
-    keyNote: 'platform.stability.ai → API Keys，形如 sk-…。',
+    keyNote: 'platform.stability.ai → API Keys，形如 sk-…。按 credits 计费，1 credit = $0.01。',
     doc: 'https://platform.stability.ai/docs/api-reference',
     auth: { type: 'bearer' },
+  },
+  recraft: {
+    vendor: 'recraft',
+    vendorName: 'Recraft',
+    keyEnv: 'RECRAFT_API_KEY',
+    keyNote: 'recraft.ai → API 页面建 key。注意它的 API 域名是 external.api.recraft.ai，跟网页站不是一个域。',
+    doc: 'https://www.recraft.ai/docs/api-reference/agents.md',
+    auth: { type: 'bearer' },
+  },
+  skyproduction: {
+    vendor: 'skyproduction',
+    vendorName: '天工工作台（SkyProduction）',
+    keyEnv: 'SKYPRODUCTION_API_KEY',
+    keyNote: '天工工作台的 ToB API Key（Bearer）。音乐生成走 openapi/v1，必须带 Idempotency-Key 头。',
+    doc: 'https://docs.skyproduction.cn/zh-CN/api-reference/music-generations/create',
+    auth: { type: 'bearer' },
+  },
+  volcengine_music: {
+    // 跟火山方舟（豆包）是两个产品线、两套鉴权：音乐走 open.volcengineapi.com 的 AK/SK 签名，
+    // 方舟走 Bearer。混在一起写会把 key 的来路说错。
+    vendor: 'volcengine_music',
+    vendorName: '火山引擎（音乐生成）',
+    keyEnv: 'VOLC_ACCESSKEY',
+    keySecretEnv: 'VOLC_SECRETKEY',
+    keyNote: '火山引擎控制台 → 访问控制 → 访问密钥（AK/SK 一对），不是方舟的 API Key。',
+    doc: 'https://docs.volcengine.com/docs/audio-video-understanding-and-processing/generate-vocal-songs',
+    auth: { type: 'volc-sign' },
   },
   deepseek: {
     vendor: 'deepseek',
