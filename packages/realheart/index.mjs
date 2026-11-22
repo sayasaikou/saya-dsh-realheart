@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { appendFile, mkdir, readFile, readdir, writeFile, copyFile, chmod, open, stat, unlink, rm } from 'node:fs/promises';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, appendFileSync, statSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, estimateCost, priceOf, pricingTable, PRICING_ASOF, FORM_LIST, KIND_LIST, paramHints, SEED_REGISTRY } from './lib/caps.mjs';
+import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, estimateCost, priceOf, pricingTable, PRICING_ASOF, FORM_LIST, KIND_LIST, paramHints, SEED_REGISTRY, moneyText, unitLabel, limitsLine, keyReady } from './lib/caps.mjs';
 import { CATALOG, flattenCatalog, findCatalogModel, buildRecordFromCatalog } from './lib/catalog.mjs';
 import { promisify } from 'node:util';
 import {
@@ -5924,9 +5924,11 @@ PY
         '每条记录写着：能力、模型、端点、调用形态、默认参数、备注。',
         '',
         'action：',
-        '  list    —— 列出来（可带 cap 过滤：image / video / vision / tts / asr / text）。',
-        '             **每条会告诉你「能传哪些参数」** —— 那就是 rh_call 里 params 的键。',
-        '  get     —— 一条的完整说明：参数骨架（可照抄）、每个参数干嘛、踩过的坑。调之前先看这个。',
+        '  list    —— 列出来（可带 cap 过滤：image / video / vision / tts / asr / music / text / embed）。',
+        '             按能力分组，每条标了「能不能用」（✓ 可用 / 缺 key / ⛔ 调不了）、价格、输入→输出。',
+        '             带 cap 过滤时还会把「能传哪些参数」和硬限制摊开 —— 那就是 rh_call 里 params 的键。',
+        '  get     —— 一条的完整规格卡：输入输出、硬限制、计费原文、官方文档、参数骨架（可照抄）、踩过的坑。',
+        '             **调之前先看这个**，别照记忆里的参数名写。',
         '  catalog —— **看有哪些型号可以直接装**（内置厂商目录）。用户说要能生图/生视频但还没配的时候先看这个。',
         '  setup   —— **填个 key 就装好一条**（model + keyRef）。会自动带上该型号的端点、参数表、提示词规范、踩过的坑。',
         '  plan    —— 用户的话太含糊时先问什么（给 cap）。问题清单里带「不答会怎么补」。',
@@ -5972,26 +5974,58 @@ PY
           if (!rows.length) {
             return { text: '（还没有可用的外部能力。要加的话用 action=add，或者在配置里填。）' };
           }
-          // 2026-11-17 重排：原来一行里塞 notes 全文（有的 300 多字），
-          // agent 读完还是不知道 params 该填什么 —— 于是瞎写尺寸、漏传参考图。
-          // 现在每条先给「能传什么」，notes 只取第一行当要点，细节留给 action=get。
-          const money = (r) => (r.free ? '免费'
-            : r.price ? (r.price.value + ' 元/' + (r.price.unit === 'per_image' ? '张' : r.price.unit === 'per_second' ? '秒' : '千token'))
-              : '价格未录');
-          const blocks = rows.map((r) => {
-            const hint = (r.params || []).map((p) => p.name + '：' + p.why).join(' ｜ ');
-            const head = '· [' + r.cap + '] ' + r.name + '  id=' + r.id + '  形态=' + r.form + '  ' + money(r);
-            // 要点要挑「不是重复能传那句话」的那条 —— 第一行通常是【怎么传】，
-            // 跟上面「能传」说的是同一件事，白占一行。
-            const noteLines = String(r.notes || '').split('\n').map((x) => x.trim()).filter(Boolean);
-            const first = noteLines.find((x) => !x.startsWith('【怎么传】')) || noteLines[0] || '';
-            return [head, '  能传: ' + (hint || '（无参数）'), first ? '  要点: ' + first : ''].filter(Boolean).join('\n');
-          });
-          return {
-            text: ['可用的外部能力（' + rows.length + ' 条）：', '', ...blocks, '',
-              '调法：rh_call { id, params } —— params 的键就用上面「能传」那些。',
-              '要看某条的完整说明和参数骨架：action=get，带 id。'].join('\n'),
+          // 2026-11-22 重排（第三版）：
+          //   ① 先按能力分组 —— agent 要「画图」时眼睛只需要扫 image 那一段
+          //   ② 每行都给「能不能用」（配好 key / 缺哪个变量 / 根本调不了）
+          //   ③ 带上输入→输出和价格，选型不用再 action=get 一家家翻
+          //   ④ notes 只留第一行要点，细节交给 action=get
+          const marker = (r) => {
+            if (r.blocked) return '⛔ 不能调';
+            if (r.ready) return '✓ 可用';
+            return '缺 key(' + String(r.keyRef || '').replace(/^env:/, '').replace(/^file:/, 'file:') + ')';
           };
+          const brief = (s, n = 34) => {
+            // 列表一行放不下完整的输入输出说明（有的三四十个字），
+            // 这里只留骨架（在第一个括号/分号处截断），细节留给 action=get。
+            const head = String(s || '').split(/[；（(，]/)[0].trim();
+            if (!head) return '';
+            return head.length > n ? head.slice(0, n) + '…' : head;
+          };
+          const head1 = (r) => '· [' + r.cap + '] ' + r.name + '  id=' + r.id + '  ' + marker(r)
+            + '  ' + r.money
+            + (r.input ? '  ' + brief(r.input) + ' → ' + brief(r.output) : '');
+          const groups = new Map();
+          for (const r of rows) {
+            const k = String(r.cap || '');
+            if (!groups.has(k)) groups.set(k, []);
+            groups.get(k).push(r);
+          }
+          const order = ['image', 'video', 'vision', 'tts', 'asr', 'music', 'text', 'embed'];
+          const keys = [...new Set([...order.filter((k) => groups.has(k)), ...groups.keys()])];
+          const readyN = rows.filter((r) => r.ready && !r.blocked).length;
+          const lines = ['外部能力 ' + rows.length + ' 条（配好 key 能直接用的 ' + readyN + ' 条）：', ''];
+          for (const k of keys) {
+            lines.push('【' + k + '】');
+            // 能用的排前面
+            const sorted = groups.get(k).slice().sort((a, b) => Number(b.ready && !b.blocked) - Number(a.ready && !a.blocked));
+            for (const r of sorted) {
+              lines.push(head1(r));
+              if (r.blocked) {
+                lines.push('    ⛔ ' + r.blocked);
+                continue;
+              }
+              if (cap) {
+                // 指定了能力就是要动手了 —— 这时候把能传的参数摊开，省一次 action=get
+                const hint = (r.params || []).map((p) => p.name + (String(p.why).startsWith('必填') ? '（必填）' : '')).join('、');
+                if (hint) lines.push('    传: ' + hint);
+                if (r.limits) lines.push('    限: ' + r.limits);
+              }
+            }
+            lines.push('');
+          }
+          lines.push('调法：rh_call { id, params } —— params 的键就用「传」那几个；不清楚细节先 action=get <id>（有参数骨架可照抄）。');
+          lines.push('没配 key 的：告诉用户要去哪个环境变量填，别自己换别家凑。');
+          return { text: lines.join('\n') };
         }
 
         if (action === 'get') {
@@ -6003,36 +6037,55 @@ PY
           }
           // 2026-11-17：原来是裸 JSON dump —— bodyExtra / submitBody 里的模板
           // agent 看不懂，等于没说。现在先给「照着填」的形状，原始记录放最后。
+          // 2026-11-22：再加一层「规格卡」—— 输入输出 / 硬限制 / 计费原话 / 官方文档 /
+          // 哪些是没核实的。这些原来散在 notes 的一句话里，agent 读完还是要自己去搜文档。
           const safe = JSON.parse(JSON.stringify(rec));
           const hint = paramHints(rec);
           const skeleton = {};
           for (const p of hint) {
             const d = (rec.defaults || {})[p.name];
             skeleton[p.name] = d !== undefined ? d
-              : (p.name === 'prompt' || p.name === 'content' ? '<' + (rec.cap === 'video' ? '拍什么' : '画什么') + '>'
+              : (p.name === 'prompt' || p.name === 'content' || p.name === 'text' ? '<' + (rec.cap === 'video' ? '拍什么' : rec.cap === 'tts' ? '念什么' : rec.cap === 'music' ? '什么风格/歌词' : '画什么') + '>'
                 : p.name === 'image' ? '<参考图 URL 或 data:image/…;base64，没有就不写这一项>'
                   : p.name === 'image_url' ? '<图片 URL>'
                     : p.name === 'messages' ? [{ role: 'user', content: '<要问什么>' }]
                       : '<' + p.why + '>');
           }
-          const pr = priceOf(rec);
-          const moneyLine = rec.free === true ? '免费'
-            : pr ? (pr.value + ' 元/' + (pr.unit === 'per_image' ? '张' : pr.unit === 'per_second' ? '秒' : '千token'))
-              : '（价格没录入）';
+          const moneyLine = moneyText(rec);
           const lines = [
             id + '  ' + (rec.name || '') + '  [' + (rec.cap || '') + ']',
             '形态 ' + rec.form + ' ｜ 模型 ' + (rec.model || '-') + ' ｜ ' + moneyLine,
-            '',
-            '怎么调（照这个形状填）：',
-            'rh_call ' + JSON.stringify({ id, params: skeleton }, null, 2),
-            '',
-            '能传的参数：',
-            ...hint.map((p) => '  ' + p.name + '：' + p.why),
-            '',
           ];
-          if (rec.notes) lines.push('踩过的坑：', String(rec.notes), '');
+          if (rec.priceNote) lines.push('计价原文：' + rec.priceNote + (rec.asOf ? '（核对于 ' + rec.asOf + '）' : ''));
+          if (rec.blocked) {
+            lines.push('');
+            lines.push('⛔ **这条现在调不了**：' + rec.blocked);
+          }
+          lines.push('');
+          lines.push('规格：');
+          if (rec.input) lines.push('  输入：' + rec.input);
+          if (rec.output) lines.push('  输出：' + rec.output);
+          const lim = limitsLine(rec.limits);
+          if (lim) lines.push('  限制：' + lim);
           const authRef = String(rec.auth?.keyRef || '');
-          if (authRef) lines.push('凭据：' + authRef + (authRef.startsWith('env:') ? '（环境变量，得自己在系统里设）' : '（文件，得那个路径真的有 key）'), '');
+          if (authRef) {
+            const ready = keyReady(rec);
+            lines.push('  凭据：' + authRef + (authRef.startsWith('env:') ? '（环境变量）' : '（文件）')
+              + (ready ? ' —— 现在有值，能用' : ' —— **现在是空的，调不了**'));
+          }
+          if (rec.auth?.secretRef) lines.push('  另一个凭据：' + rec.auth.secretRef + '（这条要一对 key）');
+          if (rec.docs) lines.push('  官方文档：' + rec.docs);
+          if (Array.isArray(rec.unverified) && rec.unverified.length) {
+            lines.push('  没核实到的：' + rec.unverified.join('；') + '（这些别当结论用，要用先查文档）');
+          }
+          lines.push('');
+          lines.push('怎么调（照这个形状填）：');
+          lines.push('rh_call ' + JSON.stringify({ id, params: skeleton }, null, 2));
+          lines.push('');
+          lines.push('能传的参数：');
+          for (const p of hint) lines.push('  ' + p.name + '：' + p.why);
+          lines.push('');
+          if (rec.notes) lines.push('怎么写提示词 / 踩过的坑：', String(rec.notes), '');
           lines.push('原始记录（要看模板细节时用）：', JSON.stringify(safe, null, 2));
           return { text: lines.join('\n') };
         }
@@ -6041,7 +6094,7 @@ PY
           // 内置价目表（录入日期 + 来源）。运行时一次网络请求都不用，也不会被过时的网页骗。
           const rows = pricingTable(items.map((x) => x && x.model).filter(Boolean));
           const lines = rows.map((r) => '· ' + r.model + ' —— '
-            + (r.value == null ? '没录' : r.value + ' 元/' + (r.unit === 'per_image' ? '张' : r.unit === 'per_second' ? '秒' : '千token'))
+            + (r.value == null ? '没录' : r.value + ' ' + unitLabel(r.unit))
             + (r.note ? '（' + r.note + '）' : ''));
           return { text: ['内置价目表（录入于 ' + PRICING_ASOF + '，记录里的 price 字段优先）：', ...lines,
             '', '要覆盖某条的价格：rh_capabilities action=update，record 里写 price:{unit,value}；免费的直接写 free:true。'].join('\n') };
@@ -6058,8 +6111,8 @@ PY
           const d = rec.defaults || {};
           const pr = priceOf(rec);
           const money = rec.free === true ? '免费'
-            : pr ? ('约 ' + (estimateCost(rec, rough) == null ? '?' : estimateCost(rec, rough).toFixed(2)) + ' 元/次（' + pr.value + ' 元/' + (pr.unit === 'per_image' ? '张' : pr.unit === 'per_second' ? '秒' : '千token') + '）')
-            : '价格没录入（按未知处理）';
+            : pr ? ('约 ' + (estimateCost(rec, rough) == null ? '?' : estimateCost(rec, rough).toFixed(2)) + ' 元/次（' + moneyText(rec) + '）')
+              : '价格没录入（按未知处理）';
           const Q = {
             image: [
               ['画什么', '主体 + 场景 + 风格。不说的部分我自己补成完整描述'],
@@ -6080,6 +6133,7 @@ PY
             ],
             tts: [['念什么', '不给我就没法开始'], ['什么声音/语气', '按默认音色'], ['语速', '按默认']],
             asr: [['录音是什么语言', '不说让模型自己判'], ['要不要整理成段落', '默认只转写']],
+            music: [['什么风格/情绪', '不给我就没法开始'], ['要不要人声、歌词谁写', '默认纯音乐，我自己写一段'], ['多长', '按模型默认']],
           };
           const qs = Q[cap] || [['还有什么要求', '不说就按默认']];
           const lines = [
@@ -6112,11 +6166,14 @@ PY
             const v = list[0];
             lines.push('【' + v.vendorName + '】凭据默认 env:' + v.keyEnv + '  ·  ' + v.keyNote);
             for (const x of list) {
-              const wantId = x.vendor + '-' + x.model.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+              const wantId = x.recordId || (x.vendor + '-' + x.model.replace(/[^a-z0-9]+/gi, '-').toLowerCase());
               const installed = items.some((it) => it && it.id === wantId);
-              lines.push('  · ' + x.catalogId + '  ' + x.name + '  [' + x.cap + ']'
-                + (x.price ? '  ' + x.price.value + ' 元/' + (x.price.unit === 'per_image' ? '张' : '秒') : '')
-                + (installed ? '  ← 已经装了' : ''));
+              const priceText = x.price
+                ? '  ' + x.price.value + ' ' + unitLabel(x.price.unit).replace(/^元/, x.price.currency === 'USD' ? '美元' : '元')
+                : '';
+              lines.push('  · ' + x.catalogId + '  ' + x.name + '  [' + x.cap + ']' + priceText
+                + (installed ? '  ← 已经装了' : '')
+                + (x.blocked ? '  ⛔' : ''));
             }
             lines.push('');
           }
@@ -6143,7 +6200,19 @@ PY
           }
           if (!FORM_LIST.includes(rec.form)) return { text: '（目录条目形态不合法：' + rec.form + '）' };
           if (items.some((x) => x && x.id === rec.id)) {
-            return { text: '（已经有 id=' + rec.id + ' 了。要覆盖用 action=update；要另存就在 setup 时给 id="别的名字"。）' };
+            // 2026-11-22：内置型号现在默认就装在表里，setup 多半撞到「已经有了」。
+            // 这时候它真正想干的事是「把这条的 key 指到我的变量上」—— 直接改掉，
+            // 而不是让人再想一遍 update 怎么写。
+            if (!keyRef) {
+              return { text: '（已经有 id=' + rec.id + ' 了（内置型号默认就装着）。'
+                + '要换 key 就在 setup 时带 keyRef:"env:你的变量名"；要覆盖别的字段用 action=update。）' };
+            }
+            const i = items.findIndex((x) => x && x.id === rec.id);
+            items[i] = { ...items[i], auth: { ...(items[i].auth || {}), ...rec.auth } };
+            reg.items = items;
+            await saveRegistry(capsPath(), reg);
+            return { text: '已经把 ' + rec.id + ' 的凭据指到 ' + rec.auth.keyRef + ' 了。'
+              + (String(rec.auth.keyRef).startsWith('env:') ? '（记得那个环境变量里真的有值）' : '（记得那个文件真的是 key）') };
           }
           items.push(rec);
           reg.items = items;
@@ -6280,6 +6349,12 @@ PY
         const rec = (reg.items || []).find((x) => x && x.id === id);
         if (!rec) return { text: '（没有这条：' + id + '。用 rh_capabilities list 看有哪些。）' };
         if (rec.enabled === false) return { text: '（这条关着：' + id + '）' };
+        // 规格在、但这套执行器发不出去的（只有 WebSocket 的、已下线的）——
+        // 与其让它试一遍拿个看不懂的错，不如当场说清为什么不能调。
+        if (rec.blocked) {
+          return { text: '（' + id + ' 现在调不了：' + rec.blocked
+            + '\n要换别的：rh_capabilities list cap=' + (rec.cap || '') + ' 看同类的其它条。）' };
+        }
 
         const limit = Number(cfg.capsDailyLimit);
         if (Number.isFinite(limit) && limit > 0) {

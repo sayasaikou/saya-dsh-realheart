@@ -11,6 +11,13 @@
  *   per_image     每张图（元）
  *   per_second    每秒视频（元）—— 只有官方给了每秒折算的才写，token 计价的按典型分辨率折算
  *   per_1k_tokens 每千 token（元）
+ *   per_1k_chars  每千字符（元）—— 语音合成按字符计价，汉字通常算 2 字符
+ *   per_minute    每分钟（元）—— 语音识别、按分钟的接口
+ *   per_song      每首（元）—— 音乐生成
+ *   per_call      每次（元）—— 按次计价的接口
+ *
+ * ⚠️ 2026-11-22：加后三种是因为 TTS / 音乐 / ASR 进来了。原来只有三种单位，
+ * 语音那条只能硬塞成 per_1k_tokens —— 数字照抄、单位错档，比价结果全是假的。
  */
 export const PRICING_ASOF = '2026-11-14';
 
@@ -43,10 +50,13 @@ export const PRICING = {
   'deepseek-v4-1-flash-260910': { unit: 'per_1k_tokens', value: 0.0005, src: 'ark 价格页' },
 };
 
-/** 一条记录的价格：记录自己写的优先，其次内置表。都没有 → null（未知）。 */
+/** 一条记录的价格：记录自己写的优先，其次内置表。都没有 → null（未知）。
+ *  2026-11-22：currency 要透传 —— 可灵按美元计价，丢掉币种就会把它显示成「元/秒」。 */
 export function priceOf(rec) {
   if (rec && rec.price && Number.isFinite(Number(rec.price.value))) {
-    return { unit: String(rec.price.unit || 'per_image'), value: Number(rec.price.value), src: 'record' };
+    const out = { unit: String(rec.price.unit || 'per_image'), value: Number(rec.price.value), src: 'record' };
+    if (rec.price.currency) out.currency = String(rec.price.currency);
+    return out;
   }
   const p = PRICING[String(rec && rec.model || '')];
   return p ? { ...p } : null;
@@ -73,6 +83,19 @@ export function estimateCost(rec, params = {}) {
   if (p.unit === 'per_1k_tokens') {
     const t = Number(params.tokens || 2000);
     return (v * (Number.isFinite(t) && t > 0 ? t : 2000)) / 1000;
+  }
+  if (p.unit === 'per_1k_chars') {
+    // 默认按「一次 300 字」估 —— 一条语音消息的量级
+    const c = Number(params.chars || params.textLength || 300);
+    return (v * (Number.isFinite(c) && c > 0 ? c : 300)) / 1000;
+  }
+  if (p.unit === 'per_minute') {
+    const m = Number(params.minutes || params.duration || 1);
+    return v * (Number.isFinite(m) && m > 0 ? m : 1);
+  }
+  if (p.unit === 'per_song' || p.unit === 'per_call' || p.unit === 'per_video') {
+    const n = Number(params.count || params.n || 1);
+    return v * (Number.isFinite(n) && n > 0 ? n : 1);
   }
   return null;
 }

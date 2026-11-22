@@ -1,3 +1,79 @@
+# 0.7.0 — 2026-11-22（外部能力：把「去查文档」这一步省掉）
+
+以前 agent 要生一张图，得自己去翻厂商文档、猜参数名、猜尺寸档位、猜价格。
+猜错的代价不是报错，是**静默出一张不对的图**，它还回一句「成功了」。
+这一版把 27 条主流模型的官方规格直接写进注册表：`rh_capabilities list` 一眼看到
+谁能用、多少钱、输入输出是什么、卡在哪个限制上；`get` 拿到可照抄的参数骨架。
+
+## 为什么之前加了配方也读不到（关键 bug）
+
+`loadRegistry()` 在文件存在时**只用文件内容**，完全不看内置的 `SEED_REGISTRY`。
+而云端那份 `capabilities.json` 在功能上线第一天就写出来了 —— 于是后来往内置表里
+加的配方一条都读不到。
+
+现在按 id 合并，而且是**字段级**合并：以内置打底、文件里写了的字段盖上去。
+不这么做的话，老机器上那几条只存了 id/端点的记录会挡住新加的规格字段，
+「规格内置」这台机器上等于没做。
+
+## 目录拆开了（一份真东西）
+
+```
+lib/catalog/
+  vendors.mjs   厂商级信息：key 放哪个变量、认证头怎么带、文档在哪
+  image.mjs     图片（豆包 / 通义万相 / 可灵 / OpenAI）
+  video.mjs     视频（Seedance / 通义 / MiniMax / 可灵）
+  audio.mjs     语音合成与识别（CosyVoice / MiniMax / Paraformer）
+  music.mjs     音乐（MiniMax，已下线）
+  llm.mjs       文本与视觉（豆包识图 / Qwen / MiniMax）
+  index.mjs     汇总 + 装成记录的装配器
+```
+
+`SEED_REGISTRY` 现在是 `flattenCatalog()` 派生的 —— 以前 `caps.mjs` 和 `catalog.mjs`
+各存一份规范，加一个型号要改两处，改漏一处就是「目录里能装、装完和目录说的不一样」。
+
+每条记录新增四个字段（agent 真正缺的那个）：
+`input` / `output`（输入输出格式）、`limits`（硬限制）、`docs`（官方文档）、
+`priceNote`（价格原文，因为单位换算会走样）。另外 `unverified` 记「哪几项没核到」——
+不确定的东西写进正文，比不写更糟。
+
+## 执行器补了四种能力（不补这几种厂商根本调不通）
+
+1. **`bodyTemplate`**：DashScope 那套请求体是 `{model, input:{messages|prompt}, parameters:{}}`，
+   参数埋在两层里。以前只有「平铺 body」一条路，于是通义系一条都用不了。
+2. **`followUp`**：MiniMax 的 Hailuo / 异步 TTS 完成任务只给 `file_id`，
+   还要再调一次文件接口才拿得到下载地址（两跳）。
+3. **hex / 二进制响应**：MiniMax 音频默认是 hex 字符串，OpenAI `/v1/audio/speech`
+   响应体本身就是音频流 —— 原来 `httpJson()` 先 `text()` 再拼，音频当场报废。
+4. **`modelInBody: false`**（可灵把模型写进 URL 路径）、**`pollMethod`**（DashScope 任务查询是 POST）、
+   **`extraHeaders`**（`X-DashScope-Async: enable`，缺了直接不支持同步调用）。
+
+顺带修掉两处同族的老毛病：
+- `openai-chat` 的 `defaults`（`max_tokens` 之类）从来没进过 body，只有写进 `bodyExtra` 的模板才会到
+- 价目单位的说法原来在三处手抄，`per_1k_chars` 一律被显示成「元/千token」——
+  数字对、意思错，最容易让人照着错单位比价。现在只有 `unitLabel()` 一份
+
+## 工具输出重排
+
+- `list`：按能力分组，每条标 `✓ 可用 / 缺 key(变量名) / ⛔ 不能调`，带价格和「输入→输出」。
+  带 `cap` 过滤时再把「能传的参数」和硬限制摊开 —— 要动手的时候一次看全。
+- `get`：规格卡（输入 / 输出 / 限制 / 计价原文 / 官方文档 / 没核实的）+ 可照抄的参数骨架。
+- `rh_call`：`blocked` 的记录当场拒绝并说明原因（CosyVoice 只有 WebSocket、MiniMax 音乐已下线），
+  不让它试一遍拿个看不懂的错。
+
+## 收录边界
+
+- 只收能对上官方文档的型号；火山那几条另外是亲手跑通过的。
+- **没有官方 API 或已下线的，明确标 `blocked`**，不拿第三方中转站当官方规格。
+- 云端的 key 现状：有 `DASHSCOPE_API_KEY` / `MINIMAX_API_KEY` / `DEEPSEEK_API_KEY`，
+  没有 `ARK_API_KEY` —— 豆包那几条在云端仍然跑不了（`list` 里会显示「缺 key(ARK_API_KEY)」）。
+
+## 测试
+
+205 条全过（原 184 + 新增 21）。新增两个文件：
+- `test/caps-registry.test.mjs`：目录完整性、合并规则、模板请求体、价格单位与币种
+- `test/caps-tool.test.mjs`：真把 `rh_capabilities` 跑起来看它吐出来的文字对不对
+  （只测函数不测渲染的话，渲染改坏了照样全绿）
+
 # 0.6.5 — 2026-11-22（sync-generate 不再吞 size / image）
 
 一晚上连出七张 1024×1024。传 size: "1536x1024"、"2K" 全无效；带了参考图

@@ -1,0 +1,188 @@
+/**
+ * 语音：合成（tts）与识别（asr）。
+ *
+ * TTS 的返回形态比图片杂得多：有给 URL 的、有给 base64 的、有给 hex 字符串的、
+ * 还有直接吐二进制音频流的。执行器四种都认，靠记录里的字段说清楚是哪种：
+ *   resultPath        URL 或 b64 所在路径
+ *   resultHexPath     音频是 hex 字符串时填这里
+ *   responseType      'binary' —— 响应体本身就是音频，没有 JSON
+ *   fileExt           落盘扩展名（mp3 / wav / pcm …）
+ */
+
+export const AUDIO_MODELS = [
+  // ── 阿里百炼 ────────────────────────────────────────────
+  {
+    vendor: 'dashscope',
+    recordId: 'dashscope-cosyvoice-tts',
+    model: 'cosyvoice-v3-plus',
+    name: '通义 CosyVoice 语音合成',
+    cap: 'tts',
+    form: 'raw',
+    transport: 'websocket',
+    blocked: '官方只给 WebSocket 流式接口（SDK client.audio.tts），没有 HTTP 同步端点 —— 本执行器只发 HTTP，这条现在调不了',
+    endpoint: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+    price: { unit: 'per_1k_chars', value: 0.2 },
+    priceNote: 'cosyvoice-v3-plus 2 元/万字符 = 0.2 元/千字符；v3.5-plus 0.15、v3.5-flash 0.08、v3-flash 0.1、v2 0.2。'
+      + '**一个汉字算 2 个字符**，字母/数字/标点/空格各算 1。',
+    input: 'text（单次 ≤20000 字符）+ model + voice（音色 ID）',
+    output: '音频二进制流（mp3/wav/pcm/opus），SDK 直接返回 bytes —— 不走 URL',
+    limits: { textMax: 20000, formats: ['mp3', 'wav', 'pcm', 'opus'] },
+    docs: 'https://help.aliyun.com/zh/model-studio/cosyvoice-python-sdk',
+    asOf: '2026-11-22',
+    params: {
+      text: { desc: '待合成文本，单次 ≤20000 字符', required: true },
+      voice: { desc: '音色 ID，必须与模型配套（v2 的音色给 v3-plus 用会失败）', required: true },
+      model: { desc: '模型 ID', values: ['cosyvoice-v3.5-plus', 'cosyvoice-v3.5-flash', 'cosyvoice-v3-plus', 'cosyvoice-v3-flash', 'cosyvoice-v2'] },
+      format: { desc: '输出格式，默认 mp3', values: ['mp3', 'wav', 'pcm', 'opus'] },
+      rate: { desc: '语速，默认 1.0，范围 [0.5,2.0]' },
+      pitch: { desc: '音调，默认 1.0，范围 [0.5,2.0]' },
+      volume: { desc: '音量，默认 50，范围 [0,100]' },
+    },
+    pitfalls: [
+      '**没有 HTTP 同步端点** —— 只有 WebSocket。要用就得写 WS 客户端（官方只有 Python/Java SDK 示例）。',
+      '按字符计费且**一个汉字算 2 个字符**：「你好」是 4 个字符 —— 按 1 字符估价的会差一倍。',
+      '双向流式 send_text 之间间隔不能超过 23 秒，超时报 request timeout after 23 seconds（服务端写死）。',
+      '**必须调 stop()**，否则尾部文本合成不出来 —— 静默丢字，不报错。',
+    ],
+    unverified: ['完整系统音色清单（只核到 longanyang=v3-plus、longxiaochun_v2=v2 两个样例）'],
+  },
+  {
+    vendor: 'dashscope',
+    recordId: 'dashscope-paraformer-asr',
+    model: 'paraformer-v2',
+    name: '通义 Paraformer 录音识别',
+    cap: 'asr',
+    form: 'async-task',
+    endpoint: 'https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription',
+    extraHeaders: { 'X-DashScope-Async': 'enable' },
+    submitBody: {
+      model: 'paraformer-v2',
+      input: { file_urls: ['{{file_url}}'] },
+      parameters: { channel_id: [0], language_hints: ['zh', 'en'] },
+    },
+    taskIdPath: 'output.task_id',
+    statePath: 'output.task_status',
+    doneWhen: ['SUCCEEDED'],
+    failWhen: ['FAILED', 'CANCELED', 'UNKNOWN'],
+    resultPath: 'output.results.0.transcription_url',
+    pollEndpoint: 'https://dashscope.aliyuncs.com/api/v1/tasks/{{id}}',
+    pollMethod: 'POST',
+    fileExt: 'json',
+    price: { unit: 'per_second', value: 0.00008 },
+    priceNote: '0.00008 元/秒（约 0.0048 元/分钟），只算被判为语音内容的时长；实时版 paraformer-realtime-v2 是 0.00024 元/秒。'
+      + '北京每月赠 36000 秒（10 小时），每月 1 日 0 点发放。',
+    input: 'file_url：音频的公网 http(s) URL（或 oss:// 临时 URL）。**不支持 Base64、不支持本地文件**',
+    output: '识别结果的 JSON 下载地址（24 小时有效）—— 正文在 transcripts[].sentences[].text / words[]',
+    limits: {},
+    docs: 'https://help.aliyun.com/zh/model-studio/paraformer-recorded-speech-recognition-restful-api',
+    asOf: '2026-11-22',
+    params: {
+      file_url: { desc: '音频公网 URL（单个；不支持 Base64 与本地文件）。带空格/中文要先 URL 编码', required: true },
+      language_hints: { desc: '语种提示，仅 paraformer-v2 可用', values: ['zh', 'en', 'ja', 'yue', 'ko', 'de', 'fr', 'ru'] },
+      diarization_enabled: { desc: '说话人分离，仅单声道可用，建议音频 ≤2 小时' },
+      disfluency_removal_enabled: { desc: '过滤「嗯、啊」这类语气词' },
+    },
+    pitfalls: [
+      '**必须带 X-DashScope-Async: enable**（已配好）。',
+      '任务查询是 POST 不是 GET（已用 pollMethod 标好）。',
+      '「任一子任务成功，整个 task_status 就报 SUCCEEDED」—— 必须再看 output.results[].subtask_status，'
+        + '否则单文件失败会被当成成功。执行器现在拿到的是第一个结果的 transcription_url，多文件场景要自己核。',
+      '不支持 Base64 / 二进制流 / 本地文件；oss:// 临时 URL 只有 RESTful 支持，SDK 不支持。',
+      'task_id 和 transcription_url 都是 24 小时有效。',
+      'channel_id 传 [0,1] 是两个音轨、两笔钱。',
+    ],
+    unverified: ['单文件时长上限 / 大小上限（RESTful 页没写）', 'Qwen-ASR 与 Fun-ASR 的请求体'],
+  },
+
+  // ── MiniMax（国内域名 api.minimax.cn）───────────────────────
+  {
+    vendor: 'minimax',
+    recordId: 'minimax-tts-hd',
+    model: 'speech-2.8-hd',
+    name: 'MiniMax 语音合成 HD',
+    cap: 'tts',
+    form: 'sync-generate',
+    endpoint: 'https://api.minimax.cn/v1/t2a_v2',
+    bodyTemplate: {
+      model: 'speech-2.8-hd',
+      text: '{{text}}',
+      stream: false,
+      voice_setting: { voice_id: '{{voice_id}}', speed: 1, vol: 1, pitch: 0 },
+      audio_setting: { sample_rate: 32000, bitrate: 128000, format: 'mp3', channel: 1 },
+    },
+    defaults: { format: 'mp3' },
+    resultPath: 'data.audio',
+    resultHexPath: 'data.audio',
+    fileExt: 'mp3',
+    price: { unit: 'per_1k_chars', value: 0.35 },
+    priceNote: '3.50 元/万字符 = 0.35 元/千字符（输入侧）；一个汉字算 2 个字符，按 extra_info.usage_characters 计费',
+    input: 'text（<10000 字符），可带 <#x#> 停顿标记、括号注音、2.8 专属语气词标签',
+    output: 'JSON —— 音频在 data.audio，**默认是 hex 字符串不是 URL**（要 URL 得显式传 output_format=url）',
+    limits: { textMax: 10000, formats: ['mp3', 'pcm', 'flac', 'wav', 'pcmu_raw', 'pcmu_wav', 'opus'] },
+    docs: 'https://platform.minimaxi.com/docs/api-reference/speech-t2a-http',
+    asOf: '2026-11-22',
+    params: {
+      text: { desc: '要念的文本，<10000 字符；超过 3000 建议改用流式。段落用换行符分', required: true },
+      voice_id: { desc: '音色 ID（必填；混音场景留空改用 timbre_weights）', required: true },
+      format: { desc: '输出格式，默认 mp3', values: ['mp3', 'pcm', 'flac', 'wav', 'opus'] },
+    },
+    promptGuide: [
+      '停顿用 <#x#> 标记，x 是秒（0.01~99.99，两位小数），不能连着用两个。',
+      '语气词标签只有 2.8 系列认：(laughs) (chuckle) (coughs) (clear-throat) (groans) (breath) (pant) (inhale) (exhale)。',
+    ],
+    pitfalls: [
+      '**默认返回 hex 不是 URL** —— 要 bytes.fromhex(data.audio) 落文件，扩展名看 extra_info.audio_format。执行器已经这么做了。',
+      'HTTP 200 不等于成功：必须看 base_resp.status_code == 0（2013 参数异常 / 1004 鉴权 / 1042 非法字符超 10%）。',
+      'data 可能是 null，文档明确要求判空。',
+      '语气词标签只有 2.8-hd / 2.8-turbo 支持，别的模型会把它当普通文本念出来。',
+      '非法字符 ≤10% 时正常返回并给占比，>10% 直接报错。',
+    ],
+    unverified: ['output_format=url 时的响应体结构（文档没给示例）', '国内 api.minimax.cn 与国际站的模型可用性差异'],
+  },
+  {
+    vendor: 'minimax',
+    recordId: 'minimax-tts-async',
+    model: 'speech-2.8-hd',
+    name: 'MiniMax 语音合成（长文本异步）',
+    cap: 'tts',
+    form: 'async-task',
+    endpoint: 'https://api.minimax.cn/v1/t2a_async_v2',
+    submitBody: {
+      model: 'speech-2.8-hd',
+      text: '{{text}}',
+      voice_setting: { voice_id: '{{voice_id}}' },
+      audio_setting: { audio_sample_rate: 32000, format: 'mp3', channel: 1 },
+    },
+    taskIdPath: 'task_id',
+    statePath: 'status',
+    doneWhen: ['success'],
+    failWhen: ['failed', 'expired'],
+    pollEndpoint: 'https://api.minimax.cn/v1/query/t2a_async_query_v2?task_id={{id}}',
+    followUp: {
+      endpoint: 'https://api.minimax.cn/v1/files/retrieve?file_id={{fileId}}',
+      idPath: 'file_id',
+      urlPath: 'file.download_url',
+    },
+    fileExt: 'mp3',
+    price: { unit: 'per_1k_chars', value: 0.35 },
+    priceNote: '3.50 元/万字符 = 0.35 元/千字符，与同步同价',
+    input: 'text（≤10 万字符）或 text_file_id（txt/zip；单文件 ≤10 万字符，zip 合计 ≤100 万字符），二者互斥必选一',
+    output: '不直接给音频：任务成功后拿 file_id，再调 /v1/files/retrieve 拿下载链接（9 小时有效）',
+    limits: { textMax: 100000 },
+    docs: 'https://platform.minimaxi.com/docs/api-reference/speech-t2a-async-create',
+    asOf: '2026-11-22',
+    params: {
+      text: { desc: '≤10 万字符（与 text_file_id 互斥）', required: true },
+      voice_id: { desc: '音色 ID', required: true },
+      format: { desc: '输出格式，默认 mp3', values: ['mp3', 'wav', 'opus'] },
+    },
+    pitfalls: [
+      '**字段名和同步版不一样**：异步 audio_setting 用 audio_sample_rate，同步用 sample_rate —— 抄错不报错，只是被忽略。',
+      '状态是小写枚举 success / failed / expired / processing，跟同步版那个数字 status 不是一回事。',
+      '下载链接只有 9 小时有效，必须落盘。',
+      'opus 只支持 8000/12000/16000/24000/48000 采样率，别的会让任务失败。',
+      '这条走两跳（任务 → 文件接口），执行器已经配了 followUp 自动取。',
+    ],
+    unverified: ['file_id 换下载链接那一步的完整响应结构'],
+  },
+];
