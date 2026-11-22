@@ -1,3 +1,45 @@
+# 0.6.5 — 2026-11-22（sync-generate 不再吞 size / image）
+
+一晚上连出七张 1024×1024。传 size: "1536x1024"、"2K" 全无效；带了参考图
+image 也一点效果没有，脸、发型、鳍耳全靠提示词文字编。而 paramHints 明明白白
+写着「size 可选」「image 可选」。
+
+## 根因：三处说法不一致
+
+| 位置 | 说的是 |
+| --- | --- |
+| caps.mjs:153 | ars = { ...(rec.defaults \|\| {}), ...(params \|\| {}) }，params 进来了 |
+| caps.mjs:175 | 拼 body 却只展开 ec.defaults，不展开 vars |
+| paramHints() | 告诉 agent「size、image 都能传」 |
+
+而 illDeep() 只做 {{占位符}} 替换，**不会把 vars 里多出来的键过继进对象**。
+
+于是：size 永远是 defaults 里那个字面量 1024x1024；image 这个键根本不出现在 body 里。
+**传什么都白传，而且每次都回「成功了」** —— 最容易骗到人的那种失败。
+
+顺带一处冤枉：旧 notes 写着「1536x1024 会被服务端忽略、仍出方图」。
+不是服务端挑尺寸，是**根本没发出去**。
+
+## 改法
+
+1. HIDDEN（id、esponse_format）从 paramHints() 里提到模块级，执行器复用同一份名单；
+   另加 BODY_SKIP（prompt、messages 单独处理）
+2. sync-generate 拼 body 改为 defaults → vars 过继 → bodyExtra，用户传的覆盖默认值
+3. image 以 ile: 开头时读本地文件转 data URI —— 外部接口只认 http 地址或 data 串，
+   以前本机参考图传不进去
+4. odyExtra 声明的键若被填成空串则删掉（服务端会 400）
+5. notes 与 paramHints 的说明同步；删掉「服务端忽略尺寸」那条错误结论
+
+sync-task 和 aw 形态没动。
+
+## 验证
+
+- 本地假接口 	est-caps-params.mjs：七种情况全过（不传 / 2048x1312 / 2K / file: 图 /
+  http 图 / bodyExtra 空串 / bodyExtra 全传）
+- 真机 ARK 落盘量过：不传 size → 1024×1024；传 2048x1312 → 2048×1312
+- 全套 184 条测试：全过，0 失败
+
+---
 # 0.6.4 — 2026-11-19（查清那条 TODO：不是 bug）
 
 0.6.3 里留了一条 TODO：「同胞机器人的话会被当成他说的」。这次查了一圈，**这个前提本身是错的**。
@@ -2819,6 +2861,7 @@ h-status.pid | 不停，打出是谁在用 |
 
 补记录不是为了补齐历史，是为了从这一版起，每一次「装的步骤变了 / 行为变了 / 格式变了」
 都有地方可查 —— 尤其是**怎么退**。
+
 
 
 
