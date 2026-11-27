@@ -60,15 +60,16 @@ async function moodSection(h) {
   return out.sections.find((s) => s.name === 'realheart:mood');
 }
 
-test('浓度 4 的心情：注入里带「这个浓度落到话上」的具体约束', async () => {
+test('「有点闷」：注入里给的是这一类情绪的约束，不是通用模板', async () => {
   const h = await boot([mood('有点闷', 4, 2)]);
   try {
     const sec = await moodSection(h);
     assert.ok(sec, '心情段没了');
-    assert.match(sec.text, /这个浓度落到话上/, '没有行为映射');
-    assert.match(sec.text, /短一截/, '没给句子长度的约束');
-    assert.match(sec.text, /不主动开新话题/, '没给行动倾向的约束');
-    // 淡的时候不该冒出来
+    // 2026-11-27 二版：先从 feeling 认出情绪族（闷 → 钝/没劲），再给这一族的约束
+    assert.match(sec.text, /这次怎么落到话上/, '没有行为映射');
+    assert.match(sec.text, /主：钝\/没劲/, '没有按情绪分类：\n' + sec.text);
+    assert.match(sec.text, /能短就短/, '没给句子形态的约束');
+    assert.match(sec.text, /禁区/, '没给"最容易演砸的地方"');
     assert.ok(!sec.text.includes('先答这一句'), '才两小时，不该催');
   } finally {
     await rm(h.root, { recursive: true, force: true });
@@ -93,7 +94,7 @@ test('moodBehavior=false：行为映射可以关掉，硬要求还在', async ()
   try {
     const sec = await moodSection(h);
     assert.ok(sec);
-    assert.ok(!sec.text.includes('这个浓度落到话上'), '关掉了却还在');
+    assert.ok(!sec.text.includes('这次怎么落到话上'), '关掉了却还在');
     assert.match(sec.text, /先答这一句/, '关行为映射不该把「过期提醒」也关掉');
   } finally {
     await rm(h.root, { recursive: true, force: true });

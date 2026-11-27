@@ -70,6 +70,7 @@ export const Config = Schema.object({
   bleedMaxHours: Schema.number().min(0).max(168).default(DEFAULTS.bleedMaxHours).volatile(),
   moodFadeHours: Schema.number().min(1).max(720).default(DEFAULTS.moodFadeHours).volatile(),
   moodMaxHours: Schema.number().min(1).max(720).default(DEFAULTS.moodMaxHours).volatile(),
+  moodBaselineHours: Schema.number().min(1).max(2160).default(DEFAULTS.moodBaselineHours).volatile(),
   moodAskWindows: Schema.string().default(DEFAULTS.moodAskWindows).volatile(),
   moodBehavior: Schema.boolean().default(DEFAULTS.moodBehavior).volatile(),
   promptFree: Schema.string().default(DEFAULTS.promptFree).volatile(),

@@ -217,6 +217,8 @@ export const DEFAULTS = {
   // maxHours 是「多久没更新算过期」，20 小时是照着"一天至少摸一次"定的；
   // askWindows 是「哪两个时段主动问一句」—— 选白天她多半在、和睡前，别在他忙的时候问。
   moodMaxHours: 20,
+  // 超过这个小时数还低浓度的，算「长期底色」而不是「当下的调子」（默认 72）
+  moodBaselineHours: 72,
   moodAskWindows: '10:00-12:00,21:00-23:30',
   moodBehavior: true,
   promptFree: '',
@@ -620,6 +622,14 @@ export const FIELD_META = [
       + '默认：20（照着「一天至少摸一次」定的）。影响：调小会更频繁地被要求核对，调大就更松。\n'
       + '它不会拦住她说话，只会在注入里排在最前面。',
     ui: { unit: '小时', recommend: '推荐 16~24', brief: '超过这个小时数，注入里会下一道硬要求。', detail: '默认 20 小时。调小会更频繁被要求核对，调大就更松。' },
+  },
+  {
+    key: 'moodBaselineHours', region: 'inject', topic: 'C', alias: '心情 底色 长期 当下 分界',
+    label: '多久算「长期底色」而不是「当下」',
+    level: 'caution', range: '1–2160 小时（默认 72）',
+    why: '作用：比这个更旧、浓度又低（≤6）的心情，在注入里只作「底色」提一句（整段对话的气压），'
+      + '不抢当下的调子。\n默认：72（三天）。影响：调小会把更多旧情绪当底色，调大就更容易被当成"现在"。',
+    ui: { unit: '小时', recommend: '推荐 48~96', brief: '更旧又低浓度的只作底色，不抢当下。', detail: '默认 72 小时。' },
   },
   {
     key: 'moodAskWindows', region: 'inject', topic: 'C', alias: '心情 主动 问 时点 窗口',

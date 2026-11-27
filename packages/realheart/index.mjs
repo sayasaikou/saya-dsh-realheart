@@ -36,6 +36,7 @@ import { join, dirname } from 'node:path';
 import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, estimateCost, priceOf, pricingTable, PRICING_ASOF, FORM_LIST, KIND_LIST, paramHints, SEED_REGISTRY, moneyText, unitLabel, limitsLine, keyReady } from './lib/caps.mjs';
 import { CATALOG, flattenCatalog, findCatalogModel, buildRecordFromCatalog } from './lib/catalog.mjs';
 import { behaviorLines, askPlan, parseWindows, minuteOfDay, sameLocalDay, hoursSince } from './lib/mood-behavior.mjs';
+import { composeMoodBehavior } from './lib/mood-taxonomy.mjs';
 import { promisify } from 'node:util';
 import {
   fingerprint as pendingFp,
@@ -1119,10 +1120,20 @@ const ROUND_MARK = '[本轮消息]';
     const stale = hours !== null && hours > 24;
 
     // 2026-11-27：心情要真的改行为，不能只写一句"这是调子"。
-    // 两件事分开算：
-    //   ① 行为映射（浓度 → 具体的句子长短 / 软尾 / 开不开话题）；
-    //   ② 到点问（窗口内轻问、过期硬要）—— 强制力在这一条上，不靠自觉。
-    const behavior = cfg.moodBehavior === false ? [] : behaviorLines(level);
+    // 三件事分开算：
+    //   ① 情绪分类 + 合成（认得出是什么情绪，才谈得上"怎么说话"；
+    //      单一标签不够 —— 她账本里就有"又羞又软，还憋着一点不高兴"这种叠着的）；
+    //   ② 认不出来时退回按浓度给约束（不让这一环整个失效）；
+    //   ③ 到点问（窗口内轻问、过期硬要）—— 强制力在这一条上，不靠自觉。
+    let behavior = [];
+    if (cfg.moodBehavior !== false) {
+      const pool = (Array.isArray(mine) && mine.length ? mine : [last]).slice(-4);
+      behavior = composeMoodBehavior(pool, {
+        now: Date.now(),
+        baselineHours: Number(cfg.moodBaselineHours) > 0 ? Number(cfg.moodBaselineHours) : 72,
+      });
+      if (!behavior.length) behavior = behaviorLines(level);
+    }
     const ask = askPlan({
       hours,
       hasToday: Number.isNaN(t) ? false : sameLocalDay(t),
