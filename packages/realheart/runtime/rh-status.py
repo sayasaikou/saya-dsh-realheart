@@ -16,6 +16,7 @@
 配置：config.json {"port": 8098, "bind": "127.0.0.1", "secret": "...", "root": "~/qqbot"}
 """
 
+import datetime
 import hmac
 import html
 import json
@@ -49,6 +50,7 @@ except Exception as _exc:      # 索引挂了不能拖垮整张页，但要如�
 CONFIG_PATH = os.path.join(HERE, 'config.json')
 
 _cfg = json.load(open(CONFIG_PATH, encoding='utf-8'))
+CONFIG = _cfg          # _cfg_num() 读这份（原来是 _cfg，名字短但离得远，容易找不到）
 PORT = int(_cfg.get('port', 8098))
 BIND = str(_cfg.get('bind', '127.0.0.1'))
 SECRET = str(_cfg['secret']).encode('utf-8', 'surrogateescape')
@@ -138,40 +140,6 @@ def stamp(ts):
 
 
 # ---------------------------------------------------------------- 解析
-
-def parse_mood(text):
-    """mood.md 是 markdown 列表，形如 `- 情绪：...`。取键值，续行并上去。"""
-    fields = {}
-    order = []
-    key = None
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        s = line.strip()
-        if not s or s.startswith('#') or s.startswith('>'):
-            key = None
-            continue
-        m = re.match(r'^[-*]\s*([^\uff1a:]{1,12})[\uff1a:]\s*(.*)$', s)
-        if m:
-            key = m.group(1).strip()
-            fields[key] = m.group(2).strip()
-            order.append(key)
-            continue
-        if key:
-            fields[key] += s
-    return [{'key': k, 'text': fields[k]} for k in order if fields.get(k)]
-
-
-def mood_intensity(fields):
-    for f in fields:
-        if f['key'] in ('强度', '浓度'):
-            m = re.search(r'(\d+)\s*/\s*(\d+)', f['text'])
-            if m:
-                return int(m.group(1)), int(m.group(2))
-            m = re.search(r'(\d+)', f['text'])
-            if m:
-                return int(m.group(1)), 10
-    return None
-
 
 def parse_pending(text):
     items = []
@@ -537,46 +505,9 @@ def esc(s):
     return html.escape(str(s), quote=True)
 
 
-def render_mood():
-    path = os.path.join(MEM, 'mood.md')
-    text, err = read_text(path)
-    st = stat_of(path)
-    meta = ''
-    if st:
-        meta = '· 改于 %s（%s）' % (stamp(st['mtime']), age_of(st['mtime']))
-    if text is None:
-        return ('<div class="card"><h2>她现在 · 状态</h2><p class="err">读不到这个文件：%s</p>'
-                '</div>' % esc(err))
-    fields = parse_mood(text)
-    if not fields:
-        return ('<div class="card"><h2>她现在 · 状态</h2>'
-                '<p class="err">文件在，但没解析出条目（格式变了？）</p></div>')
-
-    mood_text = ''
-    parts = []
-    inten = mood_intensity(fields)
-    for f in fields:
-        k = f['key']
-        if k in ('情绪', '状态'):
-            mood_text = f['text']
-            continue
-        if k in ('强度', '浓度'):
-            continue
-        parts.append('<div class="kv"><b>%s</b><span>%s</span></div>' % (esc(k), esc(f['text'])))
-
-    out = []
-    if mood_text:
-        out.append('<div class="mood">%s</div>' % esc(mood_text))
-    if inten:
-        cur, mx = inten
-        pct = int(max(0, min(100, cur * 100.0 / max(1, mx))))
-        out.append('<div class="bar"><i style="width:%d%%"></i></div>' % pct)
-        out.append('<div class="muted">强度 %d / %d</div>' % (cur, mx))
-    out.extend(parts)
-    return ('<div class="card"><h2>她现在 · 状态</h2>%s'
-            '<p class="note">来自 <span class="muted">work/MEMORY/mood.md</span> %s</p></div>' % (
-                ''.join(out), meta))
-
+# 2026-11-27：`render_mood()`（读 work/MEMORY/mood.md 那个）删掉了。
+# 换成 jsonl 账本之后它就没有任何调用点 —— 留着的唯一效果是让下一个人
+# 以为观测页还在读 mood.md。现行入口是下面的 render_mood_ledger()。
 
 MOOD_LOG = os.path.join(RH_STATE, 'mood.jsonl')
 
@@ -598,6 +529,34 @@ def read_mood_ledger():
         if isinstance(obj, dict):
             rows.append(obj)
     return rows, ''
+
+
+def _hours_since(value):
+    """距某个时间点多少小时。取不到返回 None（不猜）。
+
+    账本里的 `at` 是 ISO 串（2026-11-27T22:22:09+08:00），不是秒数 ——
+    所以这里走 datetime，不走 _norm_ts（那个只吃数字）。
+    """
+    s = str(value or '').strip()
+    if not s:
+        return None
+    try:
+        if s.endswith('Z'):
+            s = s[:-1] + '+00:00'
+        dt = datetime.datetime.fromisoformat(s)
+        return (time.time() - dt.timestamp()) / 3600.0
+    except Exception:
+        return None
+
+
+def _cfg_num(key, fallback):
+    """从 runtime/config.json 的 userConfig 里取一个数字。取不到就回默认。"""
+    try:
+        v = (CONFIG.get('userConfig') or {}).get(key)
+        n = float(v)
+        return n if n > 0 else fallback
+    except Exception:
+        return fallback
 
 
 def _fmt_at(value):
@@ -759,6 +718,18 @@ def render_mood_ledger():
     if last.get('decay'):
         out.append('<div class="kv"><b>什么时候淡</b><span>%s</span></div>' % esc(last['decay']))
     out.append('<div class="kv"><b>记于</b><span>%s</span></div>' % esc(_fmt_at(last.get('at'))))
+    # 2026-11-27：断档一眼可见 + 到点会被问的那条阈值一起摆出来。
+    # 判据：这两个数决定她下一轮会不会被要求先答一句，值得在观测页上直接看到。
+    try:
+        _hours = _hours_since(last.get('at'))
+        if _hours is not None:
+            _maxh = int(_cfg_num('moodMaxHours', 20))
+            _over = _hours >= _maxh
+            out.append('<div class="kv"><b>距今</b><span>%s%s</span></div>' % (
+                ('%d 小时' % round(_hours)) if _hours < 48 else ('%d 天' % round(_hours / 24)),
+                ('　<span class="err">已过期（≥ %d 小时，注入里会要求先答一句）</span>' % _maxh) if _over else ''))
+    except Exception:
+        pass
     if dead_last:
         out.append('<p class="err">这一笔已经作废%s —— 她下次开口不会再看到它，但记录还在。</p>' % (
             ('：' + esc(voided[total])) if voided.get(total) else ''))

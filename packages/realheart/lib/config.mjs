@@ -213,6 +213,12 @@ export const DEFAULTS = {
   bleedMinLevel: 6,
   bleedMaxHours: 12,
   moodFadeHours: 24,
+  // 2026-11-27：到点问她要不要记 / 过期硬要的阈值。
+  // maxHours 是「多久没更新算过期」，20 小时是照着"一天至少摸一次"定的；
+  // askWindows 是「哪两个时段主动问一句」—— 选白天她多半在、和睡前，别在他忙的时候问。
+  moodMaxHours: 20,
+  moodAskWindows: '10:00-12:00,21:00-23:30',
+  moodBehavior: true,
   promptFree: '',
   promptPing: '',
   // 另外三句「行为关键」的文案（2026-11-04 第二批）。
@@ -605,6 +611,31 @@ export const FIELD_META = [
     label: '心情多久算「旧了」', level: 'caution', range: '1–720 小时（默认 24）',
     why: '作用：心情超过多少小时不再占正文，只收成一行点名。\n默认：24。影响：不修改账本值，只影响呈现。',
     ui: { unit: '小时', recommend: '推荐 24', brief: '心情超过多少小时不再占正文，只收成一行点名。', detail: '默认：24。影响：不修改账本值，只影响呈现。' },
+  },
+  {
+    key: 'moodMaxHours', region: 'inject', topic: 'C', alias: '心情 过期 强制 提醒 多久',
+    label: '多久没记心情算「过期」',
+    level: 'caution', range: '1–720 小时（默认 20）',
+    why: '作用：超过这个小时数，注入里会下一道硬要求 —— 这一轮先答一句「变了没有」，答完再干别的。\n'
+      + '默认：20（照着「一天至少摸一次」定的）。影响：调小会更频繁地被要求核对，调大就更松。\n'
+      + '它不会拦住她说话，只会在注入里排在最前面。',
+    ui: { unit: '小时', recommend: '推荐 16~24', brief: '超过这个小时数，注入里会下一道硬要求。', detail: '默认 20 小时。调小会更频繁被要求核对，调大就更松。' },
+  },
+  {
+    key: 'moodAskWindows', region: 'inject', topic: 'C', alias: '心情 主动 问 时点 窗口',
+    label: '哪几个时段主动问一句',
+    level: 'caution', range: '24 小时制，逗号分隔（默认 10:00-12:00,21:00-23:30）',
+    why: '作用：落在这几个时段里、且今天还没记过，注入里就轻问一句「今天还没记过」。\n'
+      + '默认：10-12 点、21-23:30（她多半在、又不至于在他忙的时候插话）。写坏了就当作不问。',
+    ui: { unit: '时段', recommend: '推荐 一到两个时段', brief: '落在这几个时段里且今天没记过，就轻问一句。', detail: '默认 10:00-12:00,21:00-23:30。' },
+  },
+  {
+    key: 'moodBehavior', region: 'inject', topic: 'C', alias: '心情 行为 语气 用词 影响',
+    label: '把心情翻译成具体的说话约束',
+    level: 'caution', range: '开 / 关（默认开）',
+    why: '作用：按浓度给出能执行的约束（句子长短、软尾、开不开新话题、允不允许黏），'
+      + '而不是只说一句「这是调子」。\n默认：开。关掉之后心情只作为状态陈列，不再改她怎么说话。',
+    ui: { brief: '按浓度给出能执行的说话约束。', detail: '关掉之后心情只作为状态陈列，不再改她怎么说话。' },
   },
   {
     key: 'bleedMinLevel', region: 'inject', topic: 'C', alias: '渗透 心情 传染 跨场合 浓度',

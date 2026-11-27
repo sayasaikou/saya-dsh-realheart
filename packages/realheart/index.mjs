@@ -35,6 +35,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, appen
 import { join, dirname } from 'node:path';
 import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, estimateCost, priceOf, pricingTable, PRICING_ASOF, FORM_LIST, KIND_LIST, paramHints, SEED_REGISTRY, moneyText, unitLabel, limitsLine, keyReady } from './lib/caps.mjs';
 import { CATALOG, flattenCatalog, findCatalogModel, buildRecordFromCatalog } from './lib/catalog.mjs';
+import { behaviorLines, askPlan, parseWindows, minuteOfDay, sameLocalDay, hoursSince } from './lib/mood-behavior.mjs';
 import { promisify } from 'node:util';
 import {
   fingerprint as pendingFp,
@@ -899,6 +900,10 @@ const ROUND_MARK = '[本轮消息]';
     '写不进去的只有一种：给了 id、但索引里找不到那个 id（id 写错了，或者那件事没发生过）。',
     '',
     '心情没变就别写；凭空多出一条比空着更糟。',
+    '',
+    '例外：注入里点名要你核对（「先答这一句」）时，**「没变」本身算一条** —— '
+      + 'feeling 写「跟上次一样」，level 照上次，why_ref 用 `none:unexplained`。'
+      + '不记下来，下次就分不出是没动还是没记。',
   ].join('\n');
 
   /**
@@ -1113,6 +1118,19 @@ const ROUND_MARK = '[本轮消息]';
     if (!Number.isNaN(t)) hours = (Date.now() - t) / 3600000;
     const stale = hours !== null && hours > 24;
 
+    // 2026-11-27：心情要真的改行为，不能只写一句"这是调子"。
+    // 两件事分开算：
+    //   ① 行为映射（浓度 → 具体的句子长短 / 软尾 / 开不开话题）；
+    //   ② 到点问（窗口内轻问、过期硬要）—— 强制力在这一条上，不靠自觉。
+    const behavior = cfg.moodBehavior === false ? [] : behaviorLines(level);
+    const ask = askPlan({
+      hours,
+      hasToday: Number.isNaN(t) ? false : sameLocalDay(t),
+      nowMin: minuteOfDay(),
+      windows: parseWindows(cfg.moodAskWindows),
+      maxHours: Number(cfg.moodMaxHours) > 0 ? Number(cfg.moodMaxHours) : 20,
+    });
+
     const lvOf = (n) => {
       const v = Number(n);
       return Number.isFinite(v) && v > 0 ? `（浓 ${v}/10）` : '';
@@ -1195,6 +1213,14 @@ const ROUND_MARK = '[本轮消息]';
       // 加上这句，才真的一个字不提。
       // 所以：**只给状态不给禁令，她会把它当成可以拿出来说的素材。**
       out.push(promptText('promptMoodBan', '（知道就行，不必说出来 —— 它们不是你聊天的素材，只影响你说话的样子，不是你的话。）'));
+      if (behavior.length) {
+        out.push('');
+        out.push(...behavior);
+      }
+      if (ask.text) {
+        out.push('');
+        out.push(ask.text);
+      }
       out.push('变了就调 rh_mood 记一笔；哪条不对了，也记一笔说清楚。');
       out.push('（你写下的来处会带在这里 —— 写清楚点，下次你自己才认得出这是哪件事。）');
       return out.join('\n');
@@ -1227,7 +1253,17 @@ const ROUND_MARK = '[本轮消息]';
     }
     lines.push('这是调子，不是台词。浓的时候压不住，淡了就不算数。');
     lines.push('（知道就行，不必说出来 —— 它不是你聊天的素材，只影响你说话的样子。）');
-    lines.push('变了就调 rh_mood 记一笔（必须指一件事），没变就别写。');
+    if (behavior.length) {
+      lines.push('');
+      lines.push(...behavior);
+    }
+    if (ask.text) {
+      lines.push('');
+      lines.push(ask.text);
+    }
+    lines.push(ask.kind === 'hard'
+      ? '变了就调 rh_mood 记一笔（必须指一件事）；没变就按上面那句记一条「跟上次一样」。'
+      : '变了就调 rh_mood 记一笔（必须指一件事），没变就别写。');
     lines.push('（你写下的来处会带在这里 —— 写清楚点，下次你自己才认得出这是哪件事。）');
     return lines.join('\n');
   }
