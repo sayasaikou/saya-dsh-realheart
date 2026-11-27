@@ -1127,7 +1127,9 @@ const ROUND_MARK = '[本轮消息]';
     //   ③ 到点问（窗口内轻问、过期硬要）—— 强制力在这一条上，不靠自觉。
     let behavior = [];
     if (cfg.moodBehavior !== false) {
-      const pool = (Array.isArray(mine) && mine.length ? mine : [last]).slice(-4);
+      // -14 而不是 -4：主情绪只取最新那条，更早的只用来判「底色」和「副情绪」，
+      // 窗太短就凑不出"这些天一直是 X"（实测：只看最后 4 条，她 11 月的闷一次都数不到两次）。
+      const pool = (Array.isArray(mine) && mine.length ? mine : [last]).slice(-14);
       behavior = composeMoodBehavior(pool, {
         now: Date.now(),
         baselineHours: Number(cfg.moodBaselineHours) > 0 ? Number(cfg.moodBaselineHours) : 72,

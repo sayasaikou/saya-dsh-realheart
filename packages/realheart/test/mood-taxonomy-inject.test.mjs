@@ -106,7 +106,8 @@ test('认不出来的 feeling：退回按浓度，不许整段空掉', async () 
 });
 
 test('底色与当下：旧闷 + 新的想笑 → 主是开心，闷只作背景音', async () => {
-  const h = await boot([row('闷', 3, 24 * 6), row('有点想笑', 4, 1)]);
+  // 底色要出现过 ≥2 次才算（见 mood-taxonomy.js 那段的实测说明）
+  const h = await boot([row('闷', 3, 24 * 7), row('有点闷', 3, 24 * 6), row('有点想笑', 4, 1)]);
   try {
     const text = await moodText(h);
     assert.match(text, /主：开心/, text);

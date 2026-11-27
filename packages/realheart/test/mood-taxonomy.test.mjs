@@ -82,11 +82,13 @@ test('复合冲突：嘴上生气心里高兴 → 表层按生气，但底层不
   assert.match(text, /不拒绝、不冷战|心里是高兴/, '没给出"嘴硬心软"的合法规：' + text);
 });
 
-test('底色与当下分开：旧的低浓度只做背景音，不抢当下', () => {
-  const old = { at: '2026-11-20T10:00:00+08:00', feeling: '闷', level: 3 };
+test('底色与当下分开：反复出现的旧低浓度只做背景音，不抢当下', () => {
+  // "底色"要求出现过 ≥2 次：一条旧记录不叫底色（2026-11-27 实测纠正）
+  const old1 = { at: '2026-11-18T10:00:00+08:00', feeling: '闷', level: 3 };
+  const old2 = { at: '2026-11-20T10:00:00+08:00', feeling: '有点闷', level: 3 };
   const nowRow = { at: '2026-11-27T20:00:00+08:00', feeling: '有点想笑', level: 4 };
   const now = Date.parse(nowRow.at) + 60000;
-  const text = composeMoodBehavior([old, nowRow], { now, baselineHours: 72 }).join('\n');
+  const text = composeMoodBehavior([old1, old2, nowRow], { now, baselineHours: 72 }).join('\n');
   assert.match(text, /主：开心/, '当下那条才是主情绪：' + text);
   assert.match(text, /底色是「钝\/没劲」|底色是「钝/, '长期底色没单独成一条：' + text);
   assert.match(text, /背景音/, '底色必须说明它不抢调子：' + text);
@@ -101,8 +103,8 @@ test('没有可分类的 feeling：合成返回空，退路是「按浓度」那
   assert.ok(behaviorLines(9).join('').includes('能短就短'));
 });
 
-test('输出长度受控：不给注入塞长文', () => {
-  const rows = LEDGER.slice(-4);
+test('输出长度受控：整本 15 条丢进去也不许超预算', () => {
+  const rows = LEDGER;
   const lines = composeMoodBehavior(rows, { now: Date.parse(rows[rows.length - 1].at) + 60000 });
   assert.ok(lines.length <= 9, '超了预算：' + lines.length + ' 行');
   const chars = lines.join('').length;

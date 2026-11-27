@@ -267,21 +267,31 @@ export function composeMoodBehavior(states, opt = {}) {
     }
   }
 
-  // ③ 长期底色：更旧、浓度低、但一直没散的那些
+  // ③ 长期底色：更旧、浓度低、而且**不止出现过一次**的那些
+  //    「底色」得是反复出现的，一条九天前的旧记录不叫底色，叫旧记录。
+  //    2026-11-27 实测：拿"出现次数最多"去挑，会从一条 11-18 的"又羞又软"里
+  //    给她安一个"底色是害羞" —— 一次性的东西不该变成气压。
   const baseFams = new Map();
   for (const o of older) {
     if (o.hours !== null && o.hours < baselineHours) continue;
     if (o.level > 6) continue;
     const f = o.fams[0];
     if (!f) continue;
-    baseFams.set(f.family, (baseFams.get(f.family) || 0) + 1);
+    const cur = baseFams.get(f.family) || { n: 0, newest: Infinity };
+    baseFams.set(f.family, { n: cur.n + 1, newest: Math.min(cur.newest, o.hours ?? Infinity) });
   }
-  if (baseFams.size) {
-    const top = [...baseFams.entries()].sort((a, b) => b[1] - a[1])[0][0];
-    const def = FAMILIES[top];
-    if (def && (PLAY[top] || []).length) {
-      lines.push(`· 底色是「${def.label}」（已经好些天）：整段对话的气压按它来，但不必每句都提 ——`
-        + '底色是背景音，不是台词。');
+  const basePick = [...baseFams.entries()]
+    .filter(([, v]) => v.n >= 2)                       // 至少两次才算"底色"
+    .sort((a, b) => (b[1].n - a[1].n) || (a[1].newest - b[1].newest))[0];
+  if (basePick && (PLAY[basePick[0]] || []).length) {
+    const def = FAMILIES[basePick[0]];
+    if (basePick[0] === main.family) {
+      // 和当下同族：这时它重要的不是"再说一遍怎么说话"，而是**它不是今天才有的**
+      lines.push(`· 而且这不是今天才有的：这些天一直是「${def.label}」（${basePick[1].n} 次）。`
+        + '所以它是底色，不是这一阵的情绪 —— 别用「过两天就好了」这句糊过去。');
+    } else {
+      lines.push(`· 底色是「${def.label}」（这些天出现过 ${basePick[1].n} 次）：`
+        + '整段对话的气压按它来，但不必每句都提 —— 底色是背景音，不是台词。');
     }
   }
 
