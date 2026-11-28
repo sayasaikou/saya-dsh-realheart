@@ -223,3 +223,26 @@ test('时间说法按日历日，不按小时数', () => {
   assert.equal(agoLabel(0.2, now, now), '刚刚');
   assert.equal(agoLabel(72, Date.parse('2026-11-25T20:00:00+08:00'), now), '3 天前');
 });
+
+test('底色的窗口有上限：半年前的"闷"不算"这些天的底色"', () => {
+  const now = Date.parse('2026-11-28T20:00:00+08:00');
+  const rows = [
+    { at: '2026-05-01T10:00:00+08:00', feeling: '闷', level: 3 },   // 半年多以前
+    { at: '2026-05-03T10:00:00+08:00', feeling: '闷', level: 3 },
+    { at: '2026-11-28T19:00:00+08:00', feeling: '有点想笑', level: 5 },
+  ];
+  const text = composeMoodBehavior(rows, { now, baselineHours: 72 }).join('\n');
+  assert.match(text, /｜开心/, text);
+  assert.ok(!text.includes('底色是「钝'), '半年前的两条被算成"这些天的底色"：\n' + text);
+});
+
+test('底色的窗口内还是要认（3 天前 + 5 天前的闷）', () => {
+  const now = Date.parse('2026-11-28T20:00:00+08:00');
+  const rows = [
+    { at: '2026-11-25T10:00:00+08:00', feeling: '闷', level: 3 },
+    { at: '2026-11-23T10:00:00+08:00', feeling: '有点闷', level: 3 },
+    { at: '2026-11-28T19:00:00+08:00', feeling: '有点想笑', level: 5 },
+  ];
+  const text = composeMoodBehavior(rows, { now, baselineHours: 72 }).join('\n');
+  assert.match(text, /底色是「钝/, '几天前的两条该算底色：\n' + text);
+});

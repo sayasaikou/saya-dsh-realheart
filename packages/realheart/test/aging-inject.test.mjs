@@ -126,3 +126,14 @@ test('没完的事：挂了二十天要提醒"要么做要么撤"', async () => 
     await rm(h.root, { recursive: true, force: true });
   }
 });
+
+test('断点快照：断在两天前要说得出口', async () => {
+  const h = await boot({ 'where.jsonl': [{ at: daysAgo(2), doing: '在改心情层' }] });
+  try {
+    const text = sectionText(await assemble(h), 'realheart:where');
+    assert.ok(text.includes('在改心情层'), text);
+    assert.match(text, /2 天前/, '断点没带年龄：\n' + text);
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});

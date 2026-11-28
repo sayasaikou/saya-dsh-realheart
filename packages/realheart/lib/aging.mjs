@@ -35,6 +35,9 @@ export const AGE_RULES = {
   admit: { keep: 24 * 7, mention: 24 * 30 },
   view: { keep: 24 * 30, mention: 24 * 120 },
   pendingChange: { keep: 24 * 14, mention: 24 * 60 },
+  // 断点快照：三小时内还算"接着刚才"，三天内还算"上次"，一周后基本没用了。
+  // （注入里不会把旧断点写成"现在"—— 低于一天的不提醒，超过就用说清年龄）
+  where: { keep: 24 * 3, mention: 24 * 7 },
   // 待办不衰减：没干完就是没干完。但久挂要提醒 —— 要么做，要么撤。
   pending: { keep: Infinity, mention: Infinity, nagAfter: 24 * 14 },
 };

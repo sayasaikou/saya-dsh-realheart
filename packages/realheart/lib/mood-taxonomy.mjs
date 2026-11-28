@@ -419,8 +419,13 @@ export function composeMoodBehavior(states, opt = {}) {
   // ⑤ 长期底色：更旧、浓度低、而且**不止出现过一次**的那些
   //    「底色」得是反复出现的；一条九天前的旧记录不叫底色，叫旧记录。
   const baseFams = new Map();
+  // 2026-11-28 补：加**上限**。原来只挡"够旧"的（>= baselineHours），没挡"太旧"的 ——
+  // 半年前的一条"闷"会被算进"这些天的底色"，那是把历史当成了现在。
+  // 底色描述的是"最近这一阵"，所以窗口是 [baselineHours, 30 天]。
+  const BASE_MAX_H = 24 * 30;
   for (const o of older) {
     if (o.hours !== null && o.hours < baselineHours) continue;
+    if (o.hours !== null && o.hours > BASE_MAX_H) continue;
     if (o.level > 6) continue;
     const f = o.fams[0];
     if (!f) continue;

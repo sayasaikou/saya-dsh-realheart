@@ -38,6 +38,7 @@ import { CATALOG, flattenCatalog, findCatalogModel, buildRecordFromCatalog } fro
 import { behaviorLines, askPlan, parseWindows, minuteOfDay, sameLocalDay, hoursSince } from './lib/mood-behavior.mjs';
 import { composeMoodBehavior, agencyBoundary, isNegativeFamily, classify, refreshHoursFor, effectiveLevel } from './lib/mood-taxonomy.mjs';
 import { splitByAge, ageLabel, nagLine, AGE_RULES } from './lib/aging.mjs';
+import { halfLifeOf } from './lib/mood-taxonomy.mjs';
 import { promisify } from 'node:util';
 import {
   fingerprint as pendingFp,
@@ -830,7 +831,20 @@ const ROUND_MARK = '[本轮消息]';
   //   ① 只拦「多记一件事」（`rh_pending add`），不拦读、不拦收拾 —— 挡做事的工具是惩罚做事；
   //   ② 答一句就解：调 `rh_mood`（**成功或失败都算**，她要的只是“过了一遍”）；
   //   ③ 心情层被冻着时不拦 —— 冻着还逼她检查，那就成了刁难。
-  const MOOD_CHECK_HOURS = 6;
+  const MOOD_CHECK_HOURS = 6;   // 兜底值：算不出族的时候用它
+  // 2026-11-28：闸门阈值跟半衰期走（原来是死的 6 小时）。
+  // 困 4 小时半衰 → 2 小时就没影了，6 小时才问太晚；难过 18 小时半衰 → 6 小时就问太勤。
+  async function moodCheckHours() {
+    try {
+      const rows = await readMood({ tail: 1 });
+      const last = rows[rows.length - 1];
+      const fam = classify(String(last?.feeling || ''))[0]?.family;
+      if (!fam) return MOOD_CHECK_HOURS;
+      return Math.max(2, Math.min(MOOD_CHECK_HOURS * 2, Math.round(halfLifeOf(fam) * 1.5)));
+    } catch {
+      return MOOD_CHECK_HOURS;
+    }
+  }
   const controlFile = () => join(cfg.stateDir, 'control.jsonl');
 
   async function lastMoodCheckAt() {
@@ -867,7 +881,7 @@ const ROUND_MARK = '[本轮消息]';
     // 2026-11-01 那条判据还在（单独装也要能用）。只在「用起来之后、又很久没看」时才拦。
     if (!at) return '';
     const hours = (Date.now() - at) / 3600000;
-    if (hours <= MOOD_CHECK_HOURS) return '';
+    if (hours <= (await moodCheckHours())) return '';
     const when = Number.isFinite(hours) ? `${Math.round(hours)} 小时` : '好久';
     return `（先等一下：距上次看心情已经${when}了。\n`
       + '这不是惩罚，是这段时间没人问、你可能自己也想不起来看一眼。\n'
@@ -2256,7 +2270,11 @@ const ROUND_MARK = '[本轮消息]';
     const last = rows[rows.length - 1];
     const doing = String(last.doing || '').trim();
     if (!doing) return '';
-    const lines = ['【上次断在这儿】', doing];
+    // 2026-11-28：断点也带年龄。断在三天前和断在十分钟前，接法完全不一样。
+    const aged = splitByAge('where', [last]);
+    const item = [...aged.fresh, ...aged.old, ...aged.stale][0] || aged.unknown[0] || null;
+    const ageTxt = item && item.hours != null && item.hours > 1 ? `（${item.age}断的）` : '';
+    const lines = ['【上次断在这儿】', doing + ageTxt];
     if (last.stage) lines.push('到哪步：' + String(last.stage).trim());
     if (last.next) lines.push('下一步：' + String(last.next).trim());
     lines.push('（这条是你自己写的，不是别人告诉你的。不认就重写一条。）');
