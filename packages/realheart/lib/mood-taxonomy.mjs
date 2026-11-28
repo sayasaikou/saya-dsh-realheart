@@ -499,7 +499,7 @@ export function composeMoodBehavior(states, opt = {}) {
   const basePick = [...baseFams.entries()]
     .filter(([, v]) => v.n >= 2)
     .sort((a, b) => (b[1].n - a[1].n) || (a[1].newest - b[1].newest))[0];
-  if (basePick) {
+  if (basePick && !(second && second.family === basePick[0])) {
     const def = FAMILIES[basePick[0]];
     if (basePick[0] === main.family) {
       lines.push(`· 这不是今天才有的：这些天一直是「${def.label}」（${basePick[1].n} 次）—— 是底色，不是这一阵的情绪。`);
