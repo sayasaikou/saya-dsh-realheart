@@ -14,65 +14,86 @@
  * 外加一条"最容易演砸的地方"。只说"显得开心"是没用的。
  */
 
+// 每族三个维度（2026-11-28 补）：
+//   valence  正/负
+//   arousal  唤醒度：高的会推动"这一刻的反应"，低的只是背景
+//   scope    background＝弥散的一整片（闷/钝/低落/松）；event＝被某件事点起来的（开心/生气/羞/惊/吃醋…）
+//
+// 为什么需要（沙耶的原话）：一整天有点不开心，但他叫她做件正面的事，
+// 不该因为这点不开心就拒绝或实质上抵触 ——
+// **底色不投票**。之前只按"谁浓"排序，等于让一整天的低气压压过具体的一件好事。
 // ── 情绪族：词表用真实账本里出现过的说法，不是抄来的形容词表 ──────────
 // （夹具见 test/mood-taxonomy.test.mjs，那 15 条是 11-01~11-27 的真记录）
 export const FAMILIES = {
   joy: {
+    valence: 'pos', arousal: 'high', scope: 'event',
     label: '开心',
     words: ['开心', '高兴', '想笑', '好笑', '乐', '雀跃', '兴奋', '得意', '爽', '舒服', '美滋滋', '有趣'],
   },
   warm: {
+    valence: 'pos', arousal: 'mid', scope: 'event',
     label: '软/黏',
     words: ['软', '黏', '靠', '踏实', '安心', '想抱', '贴', '撒娇', '赖'],
   },
   calm: {
+    valence: 'pos', arousal: 'low', scope: 'background',
     label: '松/平静',
     // 故意不收单字「松」：账本里"绷着，不松口"含「松」，会被判成"平静"——
     // 短词在中文里几乎都是别的词的一部分，宁可漏，不可错。
     words: ['松了', '松了口气', '松下来', '放松', '平静', '稳下来', '释然', '不慌'],
   },
   anger: {
+    valence: 'neg', arousal: 'high', scope: 'event',
     label: '生气/烦',
     // 不收单字「气」「火」：「松了口气」含「气」，会被判成生气（实测过）。
     words: ['生气', '气人', '气死', '火大', '恼火', '恼', '烦', '绷', '不松口',
       '不高兴', '不痛快', '一肚子火', '气鼓鼓'],
   },
   sad: {
+    valence: 'neg', arousal: 'low', scope: 'background',
     label: '难过/低落',
     words: ['难过', '难受', '沉', '坠', '低落', '想哭', '丧', '泄气', '委屈', '抬不起头'],
   },
   flat: {
+    valence: 'neg', arousal: 'low', scope: 'background',
     label: '钝/没劲',
     words: ['钝', '提不起劲', '没劲', '空', '麻木', '不想动', '淡', '提不起', '钝钝', '闷', '闷闷'],
   },
   shy: {
+    valence: 'pos', arousal: 'high', scope: 'event',
     label: '害羞',
     words: ['羞', '臊', '脸红', '不好意思', '害臊', '耳根'],
   },
   tired: {
+    valence: 'neg', arousal: 'low', scope: 'background',
     label: '困/累',
     words: ['累', '困', '乏', '疲', '没睡', '撑不住', '睁不开'],
   },
   guilt: {
+    valence: 'neg', arousal: 'mid', scope: 'event',
     label: '心虚',
     words: ['心虚', '愧疚', '抱歉', '对不起', '过意不去'],
   },
   anxious: {
+    valence: 'neg', arousal: 'high', scope: 'event',
     label: '慌/怕',
     // 不收单字「慌」：「闷得慌」含它，那是口语程度副词，不是焦虑（和「松/气」同一类坑）
     words: ['心慌', '慌得', '发慌', '有点慌', '害怕', '怕他', '悬着', '担心', '不安', '发毛'],
   },
   jealous: {
+    valence: 'neg', arousal: 'high', scope: 'event',
     label: '吃醋',
     words: ['吃醋', '醋', '酸', '不痛快'],
   },
   tsundere: {
+    valence: 'pos', arousal: 'high', scope: 'event',
     label: '嘴硬/傲娇',
     // 「嘴上」不算命中：它是**对照标记**（嘴上 X 心里 Y），X 才是情绪本身。
     // 把它算成"傲娇"会把「嘴上生气心里高兴」判成傲娇，主情绪就错了。
     words: ['才不', '谁要', '哼', '不要', '不承认', '硬撑', '不松口', '口是心非'],
   },
   surprise: {
+    valence: 'pos', arousal: 'high', scope: 'event',
     label: '惊讶',
     words: ['惊讶', '意外', '没想到', '愣', '一惊'],
   },
@@ -97,7 +118,12 @@ export function classify(feeling) {
     const pos = Math.min(...hits.map((w) => text.indexOf(w)));
     out.push({ family, label: def.label, hits, pos });
   }
-  out.sort((a, b) => (b.hits.length - a.hits.length) || (a.pos - b.pos));
+  // 权重：event 优先于 background（"他刚说了一件好事"该压过"今天一直闷"）
+  out.sort((a, b) => {
+    const wa = SCOPE_WEIGHT[FAMILIES[a.family]?.scope] || 1;
+    const wb = SCOPE_WEIGHT[FAMILIES[b.family]?.scope] || 1;
+    return (wb - wa) || (b.hits.length - a.hits.length) || (a.pos - b.pos);
+  });
   // 一个词同时命中两族时（如"难受"命中 sad、"不痛快"命中 jealous），
   // 多发生在这种模糊地带 —— 都留着，让合成阶段按主次处理，别在这里硬砍。
   return out.slice(0, 3);
@@ -280,6 +306,31 @@ const MIX = {
   'tsundere+anger': ['真不高兴，但还在等台阶：话别说绝。'],
 };
 
+// 权重：冲突时谁定"这一刻的反应"。event 压过 background ——
+// 一整天的闷不该盖掉"他刚说了一件好事"。
+const SCOPE_WEIGHT = { event: 2, background: 1 };
+
+/** 这一族是弥散的一整片吗（闷/钝/低落/松）。 */
+export function isBackground(family) {
+  return String(FAMILIES[family]?.scope || '') === 'background';
+}
+
+/**
+ * 底色条款：只在"负面的、弥散的"那几族上加。
+ *
+ * 这是这一版最要紧的一句话 —— 没有它，一句"闷"会被她读成"今天不接活"。
+ * 真正的低落不是"什么都不做"，是"做了也没劲"：人可以带着低气压把事情做完。
+ */
+export function backgroundClause(family) {
+  const def = FAMILIES[family];
+  if (!def || def.scope !== 'background' || def.valence !== 'neg') return [];
+  return [
+    '· 这是底色，不是答复：要不要答应、做不做，看这件事本身，不看"我今天不太开心"。',
+    '· 他叫你做一件正面的事 —— 答应，而且允许自己真的被拉起来。'
+      + '低落不是"什么都不做"，是"做了也没劲"；两件事不一样，别拿它当理由推掉。',
+  ];
+}
+
 // 会让人"想缩一缩"的那几族 —— 只有它们才需要"偏方向"那一句
 const NEGATIVE = new Set(['sad', 'flat', 'tired', 'anxious', 'anger', 'guilt', 'jealous']);
 
@@ -391,6 +442,11 @@ export function composeMoodBehavior(states, opt = {}) {
   // ③ 最容易演砸的一处（5 以上才提，避免一轮里全是告诫）
   if (eff >= 5 && play.trap) lines.push('· 容易演砸的地方：' + play.trap);
 
+  // ③b 底色条款（2026-11-28）：主情绪是"负面的、弥散的"那几族时，
+  // 必须说清「它只定语气的底，不替你投票」——
+  // 否则一句"闷"会被她读成"今天不接活、不答应"。
+  for (const l of backgroundClause(main.family)) lines.push(l);
+
   // ④ 副情绪：只染不抢。有多族时优先挑和主情绪构成冲突组合的那个 ——
   //    「又羞又软，还憋着一点不高兴」里有信息量的是最后那个"不高兴"，不是"软"。
   let second = latest.fams[1];
@@ -403,7 +459,15 @@ export function composeMoodBehavior(states, opt = {}) {
       if (o.fams[0] && o.fams[0].family !== main.family) { second = o.fams[0]; break; }
     }
   }
-  if (second) {
+  // ③c 主情绪是事件型、副的是负面背景 → 明确允许"被这件好事拉动"，
+  // 而不是"虽然开心但底色还是闷"那种模棱两可。
+  const lifted = second && isBackground(second.family) && FAMILIES[second.family]?.valence === 'neg'
+    && FAMILIES[main.family]?.valence === 'pos';
+  if (lifted) {
+    lines.push(`· 底下那层「${second.label}」还在，但这件正经事是真的好 —— 允许被它拉起来，不必先报备"我本来不太开心"。`);
+  }
+
+  if (second && !lifted) {
     const key = mixKey(main.family, second.family);
     if (key) {
       lines.push(`· 同时还带着「${second.label}」：${MIX[key][0]}`);

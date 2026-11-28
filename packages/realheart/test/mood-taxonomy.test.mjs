@@ -246,3 +246,51 @@ test('底色的窗口内还是要认（3 天前 + 5 天前的闷）', () => {
   const text = composeMoodBehavior(rows, { now, baselineHours: 72 }).join('\n');
   assert.match(text, /底色是「钝/, '几天前的两条该算底色：\n' + text);
 });
+
+// ── 2026-11-28：优先级（底色不投票）─────────────────────────────────────────
+
+test('负面的弥散底色：只定语气，不替她决定答不答应', () => {
+  const row = { at: new Date(Date.now() - 3600e3).toISOString(), feeling: '闷了一天', level: 4 };
+  const text = composeMoodBehavior([row], { now: Date.now() }).join('\n');
+  assert.match(text, /这是底色，不是答复/, text);
+  assert.match(text, /答应/, '没说清"正面的事该答应"：\n' + text);
+  assert.match(text, /低落不是"什么都不做"，是"做了也没劲"/, '缺那条关键判断：\n' + text);
+});
+
+test('事件型压过弥散底色：他现在说了件好事，允许被拉起来', () => {
+  const now = Date.now();
+  const rows = [
+    { at: new Date(now - 26 * 3600e3).toISOString(), feeling: '有点闷', level: 3 },
+    { at: new Date(now - 3 * 3600e3).toISOString(), feeling: '有点想笑', level: 5 },
+  ];
+  const text = composeMoodBehavior(rows, { now }).join('\n');
+  assert.match(text, /｜开心/, '主情绪该是事件型的开心：\n' + text);
+  assert.match(text, /允许被它拉起来/, '没允许她被好事拉动：\n' + text);
+  // 同一件事不该说两遍
+  assert.equal((text.match(/钝\/没劲/g) || []).length <= 2, true, '副情绪行没有合并：\n' + text);
+});
+
+test('事件型的负面（生气）不该被"答应"条款冲淡', () => {
+  const row = { at: new Date(Date.now() - 3600e3).toISOString(), feeling: '绷着，不松口', level: 6 };
+  const text = composeMoodBehavior([row], { now: Date.now() }).join('\n');
+  assert.ok(!text.includes('这是底色，不是答复'), '生气不是弥散底色，不该套这一句：\n' + text);
+  assert.match(text, /别阴阳、别翻旧账/, '生气该有的告诫还在：\n' + text);
+});
+
+test('底色条款里不许出现"推掉/算了/改天"这类许可', () => {
+  for (const f of ['闷了一天', '有点抬不起头', '困得睁不开眼']) {
+    const row = { at: new Date(Date.now() - 1800e3).toISOString(), feeling: f, level: 5 };
+    const text = composeMoodBehavior([row], { now: Date.now() }).join('\n');
+    for (const bad of ['不想做', '算了', '改天', '下次吧', '不答应']) {
+      assert.ok(!text.includes(bad), f + ' 出现了「' + bad + '」：\n' + text);
+    }
+  }
+});
+
+test('每一族都带了三个维度，没有漏的', () => {
+  for (const [k, v] of Object.entries(FAMILIES)) {
+    assert.ok(['pos', 'neg'].includes(v.valence), k + ' 缺 valence');
+    assert.ok(['low', 'mid', 'high'].includes(v.arousal), k + ' 缺 arousal');
+    assert.ok(['background', 'event'].includes(v.scope), k + ' 缺 scope');
+  }
+});
