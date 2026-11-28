@@ -531,6 +531,52 @@ def read_mood_ledger():
     return rows, ''
 
 
+# 情绪族 → 半衰期（小时）。跟 lib/mood-taxonomy.mjs 的 HALF_LIFE_H 保持一致；
+# 这里是给观测页看的，只要不飘就行 —— 真正的判定在插件里。
+_HALF_LIFE = {
+    '惊讶': 0.5, '困/累': 4, '生气/烦': 5, '害羞': 5, '傲娇': 6, '开心': 8,
+    '软/黏': 8, '吃醋': 10, '慌/怕': 10, '心虚': 12, '钝/没劲': 18, '难过/低落': 18, '松/平静': 24,
+}
+# 词 → 族（只收够用的那几个，认不出就按默认 12 小时）
+_FAMILY_WORDS = {
+    '困/累': ['累', '困', '乏', '疲', '撑不住'],
+    '生气/烦': ['生气', '烦', '恼', '火大', '绷'],
+    '害羞': ['羞', '臊', '脸红'],
+    '开心': ['开心', '高兴', '想笑', '乐'],
+    '钝/没劲': ['钝', '提不起劲', '没劲', '麻木', '闷'],
+    '难过/低落': ['难过', '难受', '坠', '低落', '泄气', '委屈'],
+    '心虚': ['心虚', '愧疚'],
+    '慌/怕': ['心慌', '害怕', '担心', '不安'],
+    '吃醋': ['吃醋', '酸'],
+    '松/平静': ['松了口气', '松了', '平静', '释然'],
+    '软/黏': ['软', '黏', '踏实'],
+    '傲娇': ['才不', '谁要', '硬撑'],
+}
+
+
+def _half_life_of(row):
+    feeling = str(row.get('feeling') or '')
+    for fam, words in _FAMILY_WORDS.items():
+        if any(w in feeling for w in words):
+            return _HALF_LIFE.get(fam)
+    return 12
+
+
+def _effective_level(row):
+    """现在的浓度 = level × 0.5^(小时/半衰期)。跟插件同一个公式。"""
+    try:
+        level = float(row.get('level') or 0)
+    except (TypeError, ValueError):
+        return None
+    if level <= 0:
+        return None
+    hours = _hours_since(row.get('at'))
+    if hours is None or hours <= 0:
+        return level
+    hl = _half_life_of(row) or 12
+    return level * (0.5 ** (hours / hl))
+
+
 def _hours_since(value):
     """距某个时间点多少小时。取不到返回 None（不猜）。
 
@@ -719,12 +765,19 @@ def render_mood_ledger():
         out.append('<div class="kv"><b>什么时候淡</b><span>%s</span></div>' % esc(last['decay']))
     out.append('<div class="kv"><b>记于</b><span>%s</span></div>' % esc(_fmt_at(last.get('at'))))
     # 2026-11-27：断档一眼可见 + 到点会被问的那条阈值一起摆出来。
-    # 判据：这两个数决定她下一轮会不会被要求先答一句，值得在观测页上直接看到。
+    # 判据：这些数决定她下一轮会不会被要求先答一句，值得在观测页上直接看到。
     try:
         _hours = _hours_since(last.get('at'))
         if _hours is not None:
             _maxh = int(_cfg_num('moodMaxHours', 20))
             _over = _hours >= _maxh
+            # 2026-11-28：把「现在还剩多少」也摆出来 —— 只看"记的时候 L7"会以为它还在满格。
+            _eff = _effective_level(last)
+            if _eff is not None:
+                _hl = _half_life_of(last)
+                out.append('<div class="kv"><b>现在还剩</b><span>约 %s / 10%s</span></div>' % (
+                    ('%.1f' % _eff).rstrip('0').rstrip('.'),
+                    ('　<span class="muted">半衰期 %s 小时，过了就散</span>' % _hl) if _hl else ''))
             out.append('<div class="kv"><b>距今</b><span>%s%s</span></div>' % (
                 ('%d 小时' % round(_hours)) if _hours < 48 else ('%d 天' % round(_hours / 24)),
                 ('　<span class="err">已过期（≥ %d 小时，注入里会要求先答一句）</span>' % _maxh) if _over else ''))

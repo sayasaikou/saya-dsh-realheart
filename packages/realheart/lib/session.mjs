@@ -1,3 +1,5 @@
+import { effectiveLevel, classify } from './mood-taxonomy.mjs';
+
 /**
  * 会话身份：心情「分场合」的取数层（2026-11-01）。
  *
@@ -98,7 +100,7 @@ export function sessionLabel(sessionId) {
  * 默认阈值（浓≥6、12 小时内）先写死在调用处，不上面板 —— 还没真机验过，
  * 先不要为一个没跑起来的想法加三个配置项。
  */
-export function moodBleedsIn(row, sessionId, { now = Date.now(), minLevel = 6, maxHours = 12 } = {}) {
+export function moodBleedsIn(row, sessionId, { now = Date.now(), minLevel = 6, maxHours = 12, effMin = null } = {}) {
   if (!sessionId) return false;
   const owner = ownerOf(row);
   if (!owner) return false;          // 全局心情已经在本场合那档里了，不重复
@@ -107,5 +109,23 @@ export function moodBleedsIn(row, sessionId, { now = Date.now(), minLevel = 6, m
   if (!Number.isFinite(level) || level < minLevel) return false;
   const at = Date.parse(String(row?.at || ''));
   if (Number.isNaN(at)) return false;    // 说不清多早，就不渗
-  return now - at <= maxHours * 3600 * 1000;
+  if (now - at > maxHours * 3600 * 1000) return false;
+  // 2026-11-28：最后一道闸换成「**现在还剩多浓**」，而不是"记的时候多浓"。
+  // 私聊里两小时前一条 L6 的困，到了群里其实已经没什么了；
+  // 而一条 L6 的难过过两小时还是 L6 的样子 —— 光看原浓度会让前者也渗过来。
+  // 门槛：记的时候要够浓（minLevel），现在还要剩得下一半 ——
+  // 一半这个比例是照"还看得出是同一个状态"定的，不是拍脑袋的整数。
+  const eff = effectiveLevel(level, (now - at) / 3600000, familyOf(row));
+  const floor = Number.isFinite(Number(effMin)) && Number(effMin) > 0 ? Number(effMin) : level / 2;
+  return eff >= floor;
+}
+
+/** 从 feeling 里认出情绪族，只给渗透这一处用（认不出就按默认半衰期算）。 */
+function familyOf(row) {
+  try {
+    const f = classify(String(row?.feeling || ''))[0];
+    return f ? f.family : '';
+  } catch {
+    return '';
+  }
 }

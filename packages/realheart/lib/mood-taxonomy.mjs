@@ -419,7 +419,9 @@ export function composeMoodBehavior(states, opt = {}) {
   if (eff < 2) {
     lines.push(`【早先那条「${main.label}」已经过去了${ago ? `（${ago}）` : ''}】`);
     lines.push(`· 原文是「${latest.feeling}」—— 它已经不驱动你说话了，别按它演。`);
-    lines.push('· 现在照你自己真实的感觉来；想不起来就调 rh_mood 记一句，不记也行。');
+    lines.push('· 现在照你自己真实的感觉来 —— 没记录不等于"没有状态"，只等于"还没记"：'
+      + '按平常的调子说话，别演早上的，也别硬编一个。');
+    lines.push('· 想不起来就调 rh_mood 记一句，不记也行。');
     lines.push(...agencyBoundary({ negative: isNegativeFamily(main.family) }));
     return lines.slice(0, maxLines);
   }

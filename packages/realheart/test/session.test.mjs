@@ -126,3 +126,13 @@ test('渗透：阈值可调', () => {
   assert.equal(moodBleedsIn(fresh({ level: 3 }), 'sess-a', { now: NOW, minLevel: 3 }), true);
   assert.equal(moodBleedsIn(fresh(), 'sess-a', { now: NOW, maxHours: 0.1 }), false);
 });
+
+test('渗透按"现在还剩多少"算：同样的浓度，困散得快、难过散得慢', () => {
+  // 2026-11-28：原来只看"记的时候够不够浓 + 12 小时内"，于是
+  // 私聊里两小时前一条 L6 的困会照样渗进群里 —— 那时它其实已经没多少了。
+  const now = Date.now();
+  const mk = (h, level, feeling) => ({ at: new Date(now - h * 3600e3).toISOString(), level, feeling, session: 'A' });
+  assert.equal(moodBleedsIn(mk(2, 6, '困'), 'B', { now }), true, '两小时前的困还有一半以上');
+  assert.equal(moodBleedsIn(mk(6, 6, '困'), 'B', { now }), false, '六小时前的困该散光了');
+  assert.equal(moodBleedsIn(mk(6, 6, '心里坠着'), 'B', { now }), true, '六小时前的难过还立着');
+});
