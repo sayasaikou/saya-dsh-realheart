@@ -13,6 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   classify, hasContrast, composeMoodBehavior, FAMILIES,
+  effectiveLevel, isExpired, refreshHoursFor, halfLifeOf, agoLabel, HALF_LIFE_H,
 } from '../lib/mood-taxonomy.mjs';
 import { behaviorLines } from '../lib/mood-behavior.mjs';
 
@@ -165,4 +166,60 @@ test('"偏方向"只给会想缩的那几族；开心时不提这句', () => {
   assert.match(bad, /捞回自己/, '负面状态该给"往能捞回自己那边偏"：\n' + bad);
   const good = composeMoodBehavior([mk('今天想笑')], { now: Date.now() }).join('\n');
   assert.ok(!good.includes('捞回自己'), '高兴的时候说这句没意义：\n' + good);
+});
+
+// ── 2026-11-28：时间衰减（早上记的困，晚上不该还在说话）──────────────────────
+
+test('半衰期：困散得快，闷散得慢，同一时刻差别很大', () => {
+  assert.ok(halfLifeOf('tired') < halfLifeOf('flat'), '困应该比闷散得快');
+  assert.ok(halfLifeOf('surprise') < halfLifeOf('sad'));
+  // 12 小时之后
+  assert.ok(effectiveLevel(5, 12, 'tired') < 2, '早八的困到晚上就该不驱动了');
+  assert.ok(effectiveLevel(5, 12, 'sad') >= 2, '难过能挂一天');
+  assert.ok(effectiveLevel(4, 12, 'flat') >= 2, '没劲也能挂一天');
+  // 半衰期定义本身
+  assert.ok(Math.abs(effectiveLevel(8, halfLifeOf('joy'), 'joy') - 4) < 0.01, '两个半衰期？一个半衰期应该正好掉一半');
+  // 刚记的不衰减
+  assert.equal(effectiveLevel(6, 0, 'tired'), 6);
+  assert.equal(effectiveLevel(6, null, 'tired'), 6);
+});
+
+test('过期判定与"该问一句"的间隔都跟着族走', () => {
+  assert.ok(isExpired('tired', 5, 12), '12 小时的困该判过期');
+  assert.ok(!isExpired('sad', 5, 12), '12 小时的难过不该判过期');
+  // 困：8 小时就问；闷：压到全局上限 20
+  assert.equal(refreshHoursFor('tired', 20), 8);
+  assert.equal(refreshHoursFor('sad', 20), 20);
+  assert.equal(refreshHoursFor('surprise', 20), 2, '惊讶半小时半衰，2 小时就该问（下限 2）');
+  assert.equal(refreshHoursFor('tired', 5), 5, '全局上限更小时要以全局为准');
+});
+
+test('早上的困到晚上：注入里明说过期，不再给"怎么说话"', () => {
+  const now = Date.parse('2026-11-28T20:00:00+08:00');
+  const row = { at: '2026-11-28T08:00:00+08:00', feeling: '困得睁不开眼', level: 5 };
+  const text = composeMoodBehavior([row], { now }).join('\n');
+  assert.match(text, /已经过去了/, text);
+  assert.match(text, /已经不驱动你说话了/, text);
+  assert.ok(!text.includes('句子可以不完整'), '过期了还在给"困"的说话方式：' + text);
+  // 边界段仍然要在 —— 过期不等于放开主动性
+  assert.match(text, /该搜就搜/, text);
+});
+
+test('同一时刻的难过：照常驱动，只是浓度标清楚掉了多少', () => {
+  const now = Date.parse('2026-11-28T20:00:00+08:00');
+  const row = { at: '2026-11-28T08:00:00+08:00', feeling: '心里坠着', level: 6 };
+  const text = composeMoodBehavior([row], { now }).join('\n');
+  assert.ok(!text.includes('已经过去了'), '难过不该被判过期：' + text);
+  assert.match(text, /现在约 [\d.]+\/10/, '浓度掉了要标出来：' + text);
+  assert.match(text, /记的时候 6\/10/, text);
+});
+
+test('时间说法按日历日，不按小时数', () => {
+  const now = Date.parse('2026-11-28T20:00:00+08:00');
+  // 今天早八 = 12 小时前，但仍是"今天"
+  assert.equal(agoLabel(12, Date.parse('2026-11-28T08:00:00+08:00'), now), '今天早些时候');
+  // 昨晚十点 = 22 小时前，是"昨天"
+  assert.equal(agoLabel(22, Date.parse('2026-11-27T22:00:00+08:00'), now), '昨天');
+  assert.equal(agoLabel(0.2, now, now), '刚刚');
+  assert.equal(agoLabel(72, Date.parse('2026-11-25T20:00:00+08:00'), now), '3 天前');
 });

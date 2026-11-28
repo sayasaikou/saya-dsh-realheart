@@ -109,6 +109,83 @@ export function hasContrast(feeling) {
   return CONTRAST_MARKERS.some((w) => text.includes(w));
 }
 
+/**
+ * 人话说法："3 小时前" / "今天早些时候" / "昨天" / "4 天前"。
+ *
+ * 按**日历日**判断，不按小时数：早八到晚上八是 12 小时，但仍然"今天"；
+ * 昨晚十点到今早八是 10 小时，却已经"昨天"。纯按时长必然错一边。
+ */
+export function agoLabel(hours, atMs, nowMs = Date.now()) {
+  const h = Number(hours);
+  if (!Number.isFinite(h) || h < 0) return '';
+  if (h < 1) return '刚刚';
+  if (h < 6) return `${Math.round(h)} 小时前`;
+  const t = Number(atMs);
+  if (Number.isFinite(t)) {
+    const a = new Date(t);
+    const b = new Date(nowMs);
+    const sameDay = a.getFullYear() === b.getFullYear()
+      && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    if (sameDay) return '今天早些时候';
+    const yesterday = new Date(b.getFullYear(), b.getMonth(), b.getDate() - 1);
+    if (a.getFullYear() === yesterday.getFullYear()
+      && a.getMonth() === yesterday.getMonth() && a.getDate() === yesterday.getDate()) return '昨天';
+    return `${Math.round(h / 24)} 天前`;
+  }
+  return h < 36 ? '昨天' : `${Math.round(h / 24)} 天前`;
+}
+
+// ── 半衰期：一条心情多久掉一半 ─────────────────────────────────────────────
+//
+// 2026-11-28（沙耶：早上记个"困"，到晚上还在说"没劲"—— 这肯定不对）。
+// 根因不是强度，是**所有族共用同一条衰减曲线**：
+//   · 困、惊、烦这类是**生理/事件性**的，几个钟头就该散；
+//   · 闷、难过、踏实这类是**背景性**的，能挂一整天甚至几天。
+// 一条 24 小时的一刀切，等于让早上的困一直演到晚上。
+//
+// 单位：小时。到了两个半衰期只剩 1/4，基本不驱动说话了。
+export const HALF_LIFE_H = {
+  surprise: 0.5,   // 惊讶：半小时就没
+  tired: 4,        // 困：一个午觉的量级
+  anger: 5,        // 火气：来得快去得也快
+  shy: 5,
+  joy: 8,
+  tsundere: 6,
+  warm: 8,
+  jealous: 10,
+  anxious: 10,
+  guilt: 12,
+  flat: 18,        // 钝/没劲：背景性的，但也不是永久
+  sad: 18,
+  calm: 24,        // 松/平静：最耐
+};
+export const DEFAULT_HALF_LIFE_H = 12;
+
+export function halfLifeOf(family) {
+  const v = HALF_LIFE_H[String(family || '')];
+  return Number(v) > 0 ? Number(v) : DEFAULT_HALF_LIFE_H;
+}
+
+/** 现在的浓度：level × 0.5^(小时/半衰期)。 */
+export function effectiveLevel(level, hours, family) {
+  const l = Number(level);
+  if (!Number.isFinite(l) || l <= 0) return 0;
+  const h = Number(hours);
+  if (!Number.isFinite(h) || h <= 0) return l;
+  return l * Math.pow(0.5, h / halfLifeOf(family));
+}
+
+/** 已经淡到不驱动说话了吗（有效浓度 < 2）。 */
+export function isExpired(family, level, hours) {
+  return effectiveLevel(level, hours, family) < 2;
+}
+
+/** 这一族"该问一句现在呢"的间隔：两个半衰期，且不超过全局上限。 */
+export function refreshHoursFor(family, globalMaxHours = 20) {
+  const cap = Number(globalMaxHours) > 0 ? Number(globalMaxHours) : 20;
+  return Math.max(2, Math.min(cap, Math.round(halfLifeOf(family) * 2)));
+}
+
 // ── 每一族：只描述"怎么说"，不描述"做不做" ─────────────────────────────
 //
 // 2026-11-28 重写（沙耶指出两处硬伤）：
@@ -266,6 +343,7 @@ export function composeMoodBehavior(states, opt = {}) {
     return {
       feeling: String(r.feeling),
       level: Number(r.level) || 0,
+      atMs: Number.isNaN(t) ? null : t,
       hours: Number.isNaN(t) ? null : (now - t) / 3600000,
       fams: classify(r.feeling),
       contrast: hasContrast(r.feeling),
@@ -277,10 +355,28 @@ export function composeMoodBehavior(states, opt = {}) {
   const main = latest.fams[0];
   if (!main) return [];
 
-  const level = latest.level;
+  const raw = latest.level;
+  // 2026-11-28：按时间衰减，用"现在还剩多少"驱动，不是记下来那一刻的浓度。
+  // 早八记的困到中午就该散；闷能挂一天 —— 差别在每族的半衰期（见 HALF_LIFE_H）。
+  const level = effectiveLevel(raw, latest.hours, main.family);
+  const eff = Math.round(level * 10) / 10;
+  const ago = agoLabel(latest.hours, latest.atMs, now);
   const lines = [];
-  // 标题刻意不像"规则"：它是**这一轮的调子**，不是剧本
-  lines.push(`【这一轮的调子｜${main.label}${level ? `（${level}/10）` : ''}】`);
+
+  // 已经淡到不驱动说话了：不再给"怎么说话"，而是明确说它过期了。
+  // 这一条比任何衰减算法都重要 —— 不说过期，她会继续演那条早上的状态。
+  if (eff < 2) {
+    lines.push(`【早先那条「${main.label}」已经过去了${ago ? `（${ago}）` : ''}】`);
+    lines.push(`· 原文是「${latest.feeling}」—— 它已经不驱动你说话了，别按它演。`);
+    lines.push('· 现在照你自己真实的感觉来；想不起来就调 rh_mood 记一句，不记也行。');
+    lines.push(...agencyBoundary({ negative: isNegativeFamily(main.family) }));
+    return lines.slice(0, maxLines);
+  }
+
+  // 标题刻意不像"规则"：它是**这一轮的调子**，不是剧本。
+  // 浓度明显掉了就把两个数都摆出来 —— 她才知道"这是早上的，已经淡了一半"。
+  const lvText = raw && eff < raw - 1 ? `现在约 ${eff}/10；记的时候 ${raw}/10${ago ? `，${ago}` : ''}` : (raw ? `${raw}/10` : '');
+  lines.push(`【这一轮的调子｜${main.label}${lvText ? `（${lvText}）` : ''}】`);
 
   // ① 措辞（永远给）：只管句子怎么长、词怎么选
   const play = PLAY[main.family] || { tone: [], move: [], trap: '' };
@@ -288,12 +384,12 @@ export function composeMoodBehavior(states, opt = {}) {
 
   // ② 结构 / 行动倾向（浓度够了才给）——
   //    低于 4 的话连这一条都不出现：一个"有点闷"不该改她怎么起话头。
-  if (level >= 4) {
+  if (eff >= 4) {
     for (const m of (play.move || []).slice(0, 1)) lines.push('· ' + m);
   }
 
   // ③ 最容易演砸的一处（5 以上才提，避免一轮里全是告诫）
-  if (level >= 5 && play.trap) lines.push('· 容易演砸的地方：' + play.trap);
+  if (eff >= 5 && play.trap) lines.push('· 容易演砸的地方：' + play.trap);
 
   // ④ 副情绪：只染不抢。有多族时优先挑和主情绪构成冲突组合的那个 ——
   //    「又羞又软，还憋着一点不高兴」里有信息量的是最后那个"不高兴"，不是"软"。

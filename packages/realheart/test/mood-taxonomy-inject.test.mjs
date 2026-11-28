@@ -133,3 +133,46 @@ test('注入里也必须在：边界句（该做照做）跟着情绪段一起�
     await rm(h.root, { recursive: true, force: true });
   }
 });
+
+test('注入里也按半衰期走：早上的困到晚上不再驱动说话', async () => {
+  // 12 小时前的「困」= 困的半衰期 ×3，早就散光了
+  const h = await boot([row('困得睁不开眼', 5, 12)]);
+  try {
+    const text = await moodText(h);
+    assert.match(text, /已经过去了/, '注入里没说它过期：\n' + text);
+    assert.ok(!text.includes('句子可以不完整'), '过期了还在给"困"的说话方式：\n' + text);
+    assert.match(text, /该搜就搜/, '边界段丢了：\n' + text);
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test('注入里同一时刻的「难过」照常驱动，并且标出浓度掉了多少', async () => {
+  const h = await boot([row('心里坠着', 6, 12)]);
+  try {
+    const text = await moodText(h);
+    assert.ok(!text.includes('已经过去了'), '难过不该被判过期：\n' + text);
+    assert.match(text, /现在约 [\d.]+\/10/, '没标出衰减后的浓度：\n' + text);
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test('到点问的间隔按族走：困 8 小时就要问，难过不会那么快', async () => {
+  // 困：9 小时前 → 超过 refreshHoursFor('tired')=8 → 硬要
+  const h = await boot([row('困', 4, 9)]);
+  try {
+    const text = await moodText(h);
+    assert.match(text, /先答这一句/, '困过了 8 小时该被要求更新：\n' + text);
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+  // 难过：9 小时前 → 没过 20 小时 → 不该硬要
+  const h2 = await boot([row('心里坠着', 4, 9)]);
+  try {
+    const text = await moodText(h2);
+    assert.ok(!text.includes('先答这一句'), '难过 9 小时不该被催：\n' + text);
+  } finally {
+    await rm(h2.root, { recursive: true, force: true });
+  }
+});

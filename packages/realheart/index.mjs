@@ -36,7 +36,7 @@ import { join, dirname } from 'node:path';
 import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, estimateCost, priceOf, pricingTable, PRICING_ASOF, FORM_LIST, KIND_LIST, paramHints, SEED_REGISTRY, moneyText, unitLabel, limitsLine, keyReady } from './lib/caps.mjs';
 import { CATALOG, flattenCatalog, findCatalogModel, buildRecordFromCatalog } from './lib/catalog.mjs';
 import { behaviorLines, askPlan, parseWindows, minuteOfDay, sameLocalDay, hoursSince } from './lib/mood-behavior.mjs';
-import { composeMoodBehavior, agencyBoundary, isNegativeFamily, classify } from './lib/mood-taxonomy.mjs';
+import { composeMoodBehavior, agencyBoundary, isNegativeFamily, classify, refreshHoursFor, effectiveLevel } from './lib/mood-taxonomy.mjs';
 import { promisify } from 'node:util';
 import {
   fingerprint as pendingFp,
@@ -1141,12 +1141,16 @@ const ROUND_MARK = '[本轮消息]';
         behavior = [...behaviorLines(level), ...agencyBoundary({ negative: fam.length ? isNegativeFamily(fam[0]) : true })];
       }
     }
+    // 到点问的间隔按「这一族多久淡掉」算，不是全局一刀切（2026-11-28）：
+    // 困 4 小时半衰 → 8 小时就该问；闷 18 小时半衰 → 20 小时才问。
+    // 用全局 20 小时的话，早八的困会一直挂到晚上，谁都不提醒她更新。
+    const mainFam = classify(feeling)[0]?.family;
     const ask = askPlan({
       hours,
       hasToday: Number.isNaN(t) ? false : sameLocalDay(t),
       nowMin: minuteOfDay(),
       windows: parseWindows(cfg.moodAskWindows),
-      maxHours: Number(cfg.moodMaxHours) > 0 ? Number(cfg.moodMaxHours) : 20,
+      maxHours: refreshHoursFor(mainFam, Number(cfg.moodMaxHours) > 0 ? Number(cfg.moodMaxHours) : 20),
     });
 
     const lvOf = (n) => {

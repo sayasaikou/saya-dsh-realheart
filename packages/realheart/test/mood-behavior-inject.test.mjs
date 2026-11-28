@@ -61,8 +61,8 @@ async function moodSection(h) {
 }
 
 test('「有点闷」：注入里给的是这一类情绪的约束，不是通用模板', async () => {
-  // 用 5 级：4 级按新规则不给"容易演砸"那条（低浓度少告诫）
-  const h = await boot([mood('有点闷', 5, 2)]);
+  // 用 6 级 + 刚记的：4 级不给"容易演砸"那条，而记了一会儿就会衰减（这本身也是对的）
+  const h = await boot([mood('有点闷', 6, 0.2)]);
   try {
     const sec = await moodSection(h);
     assert.ok(sec, '心情段没了');
