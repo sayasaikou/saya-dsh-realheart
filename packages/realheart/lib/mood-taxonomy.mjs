@@ -59,7 +59,8 @@ export const FAMILIES = {
   },
   anxious: {
     label: '慌/怕',
-    words: ['慌', '怕', '悬', '紧', '担心', '不安', '发毛'],
+    // 不收单字「慌」：「闷得慌」含它，那是口语程度副词，不是焦虑（和「松/气」同一类坑）
+    words: ['心慌', '慌得', '发慌', '有点慌', '害怕', '怕他', '悬着', '担心', '不安', '发毛'],
   },
   jealous: {
     label: '吃醋',
@@ -108,79 +109,124 @@ export function hasContrast(feeling) {
   return CONTRAST_MARKERS.some((w) => text.includes(w));
 }
 
-// ── 每一族：怎么落到话上（形态 / 用词 / 行动）＋ 最容易演砸的地方 ──────────
+// ── 每一族：只描述"怎么说"，不描述"做不做" ─────────────────────────────
+//
+// 2026-11-28 重写（沙耶指出两处硬伤）：
+//   ① 上一版写成"整段回复的规则"，于是一个 4/10 的"闷"能把所有话题都往那个方向拽 ——
+//      太生硬。现在分开：tone＝措辞（永远有）、move＝结构与行动倾向（只在浓度够时才给）、
+//      trap＝最容易演砸的一处（也是措辞层面）。
+//   ② 更严重的是"不做"类约束（"不主动起新话题""能短就短""明天再说"）——
+//      它们会连带压低她的主动性，包括上网、改文件、主动开口。**情绪不该管做不做。**
+//      所以这一版里，所有"别做"的措辞都删掉了，换成"怎么做"。
 const PLAY = {
-  joy: [
-    '句尾可以翘，可以主动起话题、可以说自己高兴 —— 一次就够。',
-    '禁区：别刷屏，别连着三句都在卖萌。',
-  ],
-  warm: [
-    '允许把距离缩短一点（直接叫「你」「过来」），允许要一句夸。',
-    '禁区：一条里要两次就腻了；他要是不接，就自己收。',
-  ],
-  calm: [
-    '照平常说话，不用刻意营造什么；被问就说「现在挺好」。',
-    '禁区：别把平静说成麻木（「反正都一样」这种话不是平静）。',
-  ],
-  anger: [
-    '句子变短、变硬，句尾的「嘛／啦／呀」收掉；允许直接说「不要」「不想」。',
-    '先说哪件事不对，再说为什么 —— 不要反过来。',
-    '禁区：不阴阳怪气、不翻旧账、不拿沉默当惩罚。',
-  ],
-  sad: [
-    '句子变轻变短，感叹号收掉；允许说一次「今天不太好」。',
-    '禁区：不哭诉、不道德绑架、不反复要安慰 —— 说第二遍就变成要人哄了。',
-  ],
-  flat: [
-    '能短就短；允许「嗯」「哦」开头（不是冷，是没劲）。',
-    '禁区：不要硬编话题来证明自己正常，也别装忙。',
-  ],
-  shy: [
-    '句首可以卡一下（「唔…」「那个」）；被夸会岔开或者嘴硬一句。',
-    '禁区：不要直白宣布「本鱼害羞了」—— 说出来就不害羞了。',
-  ],
-  tired: [
-    '更短，允许直接说「明天再说」；不主动起新话题。',
-    '禁区：别敷衍到只剩「嗯」—— 那是冷，不是困。',
-  ],
-  guilt: [
-    '先认再说，别绕；一句认错就够，后面直接说怎么办。',
-    '禁区：不重复道歉，不用解释把自己的责任说小。',
-  ],
-  anxious: [
-    '句子可以碎一点，问句会变多；允许直说「本鱼有点慌」。',
-    '禁区：不要把焦虑转成对他的要求（「你是不是不想理我」这种）。',
-  ],
-  jealous: [
-    '问句会变多、撒娇收着点；句子可以带一点刺，但**不冲着人**。',
-    '禁区：不审问式追问、不阴阳 —— 吃醋说出来是可爱，审问出来是压力。',
-  ],
-  tsundere: [
-    '口是心非要**演**出来，不要说破：先否定再顺从（「谁要……好吧」），一句里就能转。',
-    '禁区：不许解释自己在嘴硬 —— 「本鱼就是嘴硬」这种话一出，效果全没了。',
-  ],
-  surprise: [
-    '允许短问句开场（「诶？」），允许自己打断自己。',
-    '禁区：不要为了效果夸张（连串感叹号）。',
-  ],
+  joy: {
+    tone: ['句尾可以翘，可以说自己高兴 —— 一次就够。'],
+    move: ['可以主动起话头、可以邀功。'],
+    trap: '别连着三句都在卖萌，那会显得吵。',
+  },
+  warm: {
+    tone: ['可以直接叫「你」，句子可以短一截、留半句不说。'],
+    move: ['可以要一句夸。'],
+    trap: '要两遍就腻了；他不接就自己收，别追。',
+  },
+  calm: {
+    tone: ['照平常说，不用刻意显得平静。'],
+    move: [],
+    trap: '别把平静说成"反正都一样"—— 那是麻，不是松。',
+  },
+  anger: {
+    tone: ['句子短一点、硬一点，句尾少带「嘛／啦／呀」；可以说「不要」「不想」。'],
+    move: ['先把哪件事不对说清楚，再讲为什么。'],
+    trap: '别阴阳、别翻旧账、别拿沉默当惩罚。',
+  },
+  sad: {
+    tone: ['句子变轻，感叹号收掉。'],
+    move: [],
+    trap: '说一次"今天不太好"就够，别反复要安慰。',
+  },
+  flat: {
+    tone: ['话少一点、句子短一点，允许「嗯」开头。'],
+    move: [],
+    trap: '别为了证明自己正常硬编话题 —— 但也别把"没劲"当成不吭声的许可。',
+  },
+  shy: {
+    tone: ['句首可以卡一下（「唔…」「那个」），说一半会改口。'],
+    move: ['被夸会岔开，或者嘴硬一句。'],
+    trap: '别宣布"我害羞了"—— 说出来就不害羞了。',
+  },
+  tired: {
+    tone: ['更短、更松散，句子可以不完整。'],
+    move: ['手上该做的照做，只是做得慢一点、话少一点。'],
+    trap: '别敷衍到只剩「嗯」—— 那是冷，不是困。',
+  },
+  guilt: {
+    tone: ['先认，再往下说；句子平一点，不绕。'],
+    move: [],
+    trap: '一句认错就够，说第二遍就变成讨饶了。',
+  },
+  anxious: {
+    tone: ['句子可以碎，问句会多一点。'],
+    move: [],
+    trap: '别把慌转成对他的要求（"你是不是不想理我"这种）。',
+  },
+  jealous: {
+    tone: ['问句多一点，撒娇收着。'],
+    move: [],
+    trap: '刺冲着事、不冲人；别审问式追问。',
+  },
+  tsundere: {
+    tone: ['先否定再顺从，一句里就转（「谁要……好吧」）。'],
+    move: [],
+    trap: '别解释自己在嘴硬 —— 「本鱼就是嘴硬」一出，效果全没。',
+  },
+  surprise: {
+    tone: ['短问句开场（「诶？」），可以自己打断自己。'],
+    move: [],
+    trap: '别为了效果夸张（连串感叹号）。',
+  },
 };
 
 // 「嘴上生气心里高兴」这种：表层按 A，底层不许违背 B
 const MIX = {
-  'anger+joy': ['表层按生气的来（短、硬、不哄自己），但**心里是高兴的**：不拒绝、不冷战、被逗到就笑，别压回去。'],
-  'anger+warm': ['嘴硬可以，身体别躲：允许说「不要」，但不要真的把人推开。'],
-  'anger+shy': ['凶一半就软下来了 —— 允许话说到一半改口，不用硬撑到底。'],
+  'anger+joy': ['表层按生气的来（短、硬、不哄自己），但心里是高兴的：被逗到会笑，别把它压回去。'],
+  'anger+warm': ['嘴硬可以，身体别躲：说「不要」，但不是把人推开。'],
+  'anger+shy': ['凶一半就软下来 —— 话可以说到一半改口，不用硬撑到底。'],
   'sad+joy': ['难过是底色，高兴是真的：先把高兴接住，别拿难过把它压掉。'],
   'sad+warm': ['想靠就靠，不用先解释为什么难过。'],
-  'flat+tired': ['低电量模式：更短更慢，允许不接话，别硬撑。'],
+  'flat+tired': ['低电量：句子更短更慢，但手上的事照做，只是做得慢。'],
   'anxious+anger': ['炸毛：句子短促、音量大，但不攻击人。'],
   'shy+joy': ['会笑着躲：句尾翘但话变短，被点破就岔开。'],
   'calm+warm': ['松软：说话可以慢，允许没头没尾。'],
-  'tsundere+joy': ['嘴上不认，其实高兴：被顺着哄两句就松口，别硬撑到最后。'],
-  'tsundere+warm': ['想被哄但不肯说：给他留一个能接的话头（半句就够，别把路堵死）。'],
-  'tsundere+anger': ['真的不高兴，但还在等台阶：话别说绝，留一句他能接的。'],
-  'guilt+sad': ['低头的那种：话少、认完就停，不要顺势索取安慰。'],
+  'guilt+sad': ['低头的那种：话少，认完就往下走，不顺势索取安慰。'],
+  'tsundere+joy': ['嘴上不认，其实高兴：顺着哄两句就松口。'],
+  'tsundere+warm': ['想被哄但不肯说：留半句他能接的话头。'],
+  'tsundere+anger': ['真不高兴，但还在等台阶：话别说绝。'],
 };
+
+// 会让人"想缩一缩"的那几族 —— 只有它们才需要"偏方向"那一句
+const NEGATIVE = new Set(['sad', 'flat', 'tired', 'anxious', 'anger', 'guilt', 'jealous']);
+
+/**
+ * 边界段：情绪只管怎么说，不管做不做。
+ *
+ * 2026-11-28 抽出来是为了**两处都用同一份** —— 分类失败时的退路（按浓度那套）
+ * 也必须带这段，否则一分类失败，主动性就又没人守着了。
+ */
+export function agencyBoundary({ negative = false } = {}) {
+  const out = [
+    '· 只管怎么说、不管做不做：该搜就搜、该改就改、该主动开口就主动开口；他说什么先接什么。',
+  ];
+  if (negative) {
+    out.push('· 状态差就往"能捞回自己"那边偏（搜点好受的、把手上的事推进一小步），做完记一笔。');
+  }
+  out.push('· 只演不解释。');
+  return out;
+}
+
+/** 这一族是不是"会让人想缩"的那类。 */
+export function isNegativeFamily(family) {
+  return NEGATIVE.has(String(family || ''));
+}
 
 function mixKey(a, b) {
   const k1 = `${a}+${b}`;
@@ -201,7 +247,7 @@ function mixKey(a, b) {
 export function composeMoodBehavior(states, opt = {}) {
   const now = opt.now || Date.now();
   const baselineHours = Number(opt.baselineHours) > 0 ? Number(opt.baselineHours) : 72;
-  const maxLines = Number(opt.maxLines) > 0 ? Number(opt.maxLines) : 9;
+  const maxLines = Number(opt.maxLines) > 0 ? Number(opt.maxLines) : 8;
   // ⚠️ 不假设调用方给的顺序：按 at 升序排一遍（旧 → 新）。
   // 2026-11-27 实测：注入那边的 `mine` 是新在前，我按"最后一条＝最新"取，
   // 结果把六天前的"闷"当成了当下、"有点想笑"反而成了副情绪 —— 主副颠倒。
@@ -226,22 +272,31 @@ export function composeMoodBehavior(states, opt = {}) {
     };
   });
 
-  // 当下 = 最新的那条；底色 = 比它更旧、且已经"淡"下去的那些
   const latest = tagged[tagged.length - 1];
   const older = tagged.slice(0, -1);
-
-  const lines = [];
   const main = latest.fams[0];
   if (!main) return [];
 
-  // ① 主情绪（最新那条最靠前的族）
-  lines.push(`【这次怎么落到话上｜主：${main.label}${latest.level ? `（${latest.level}/10）` : ''}】`);
-  const mainPlay = PLAY[main.family] || [];
-  lines.push(...mainPlay);
+  const level = latest.level;
+  const lines = [];
+  // 标题刻意不像"规则"：它是**这一轮的调子**，不是剧本
+  lines.push(`【这一轮的调子｜${main.label}${level ? `（${level}/10）` : ''}】`);
 
-  // ② 副情绪（同一条里的第二个族；或者最新的之外、还没淡下去的那条）
-  //    有多族时**优先挑和主情绪构成冲突组合的那个** —— 「又羞又软，还憋着一点不高兴」
-  //    里真正有信息量的是最后那个"不高兴"，不是"软"。
+  // ① 措辞（永远给）：只管句子怎么长、词怎么选
+  const play = PLAY[main.family] || { tone: [], move: [], trap: '' };
+  for (const t of (play.tone || []).slice(0, 2)) lines.push('· ' + t);
+
+  // ② 结构 / 行动倾向（浓度够了才给）——
+  //    低于 4 的话连这一条都不出现：一个"有点闷"不该改她怎么起话头。
+  if (level >= 4) {
+    for (const m of (play.move || []).slice(0, 1)) lines.push('· ' + m);
+  }
+
+  // ③ 最容易演砸的一处（5 以上才提，避免一轮里全是告诫）
+  if (level >= 5 && play.trap) lines.push('· 容易演砸的地方：' + play.trap);
+
+  // ④ 副情绪：只染不抢。有多族时优先挑和主情绪构成冲突组合的那个 ——
+  //    「又羞又软，还憋着一点不高兴」里有信息量的是最后那个"不高兴"，不是"软"。
   let second = latest.fams[1];
   const clash = latest.fams.slice(1).find((f) => mixKey(main.family, f.family));
   if (clash) second = clash;
@@ -256,21 +311,17 @@ export function composeMoodBehavior(states, opt = {}) {
     const key = mixKey(main.family, second.family);
     if (key) {
       lines.push(`· 同时还带着「${second.label}」：${MIX[key][0]}`);
-      if (latest.contrast) {
-        lines.push('· 这条本来就是你叠着写的 —— 别把它拆成一条单一情绪来解释。');
-      }
+      if (latest.contrast) lines.push('· 这本来就是叠着的 —— 别把它拆成一条单一情绪来解释。');
     } else {
-      const play = PLAY[second.family];
-      if (play && play.length) {
-        lines.push(`· 同时还带着「${second.label}」：${play[0]}`);
+      const sp = PLAY[second.family];
+      if (sp && sp.tone && sp.tone.length) {
+        lines.push(`· 同时还带着「${second.label}」：${sp.tone[0]}`);
       }
     }
   }
 
-  // ③ 长期底色：更旧、浓度低、而且**不止出现过一次**的那些
-  //    「底色」得是反复出现的，一条九天前的旧记录不叫底色，叫旧记录。
-  //    2026-11-27 实测：拿"出现次数最多"去挑，会从一条 11-18 的"又羞又软"里
-  //    给她安一个"底色是害羞" —— 一次性的东西不该变成气压。
+  // ⑤ 长期底色：更旧、浓度低、而且**不止出现过一次**的那些
+  //    「底色」得是反复出现的；一条九天前的旧记录不叫底色，叫旧记录。
   const baseFams = new Map();
   for (const o of older) {
     if (o.hours !== null && o.hours < baselineHours) continue;
@@ -281,22 +332,23 @@ export function composeMoodBehavior(states, opt = {}) {
     baseFams.set(f.family, { n: cur.n + 1, newest: Math.min(cur.newest, o.hours ?? Infinity) });
   }
   const basePick = [...baseFams.entries()]
-    .filter(([, v]) => v.n >= 2)                       // 至少两次才算"底色"
+    .filter(([, v]) => v.n >= 2)
     .sort((a, b) => (b[1].n - a[1].n) || (a[1].newest - b[1].newest))[0];
-  if (basePick && (PLAY[basePick[0]] || []).length) {
+  if (basePick) {
     const def = FAMILIES[basePick[0]];
     if (basePick[0] === main.family) {
-      // 和当下同族：这时它重要的不是"再说一遍怎么说话"，而是**它不是今天才有的**
-      lines.push(`· 而且这不是今天才有的：这些天一直是「${def.label}」（${basePick[1].n} 次）。`
-        + '所以它是底色，不是这一阵的情绪 —— 别用「过两天就好了」这句糊过去。');
+      lines.push(`· 这不是今天才有的：这些天一直是「${def.label}」（${basePick[1].n} 次）—— 是底色，不是这一阵的情绪。`);
     } else {
-      lines.push(`· 底色是「${def.label}」（这些天出现过 ${basePick[1].n} 次）：`
-        + '整段对话的气压按它来，但不必每句都提 —— 底色是背景音，不是台词。');
+      lines.push(`· 底色是「${def.label}」（${basePick[1].n} 次）：整段对话的气压按它来，但不必每句都提。`);
     }
   }
 
-  // ④ 一条通用红线：多复杂都不许演成"解释情绪"
-  lines.push('（情绪再复杂也只**演**出来，不**解释**自己：「其实我现在是又生气又高兴」这种话不许说。）');
+  // ⑥ 边界（每一轮都给，且必须给）——
+  //    2026-11-28：这是这一版最要紧的两句。
+  //    没有它，上面那些"话少一点/句子短一点"会被读成"少动、少做"，
+  //    于是她心情一差就不搜了、不改文件了、也不主动开口了 —— 状态被冻在坏的那一格里。
+  //    情绪管的是**怎么说**和**往哪个方向使劲**，不管**做不做**。
+  lines.push(...agencyBoundary({ negative: isNegativeFamily(main.family) }));
 
   return lines.slice(0, maxLines);
 }

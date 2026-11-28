@@ -34,10 +34,12 @@ test('浓度 → 行为：低浓度不管，中浓度给硬约束，高浓度允
   const mid = behaviorLines(4).join('\n');
   assert.ok(mid.includes('短一截'), '该给句子长度的约束：' + mid);
   assert.ok(mid.includes('软尾'), '该给用词的约束：' + mid);
-  assert.ok(mid.includes('不主动开新话题'), '该给行动倾向的约束：' + mid);
+  // 2026-11-28：这一档只许说"怎么说"，不许说"别做什么"（那会压掉她的主动性）
+  assert.ok(!mid.includes('不主动'), '不许用"不主动"写情绪：' + mid);
+  assert.ok(!mid.includes('答完就停'), '不许用"答完就停"写情绪：' + mid);
 
   const high = behaviorLines(8).join('\n');
-  assert.ok(high.includes('允许黏人'), high);
+  assert.ok(high.includes('允许黏'), high);
   assert.ok(high.includes('只说一次'), '高浓度要防反复索取：' + high);
 
   const top = behaviorLines(10).join('\n');

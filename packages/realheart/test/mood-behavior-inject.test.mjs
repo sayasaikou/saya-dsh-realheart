@@ -61,16 +61,18 @@ async function moodSection(h) {
 }
 
 test('「有点闷」：注入里给的是这一类情绪的约束，不是通用模板', async () => {
-  const h = await boot([mood('有点闷', 4, 2)]);
+  // 用 5 级：4 级按新规则不给"容易演砸"那条（低浓度少告诫）
+  const h = await boot([mood('有点闷', 5, 2)]);
   try {
     const sec = await moodSection(h);
     assert.ok(sec, '心情段没了');
     // 2026-11-27 二版：先从 feeling 认出情绪族（闷 → 钝/没劲），再给这一族的约束
-    assert.match(sec.text, /这次怎么落到话上/, '没有行为映射');
-    assert.match(sec.text, /主：钝\/没劲/, '没有按情绪分类：\n' + sec.text);
-    assert.match(sec.text, /能短就短/, '没给句子形态的约束');
-    assert.match(sec.text, /禁区/, '没给"最容易演砸的地方"');
+    assert.match(sec.text, /这一轮的调子/, '没有行为映射');
+    assert.match(sec.text, /｜钝\/没劲/, '没有按情绪分类：\n' + sec.text);
+    assert.match(sec.text, /话少一点|句子短/, '没给句子形态的约束');
+    assert.match(sec.text, /容易演砸/, '没给"最容易演砸的地方"');
     assert.ok(!sec.text.includes('先答这一句'), '才两小时，不该催');
+    assert.ok(!sec.text.includes('不主动'), '不许出现压主动性的措辞：\n' + sec.text);
   } finally {
     await rm(h.root, { recursive: true, force: true });
   }
@@ -94,7 +96,7 @@ test('moodBehavior=false：行为映射可以关掉，硬要求还在', async ()
   try {
     const sec = await moodSection(h);
     assert.ok(sec);
-    assert.ok(!sec.text.includes('这次怎么落到话上'), '关掉了却还在');
+    assert.ok(!sec.text.includes('这一轮的调子'), '关掉了却还在');
     assert.match(sec.text, /先答这一句/, '关行为映射不该把「过期提醒」也关掉');
   } finally {
     await rm(h.root, { recursive: true, force: true });

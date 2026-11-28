@@ -70,15 +70,15 @@ test('叠着写的信号：嘴上/心里/憋着/其实 都能认出来', () => {
 test('合成：主情绪决定基调，副情绪只染不抢', () => {
   const lines = composeMoodBehavior([{ ...LEDGER[3] }], { now: Date.parse(LEDGER[3].at) + 3600 * 1000 });
   const text = lines.join('\n');
-  assert.match(text, /主：害羞/, text);
+  assert.match(text, /｜害羞/, text);
   assert.match(text, /想笑|开心/, '副情绪（想笑）没带出来：' + text);
-  assert.match(text, /不许说|不\*\*解释\*\*/, '缺"只演不解释"这条红线：' + text);
+  assert.match(text, /只演不解释/, '缺"只演不解释"这条红线：' + text);
 });
 
 test('复合冲突：嘴上生气心里高兴 → 表层按生气，但底层不许违背高兴', () => {
   const row = { at: '2026-11-27T20:00:00+08:00', feeling: '嘴上生气，心里其实挺高兴', level: 6 };
   const text = composeMoodBehavior([row], { now: Date.parse(row.at) + 60000 }).join('\n');
-  assert.match(text, /主：生气/, text);
+  assert.match(text, /｜生气/, text);
   assert.match(text, /不拒绝、不冷战|心里是高兴/, '没给出"嘴硬心软"的合法规：' + text);
 });
 
@@ -89,9 +89,9 @@ test('底色与当下分开：反复出现的旧低浓度只做背景音，不�
   const nowRow = { at: '2026-11-27T20:00:00+08:00', feeling: '有点想笑', level: 4 };
   const now = Date.parse(nowRow.at) + 60000;
   const text = composeMoodBehavior([old1, old2, nowRow], { now, baselineHours: 72 }).join('\n');
-  assert.match(text, /主：开心/, '当下那条才是主情绪：' + text);
-  assert.match(text, /底色是「钝\/没劲」|底色是「钝/, '长期底色没单独成一条：' + text);
-  assert.match(text, /背景音/, '底色必须说明它不抢调子：' + text);
+  assert.match(text, /｜开心/, '当下那条才是主情绪：' + text);
+  assert.match(text, /底色是「钝|这不是今天才有的/, '长期底色没单独成一条：' + text);
+  assert.match(text, /底色/, '底色没被标出来：' + text);
 });
 
 test('没有可分类的 feeling：合成返回空，退路是「按浓度」那套（也不许空着）', () => {
@@ -106,16 +106,63 @@ test('没有可分类的 feeling：合成返回空，退路是「按浓度」那
 test('输出长度受控：整本 15 条丢进去也不许超预算', () => {
   const rows = LEDGER;
   const lines = composeMoodBehavior(rows, { now: Date.parse(rows[rows.length - 1].at) + 60000 });
-  assert.ok(lines.length <= 9, '超了预算：' + lines.length + ' 行');
+  assert.ok(lines.length <= 8, '超了预算：' + lines.length + ' 行');
   const chars = lines.join('').length;
-  assert.ok(chars <= 420, '字数超了：' + chars);
+  assert.ok(chars <= 340, '字数超了：' + chars);
 });
 
 test('每一族都有"落到话上"的约束和禁区，没有空壳族', () => {
   for (const fam of Object.keys(FAMILIES)) {
     const row = { at: new Date().toISOString(), feeling: FAMILIES[fam].words[0], level: 5 };
     const text = composeMoodBehavior([row], { now: Date.now() }).join('\n');
-    assert.match(text, /主：/, fam + ' 没被认成主情绪');
-    assert.match(text, /禁区|不许|不要/, fam + ' 没给禁区');
+    assert.match(text, /｜/, fam + ' 没被认成主情绪');
+    assert.match(text, /容易演砸/, fam + ' 没给禁区');
   }
+});
+
+// ── 2026-11-28：两处硬伤（干涉过强 / 压住主动性）的回归测试 ──────────────
+
+test('干涉强度随浓度走：3 级只给措辞，不给"怎么起话头"', () => {
+  const row3 = { at: new Date(Date.now() - 3600e3).toISOString(), feeling: '有点想笑', level: 3 };
+  const row6 = { at: new Date(Date.now() - 3600e3).toISOString(), feeling: '有点想笑', level: 6 };
+  const low = composeMoodBehavior([row3], { now: Date.now() }).join('\n');
+  const mid = composeMoodBehavior([row6], { now: Date.now() }).join('\n');
+  assert.ok(!low.includes('主动起话头'), '3 级不该管她起不起话头：\n' + low);
+  assert.ok(mid.includes('主动起话头'), '6 级该给结构层面的倾向：\n' + mid);
+  assert.ok(low.length < mid.length, '低浓度的输出应该更短');
+  // 低浓度也不给"容易演砸"的告诫
+  assert.ok(!low.includes('容易演砸'), '3 级不该有一条告诫：\n' + low);
+});
+
+test('不许用"别做"来写情绪：每一族每一档都要保住主动性', () => {
+  // 这条是 2026-11-28 那次的教训：上一版写了"不主动起新话题""能短就短""明天再说"，
+  // 结果心情一差她就不搜、不改文件、不主动开口了 —— 状态被冻在坏的那一格。
+  const BAN = ['不主动', '别主动', '不接话', '别开口', '明天再说', '答完就停', '干脆不', '算了不'];
+  for (const fam of Object.keys(FAMILIES)) {
+    for (const lv of [2, 4, 7, 9]) {
+      const row = { at: new Date(Date.now() - 3600e3).toISOString(), feeling: FAMILIES[fam].words[0], level: lv };
+      const text = composeMoodBehavior([row], { now: Date.now() }).join('\n');
+      for (const bad of BAN) {
+        assert.ok(!text.includes(bad), fam + ' ' + lv + ' 级出现了压主动性的措辞「' + bad + '」：\n' + text);
+      }
+    }
+  }
+});
+
+test('每一轮都要带"只管怎么说、不管做不做"的边界句', () => {
+  for (const fam of Object.keys(FAMILIES)) {
+    const row = { at: new Date(Date.now() - 3600e3).toISOString(), feeling: FAMILIES[fam].words[0], level: 5 };
+    const text = composeMoodBehavior([row], { now: Date.now() }).join('\n');
+    assert.match(text, /该搜就搜/, fam + ' 缺"该做照做"的边界句：\n' + text);
+    assert.match(text, /不管做不做/, fam + ' 缺"只管怎么说"的界定：\n' + text);
+    assert.match(text, /不决定聊什么|先接什么/, fam + ' 缺"话题优先"的边界：\n' + text);
+  }
+});
+
+test('"偏方向"只给会想缩的那几族；开心时不提这句', () => {
+  const mk = (f) => ({ at: new Date(Date.now() - 3600e3).toISOString(), feeling: f, level: 5 });
+  const bad = composeMoodBehavior([mk('闷')], { now: Date.now() }).join('\n');
+  assert.match(bad, /捞回自己/, '负面状态该给"往能捞回自己那边偏"：\n' + bad);
+  const good = composeMoodBehavior([mk('今天想笑')], { now: Date.now() }).join('\n');
+  assert.ok(!good.includes('捞回自己'), '高兴的时候说这句没意义：\n' + good);
 });

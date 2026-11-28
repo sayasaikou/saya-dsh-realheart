@@ -36,7 +36,7 @@ import { join, dirname } from 'node:path';
 import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, estimateCost, priceOf, pricingTable, PRICING_ASOF, FORM_LIST, KIND_LIST, paramHints, SEED_REGISTRY, moneyText, unitLabel, limitsLine, keyReady } from './lib/caps.mjs';
 import { CATALOG, flattenCatalog, findCatalogModel, buildRecordFromCatalog } from './lib/catalog.mjs';
 import { behaviorLines, askPlan, parseWindows, minuteOfDay, sameLocalDay, hoursSince } from './lib/mood-behavior.mjs';
-import { composeMoodBehavior } from './lib/mood-taxonomy.mjs';
+import { composeMoodBehavior, agencyBoundary, isNegativeFamily, classify } from './lib/mood-taxonomy.mjs';
 import { promisify } from 'node:util';
 import {
   fingerprint as pendingFp,
@@ -1134,7 +1134,12 @@ const ROUND_MARK = '[本轮消息]';
         now: Date.now(),
         baselineHours: Number(cfg.moodBaselineHours) > 0 ? Number(cfg.moodBaselineHours) : 72,
       });
-      if (!behavior.length) behavior = behaviorLines(level);
+      if (!behavior.length) {
+        // 分类失败时的退路：按浓度那套 + **同一份边界段**。
+        // 少了边界，一分类失败她的主动性就又没人守着了（2026-11-28）。
+        const fam = classify(String(last.feeling || '')).map((x) => x.family);
+        behavior = [...behaviorLines(level), ...agencyBoundary({ negative: fam.length ? isNegativeFamily(fam[0]) : true })];
+      }
     }
     const ask = askPlan({
       hours,
@@ -1264,8 +1269,10 @@ const ROUND_MARK = '[本轮消息]';
         lines.push('那不是这个场合的事，但人本来就带着上一场的余味 —— 让它影响多少，你自己定。');
       }
     }
-    lines.push('这是调子，不是台词。浓的时候压不住，淡了就不算数。');
-    lines.push('（知道就行，不必说出来 —— 它不是你聊天的素材，只影响你说话的样子。）');
+    if (!behavior.length) {
+      // 行为段里已经有"只演不解释"这一条，两句是同一件事：字数紧的时候只留一处
+      lines.push(promptText('promptMoodBan', '（知道就行，不必说出来 —— 它不是你聊天的素材。）'));
+    }
     if (behavior.length) {
       lines.push('');
       lines.push(...behavior);
@@ -1277,7 +1284,10 @@ const ROUND_MARK = '[本轮消息]';
     lines.push(ask.kind === 'hard'
       ? '变了就调 rh_mood 记一笔（必须指一件事）；没变就按上面那句记一条「跟上次一样」。'
       : '变了就调 rh_mood 记一笔（必须指一件事），没变就别写。');
-    lines.push('（你写下的来处会带在这里 —— 写清楚点，下次你自己才认得出这是哪件事。）');
+    if (!behavior.length) {
+      // 只在没有行为段时才补这句（字数紧：行为段比"怎么填来处"更值钱）
+      lines.push('（你写下的来处会带在这里 —— 写清楚点，下次你自己才认得出这是哪件事。）');
+    }
     return lines.join('\n');
   }
 

@@ -70,7 +70,7 @@ test('同一套流程，不同情绪给的是不同的话（不是一套模板�
     const h = await boot([row(feeling, 5, 2)]);
     try {
       const text = await moodText(h);
-      assert.match(text, new RegExp('主：' + label), feeling + ' → 主情绪不是「' + label + '」：\n' + text);
+      assert.match(text, new RegExp('｜' + label), feeling + ' → 主情绪不是「' + label + '」：\n' + text);
       seen.set(feeling, text);
     } finally {
       await rm(h.root, { recursive: true, force: true });
@@ -86,10 +86,10 @@ test('复合情绪：又羞又软还憋着不高兴 —— 注入里仍然是叠
   const h = await boot([row('又羞又软，还憋着一点不高兴', 6, 1)]);
   try {
     const text = await moodText(h);
-    assert.match(text, /主：害羞/, text);
+    assert.match(text, /｜害羞/, text);
     assert.match(text, /同时还带着/, '副情绪没带出来：\n' + text);
     assert.match(text, /不拒绝|不冷战|不要真的把人推开|凶一半/, '冲突组合没给"底层不许违背"的规则：\n' + text);
-    assert.match(text, /不\*\*解释\*\*/, '缺"只演不解释"的红线：\n' + text);
+    assert.match(text, /只演不解释/, '缺"只演不解释"的红线：\n' + text);
   } finally {
     await rm(h.root, { recursive: true, force: true });
   }
@@ -99,7 +99,7 @@ test('认不出来的 feeling：退回按浓度，不许整段空掉', async () 
   const h = await boot([row('嗯嗯', 5, 2)]);
   try {
     const text = await moodText(h);
-    assert.match(text, /这个浓度落到话上|少主动讨好/, '既没分类也没退路：\n' + text);
+    assert.match(text, /这一轮的调子|少主动讨好/, '既没分类也没退路：\n' + text);
   } finally {
     await rm(h.root, { recursive: true, force: true });
   }
@@ -110,9 +110,25 @@ test('底色与当下：旧闷 + 新的想笑 → 主是开心，闷只作背景
   const h = await boot([row('闷', 3, 24 * 7), row('有点闷', 3, 24 * 6), row('有点想笑', 4, 1)]);
   try {
     const text = await moodText(h);
-    assert.match(text, /主：开心/, text);
-    assert.match(text, /底色是「钝\/没劲」/, '旧的那条没降成底色：\n' + text);
-    assert.match(text, /背景音/, text);
+    assert.match(text, /｜开心/, text);
+    assert.match(text, /底色/, '旧的那条没降成底色：\n' + text);
+    assert.match(text, /底色是「钝/, text);
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test('注入里也必须在：边界句（该做照做）跟着情绪段一起出来', async () => {
+  const h = await boot([row('有点闷', 4, 2)]);
+  try {
+    const text = await moodText(h);
+    assert.match(text, /该搜就搜/, '注入里缺"该做照做"的边界：\n' + text);
+    assert.match(text, /不管做不做/, '注入里缺"只管怎么说"的界定：\n' + text);
+    assert.match(text, /捞回自己/, '负面状态缺"往能捞回自己那边偏"：\n' + text);
+    // 旧版那批压主动性的措辞必须彻底消失
+    for (const bad of ['不主动', '不接话', '明天再说', '答完就停']) {
+      assert.ok(!text.includes(bad), '注入里还有「' + bad + '」：\n' + text);
+    }
   } finally {
     await rm(h.root, { recursive: true, force: true });
   }
