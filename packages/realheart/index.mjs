@@ -37,6 +37,7 @@ import { loadRegistry, saveRegistry, runCapability, summarize, cheapestFor, esti
 import { CATALOG, flattenCatalog, findCatalogModel, buildRecordFromCatalog } from './lib/catalog.mjs';
 import { behaviorLines, askPlan, parseWindows, minuteOfDay, sameLocalDay, hoursSince } from './lib/mood-behavior.mjs';
 import { composeMoodBehavior, agencyBoundary, isNegativeFamily, classify, refreshHoursFor, effectiveLevel } from './lib/mood-taxonomy.mjs';
+import { splitByAge, ageLabel, nagLine, AGE_RULES } from './lib/aging.mjs';
 import { promisify } from 'node:util';
 import {
   fingerprint as pendingFp,
@@ -925,12 +926,21 @@ const ROUND_MARK = '[本轮消息]';
         .map((l) => l.trim())
         .filter((l) => /^([-*]|###)\s*待改/.test(l));
       if (!lines.length) return '';
+      // ⚠️ 这里**故意**用文件 mtime：问的是"这份待改清单多久没人动过"，
+      // 不是"某条事发生在什么时候" —— 后者绝不能用 mtime（心情那次踩过）。
+      let idle = '';
+      try {
+        const st = await stat(join(cfg.stateDir, 'changes.md'));
+        const days = Math.round((Date.now() - st.mtimeMs) / 86400000);
+        if (days >= 30) idle = `（这份待改已经 ${days} 天没人动过了 —— 要么改，要么撤，别一直挂着。）`;
+      } catch { /* 读不到就不提 */ }
       return [
         '【有人要动你，但还没动手】',
         ...lines.slice(-5).map((l) => (l.startsWith('-') ? l : `- ${l}`)),
         '',
         '你可以反对。反对就直接说，不用等改完。',
         '全部改动记录在 work/realheart/changes.md；你也可以调 rh_changes 自己翻。',
+        ...(idle ? [idle] : []),
       ].join('\n');
     } catch {
       return '';
@@ -2138,7 +2148,8 @@ const ROUND_MARK = '[本轮消息]';
     return lines.join('\n');
   }
 
-  async function workSectionText() {    const ctl = await readControl();
+  async function workSectionText() {
+    const ctl = await readControl();
     if (ctl.paused) return '';
     const open = openWorks(await readWorks());
     if (!open.length) return '';
@@ -2146,8 +2157,18 @@ const ROUND_MARK = '[本轮消息]';
     const lines = ['【你手上有件没干完的事】', String(w.what || '').trim()];
     if (w.stage) lines.push('到哪了：' + String(w.stage).trim());
     if (w.next) lines.push('下一步：' + String(w.next).trim());
+    // 2026-11-28：加年龄。待办不衰减（没干完就是没干完），但**挂太久了要摆出来**——
+    // 挂着不做比撤掉更费神，而原来这条会一直安静地躺着。
+    const agedOpen = splitByAge('pending', open);
+    const all = [...agedOpen.fresh, ...agedOpen.old, ...agedOpen.stale];
+    const first = all.length ? all[0] : null;
+    if (first && first.hours != null && first.hours > 24) {
+      lines.push(`（这件从${first.age}就挂着了。）`);
+    }
+    const nag = nagLine('pending', all);
+    if (nag) lines.push(nag);
     if (open.length > 1) lines.push(`（还有 ${open.length - 1} 件没干完，用 rh_work 的 list 看全部）`);
-    lines.push('（接着弄、换一件、或者不弄都行。没人催你。）');
+    lines.push('（接着弄、换一件、或者撤掉都行。没人催你。）');
     return lines.join('\n');
   }
 
@@ -2182,9 +2203,23 @@ const ROUND_MARK = '[本轮消息]';
     if (ctl.paused) return '';
     const rows = await readView();
     if (!rows.length) return '';
-    const last3 = rows.slice(-3);
-    const fmt = (r) => `· 关于「${String(r.subject || '').trim()}」：${String(r.view || '').trim()}`;
-    return ['【你的看法】', ...last3.map(fmt)].join('\n');
+    // 2026-11-28：看法原来也没有时间。人对事的看法变得慢，所以给的时间宽（30 天），
+    // 但"三个月前觉得的"和"昨天觉得的"不该一样重 —— 至少把年龄摆出来。
+    const aged = splitByAge('view', rows);
+    const freshish = [...aged.fresh, ...aged.old].slice(-3);
+    const staleCount = aged.stale.length + aged.expired.length;
+    if (!freshish.length) {
+      if (!staleCount) return '';
+      return `【你的看法】\n（记过 ${staleCount} 条看法，都是更早的事，不再摆上来。）`;
+    }
+    const fmt = (it) => {
+      const r = it.row;
+      const body = `· 关于「${String(r.subject || '').trim()}」：${String(r.view || '').trim()}`;
+      return it.hours != null && it.hours > 24 ? `${body}——${it.age}` : body;
+    };
+    const out = ['【你的看法】', ...freshish.map(fmt)];
+    if (staleCount) out.push(`（还有 ${staleCount} 条是更早的看法，不摆了。）`);
+    return out.join('\n');
   }
 
   /**
@@ -2279,8 +2314,25 @@ const ROUND_MARK = '[本轮消息]';
     if (ctl.paused) return '';
     const rows = await readAdmit();
     if (!rows.length) return '';
-    const last3 = rows.slice(-3);
-    return ['【你认过的错】', ...last3.map((r) => `· ${String(r.what || '').trim()}${r.why ? '（' + String(r.why).trim() + '）' : ''}`)].join('\n');
+    // 2026-11-28：原来这三条**永久**挂着（完全没有时间），一个月前的错还占着正文 ——
+    // 那已经不是在提醒，是在罚她。现在按年龄：7 天内占正文，一个月内只点名，再久就不提。
+    const aged = splitByAge('admit', rows);
+    const freshish = [...aged.fresh, ...aged.old].slice(-3);
+    const olderCount = aged.stale.length + aged.expired.length;
+    if (!freshish.length) {
+      if (!olderCount) return '';
+      return `【你认过的错】\n（最近那几条都是更早的事了，不再摆上来 —— 记着就行，不用一直背着。）`;
+    }
+    const line = (it) => {
+      const r = it.row;
+      const body = `· ${String(r.what || '').trim()}${r.why ? '（' + String(r.why).trim() + '）' : ''}`;
+      return it.hours != null && it.hours > 24 ? `${body}——${it.age}` : body;
+    };
+    const out = ['【你认过的错】', ...freshish.map(line)];
+    if (olderCount) {
+      out.push(`（另外 ${olderCount} 条是更早的，不摆了。）`);
+    }
+    return out.join('\n');
   }
 
   /**
@@ -2309,18 +2361,27 @@ const ROUND_MARK = '[本轮消息]';
     }
     if (!last) return '';
 
-    const how = String(last.how || '').trim();
+    // 2026-11-28：加年龄。原来只有一句"7 天前写的"提醒，正文照样摆着 ——
+    // 两个月前的调子也会被当成现在的调子。
+    const aged = splitByAge('style', rows);
+    const freshish = [...aged.fresh, ...aged.old];
+    const usable = freshish.length ? freshish : aged.stale;
+    if (!usable.length) {
+      // 全都太旧：只留一句，让她知道有这么回事、可以重写
+      return `【这种状态下的你】\n（你写过 ${aged.expired.length} 条，都太久了，不再摆上来 —— `
+        + '想改就调 rh_style 写一条新的。）';
+    }
+    const lastItem = usable[usable.length - 1];
+    const how = String(lastItem.row.how || '').trim();
     if (!how) return '';
 
-    let hours = null;
-    const t = Date.parse(String(last.at || ''));
-    if (!Number.isNaN(t)) hours = (Date.now() - t) / 3600000;
-    const stale = hours !== null && hours > 24 * 7;
-
     const lines = ['【这种状态下的你】'];
-    lines.push(how);
-    if (stale) {
-      lines.push(`注意：这条是 ${Math.round(hours / 24)} 天前写的。你觉得不对了就改掉，别硬按着写的演。`);
+    lines.push(lastItem.hours != null && lastItem.hours > 24
+      ? `${how}\n（这是${lastItem.age}写的。不对了就改掉，别硬按着它演。）`
+      : how);
+    if (aged.stale.length) {
+      lines.push(`（还有 ${aged.stale.length} 条更早的调子已经不摆了：`
+        + `${aged.stale.map((x) => ageLabel(x.hours, x.atMs)).join('、')}。）`);
     }
     lines.push('这是你自己写的调子，不是规则。人格那层不动，它只管这一阵子怎么说。');
     return lines.join('\n');
